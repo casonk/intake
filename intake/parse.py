@@ -17,8 +17,8 @@ class Receipt:
     merchant: str
     total: float | None
     raw_text: str
-    purchaser: str | None = None    # cardholder name if found on receipt
-    card_last4: str | None = None   # last 4 digits of payment card if found
+    purchaser: str | None = None  # cardholder name if found on receipt
+    card_last4: str | None = None  # last 4 digits of payment card if found
 
     def suggested_filename(self) -> str:
         """Return a filename derived from the receipt date/time, falling back to scan_date."""
@@ -193,4 +193,3 @@ def _parse_purchaser(raw_text: str) -> str | None:
         if name and not name.isdigit():
             return name[:60]
     return None
-

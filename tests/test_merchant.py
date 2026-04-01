@@ -7,7 +7,10 @@ _RULES = {
     "grocery": {
         "label": "Grocery",
         "keywords": [],
-        "supermarket": {"label": "Supermarkets", "keywords": ["kroger", "walmart", "meijer"]},
+        "supermarket": {
+            "label": "Supermarkets",
+            "keywords": ["kroger", "walmart", "meijer"],
+        },
         "organic": {"label": "Organic", "keywords": ["whole foods", "trader joes"]},
     },
     "pharmacy": {

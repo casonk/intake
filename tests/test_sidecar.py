@@ -30,7 +30,12 @@ def test_has_sidecar_false_when_absent(tmp_pdf):
 
 
 def test_write_and_read_sidecar(tmp_pdf):
-    data = {"filename": tmp_pdf.name, "merchant": "Acme", "total": 9.99, "category": "general"}
+    data = {
+        "filename": tmp_pdf.name,
+        "merchant": "Acme",
+        "total": 9.99,
+        "category": "general",
+    }
     path = write_sidecar(tmp_pdf, data)
 
     assert path.exists()
