@@ -1,0 +1,55 @@
+# AGENTS.md — intake
+
+## Purpose
+
+`intake` processes incoming receipt PDF scans from a snowbridge SMB share into a structured SQLite database and Markdown/HTML summary reports.
+
+- **Receipt source**: `/mnt/setup/bully/info/receipt/` (snowbridge SMB share)
+- **Inbox**: `inbox/` subfolder where new PDFs land, named `YYYYMMDD_HHMM.pdf`
+- **Categories**: `auto`, `cvs`, `edu`, `gas-station`, `general`, `grocery`, `moto`, `office`, `outdoor`, `PC`, `phone`, `sw`, `weed`
+
+## Key Entry Points
+
+```bash
+intake process   # OCR → parse → classify → move → upsert DB
+intake report    # generate Markdown + HTML spending summary
+intake audit     # list inbox PDFs without processing
+```
+
+## Configuration
+
+```bash
+cp config/settings.toml.example config/settings.toml
+# Set receipt_dir to your local snowbridge mount path
+```
+
+`config/settings.toml` is gitignored — never commit it. Same for `data/` and `reports/`.
+
+## Pipeline Overview
+
+1. **OCR** (`intake/ocr.py`): pdfplumber text extraction, pytesseract fallback for image-only pages
+2. **Parse** (`intake/parse.py`): extract date (from filename), merchant (first OCR line), total (last Total/Amount Due match)
+3. **Classify** (`intake/classify.py`): keyword rules from `config/categories.toml`; falls back to `general`
+4. **Move**: PDF moves from `inbox/` to the matched category folder
+5. **DB** (`intake/db.py`): upsert into `data/intake.db` (SQLite)
+6. **Report** (`intake/report.py`): Jinja2-rendered Markdown + HTML to `reports/`
+
+## Session Continuity
+
+- Read `AGENTS.md` → `LESSONSLEARNED.md` → `CHATHISTORY.md` (local-only, gitignored) before resuming work.
+- Update `CHATHISTORY.md` after meaningful sessions.
+- Add durable lessons to `LESSONSLEARNED.md`.
+
+## Portfolio References
+
+This repository is governed by portfolio-wide standards in `./util-repos/traction-control`.
+
+Shared utility repos available for integration:
+
+- `./util-repos/archility` — architecture toolchain bootstrap and diagram rendering
+- `./util-repos/auto-pass` — KeePassXC-backed password management
+- `./util-repos/nordility` — NordVPN CLI/API automation
+- `./util-repos/shock-relay` — external messaging (Signal, Telegram, SMS, Gmail)
+- `./util-repos/short-circuit` — WireGuard VPN setup and configuration
+- `./util-repos/snowbridge` — SMB-based file sharing — **receipt source for this repo**
+- `./finance-pipeline` — downstream consumer of aggregated spend data from this repo

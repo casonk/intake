@@ -1,0 +1,3 @@
+receipt_dir = "/mnt/setup/bully/info/receipt"
+db_path = "data/intake.db"
+reports_dir = "reports"

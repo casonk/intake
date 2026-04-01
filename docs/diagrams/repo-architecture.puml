@@ -1,0 +1,41 @@
+@startuml repo-architecture
+!pragma layout smetana
+
+title intake — Receipt Processing Pipeline
+
+actor "snowbridge\nSMB Share" as SMB
+folder "inbox/" as Inbox
+folder "category\nfolders" as CatFolders
+
+package "intake CLI" {
+    component "intake process" as CmdProcess
+    component "intake report" as CmdReport
+    component "intake audit" as CmdAudit
+}
+
+package "Pipeline" {
+    component "ocr.py\n(pdfplumber + pytesseract)" as OCR
+    component "parse.py\n(date / merchant / total)" as Parse
+    component "classify.py\n(keyword rules)" as Classify
+}
+
+file "config/categories.toml" as CatConfig
+database "data/intake.db\n(SQLite)" as DB
+component "report.py\n(Jinja2)" as Report
+file "reports/intake-report.md" as RepMD
+file "reports/intake-report.html" as RepHTML
+
+SMB --> Inbox : PDF lands\n(YYYYMMDD_HHMM.pdf)
+CmdProcess --> OCR
+OCR --> Parse
+Parse --> Classify
+Classify --> CatConfig : reads rules
+Classify --> CatFolders : moves PDF
+Classify --> DB : upsert receipt
+CmdReport --> Report : reads DB
+Report --> DB
+Report --> RepMD
+Report --> RepHTML
+CmdAudit --> Inbox : lists PDFs only
+
+@enduml

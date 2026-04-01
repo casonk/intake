@@ -1,0 +1,30 @@
+# Local config (contains machine-specific paths)
+config/settings.toml
+
+# Runtime outputs
+data/
+reports/
+*.db
+
+# Local session memory
+CHATHISTORY.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# Editor and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*~
+
+# Diagram export sidecars
+*.cmapx
