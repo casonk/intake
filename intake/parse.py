@@ -132,8 +132,8 @@ def _parse_merchant(raw_text: str) -> str:
     for line in raw_text.splitlines():
         stripped = line.strip()
         if stripped:
-            return stripped[:60]
-    return "Unknown"
+            return stripped[:60].lower()
+    return "unknown"
 
 
 # ── total ─────────────────────────────────────────────────────────────────────
@@ -189,7 +189,7 @@ def _parse_purchaser(raw_text: str) -> str | None:
     """Extract the cardholder / customer name from OCR text if present."""
     m = _PURCHASER_RE.search(raw_text)
     if m:
-        name = m.group(1).strip()
+        name = m.group(1).strip().lower()
         if name and not name.isdigit():
             return name[:60]
     return None

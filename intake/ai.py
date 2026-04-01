@@ -90,7 +90,7 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
 
     merchant = ai.get("merchant")
     if merchant and isinstance(merchant, str) and merchant.strip():
-        kwargs["merchant"] = merchant.strip()[:60]
+        kwargs["merchant"] = merchant.strip()[:60].lower()
 
     total = ai.get("total")
     if total is not None:
@@ -116,7 +116,7 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
 
     purchaser = ai.get("purchaser")
     if purchaser and isinstance(purchaser, str) and purchaser.strip():
-        kwargs["purchaser"] = purchaser.strip()[:60]
+        kwargs["purchaser"] = purchaser.strip()[:60].lower()
 
     card_last4 = ai.get("card_last4")
     if card_last4 and isinstance(card_last4, str):

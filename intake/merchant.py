@@ -84,5 +84,5 @@ def fuzzy_correct(
             best_kw = kw
 
     if best_ratio >= threshold and best_kw:
-        return best_kw.title()
+        return best_kw.lower()
     return merchant

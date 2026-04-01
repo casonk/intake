@@ -71,7 +71,7 @@ def test_quality_fails_short_text():
 
 
 def test_quality_fails_unknown_merchant():
-    r = _receipt(merchant="Unknown")
+    r = _receipt(merchant="unknown")
     assert _ocr_quality_ok("A" * 200, r) is False
 
 
@@ -102,7 +102,7 @@ def test_extract_receipt_returns_tesseract_when_quality_ok(mock_parse, mock_ocr,
     pdf = tmp_path / "20260401_1000.pdf"
     pdf.write_bytes(b"%PDF fake")
 
-    receipt, model = extract_receipt(pdf)
+    receipt, model, tier = extract_receipt(pdf)
     assert model == OCR_MODEL
 
 
@@ -110,12 +110,12 @@ def test_extract_receipt_returns_tesseract_when_quality_ok(mock_parse, mock_ocr,
 @patch("intake.extract.parse_receipt")
 def test_extract_receipt_no_ai_fallback_without_key(mock_parse, mock_ocr, tmp_path):
     mock_ocr.return_value = "bad"
-    mock_parse.return_value = _receipt(merchant="Unknown", total=None, raw_text="bad")
+    mock_parse.return_value = _receipt(merchant="unknown", total=None, raw_text="bad")
 
     pdf = tmp_path / "20260401_1000.pdf"
     pdf.write_bytes(b"%PDF fake")
 
-    receipt, model = extract_receipt(pdf, openai_api_key=None)
+    receipt, model, tier = extract_receipt(pdf, openai_api_key=None)
     assert model == OCR_MODEL
 
 
@@ -125,7 +125,7 @@ def test_extract_receipt_no_ai_fallback_without_key(mock_parse, mock_ocr, tmp_pa
 @patch("intake.ai.extract_with_openai")
 def test_extract_receipt_uses_ai_when_quality_low(mock_ai, mock_merge, mock_parse, mock_ocr, tmp_path):
     mock_ocr.return_value = "bad"
-    base_receipt = _receipt(merchant="Unknown", total=None, raw_text="bad")
+    base_receipt = _receipt(merchant="unknown", total=None, raw_text="bad")
     improved = _receipt(merchant="Real Store", total=12.50, raw_text="bad")
     mock_parse.return_value = base_receipt
     mock_ai.return_value = {"merchant": "Real Store", "total": 12.50}
@@ -134,7 +134,7 @@ def test_extract_receipt_uses_ai_when_quality_low(mock_ai, mock_merge, mock_pars
     pdf = tmp_path / "20260401_1000.pdf"
     pdf.write_bytes(b"%PDF fake")
 
-    receipt, model = extract_receipt(pdf, openai_api_key="sk-test", openai_model_low="gpt-4o-mini")
+    receipt, model, tier = extract_receipt(pdf, openai_api_key="sk-test", openai_model_low="gpt-4o-mini")
     assert model == "gpt-4o-mini"
     assert receipt.merchant == "Real Store"
 
@@ -144,12 +144,12 @@ def test_extract_receipt_uses_ai_when_quality_low(mock_ai, mock_merge, mock_pars
 @patch("intake.ai.extract_with_openai", side_effect=Exception("API error"))
 def test_extract_receipt_degrades_gracefully_on_ai_failure(mock_ai, mock_parse, mock_ocr, tmp_path):
     mock_ocr.return_value = "bad"
-    mock_parse.return_value = _receipt(merchant="Unknown", total=None, raw_text="bad")
+    mock_parse.return_value = _receipt(merchant="unknown", total=None, raw_text="bad")
 
     pdf = tmp_path / "20260401_1000.pdf"
     pdf.write_bytes(b"%PDF fake")
 
-    receipt, model = extract_receipt(pdf, openai_api_key="sk-test")
+    receipt, model, tier = extract_receipt(pdf, openai_api_key="sk-test")
     assert model == OCR_MODEL  # fell back gracefully
 
 
@@ -189,6 +189,6 @@ def test_extraction_tier_high_for_escalated_merchant():
 
 def test_extraction_tier_low_for_poor_quality():
     patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
-    r = _receipt(merchant="Unknown", total=None)
+    r = _receipt(merchant="unknown", total=None)
     assert _extraction_tier("short", r, patterns) == "low"
 
