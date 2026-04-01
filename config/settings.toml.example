@@ -3,13 +3,35 @@ db_path = "data/intake.db"
 reports_dir = "reports"
 
 # ── OpenAI fallback (optional) ────────────────────────────────────────────────
-# When set, receipts where Tesseract OCR quality is poor (short text, missing
-# vendor name, missing total, or high noise ratio) are re-extracted using the
-# OpenAI vision API.  The model name is stored per-receipt so that
-# `intake backfill` can automatically re-run only the receipts processed with
-# an older / weaker model.
+# Two-tier model config:
+#   low  — used when OCR quality is borderline (short text, missing total/vendor)
+#   high — used when the extracted merchant name matches an escalation pattern
+#          (e.g. a date fragment or page number ended up as the vendor name)
 #
 # Model rank (higher = more capable):  gpt-4o > gpt-4o-mini > tesseract
+# Backfill re-processes any receipt whose sidecar model rank < current high model.
 #
-# openai_api_key = "sk-..."
-# openai_model   = "gpt-4o-mini"   # or "gpt-4o"
+# openai_api_key    = "sk-..."
+# openai_model_low  = "gpt-4o-mini"   # borderline OCR quality
+# openai_model_high = "gpt-4o"        # confirmed bad extraction / escalation
+
+# ── Escalation patterns ───────────────────────────────────────────────────────
+# Regex patterns matched against the extracted merchant name.  Any match forces
+# the high-fidelity model regardless of overall OCR quality.
+# Defaults are applied when this list is absent.
+#
+# escalation_patterns = [
+#   "\\d{1,2}[/\\-]\\d{1,2}",   # date fragment in name: "03/15"
+#   "\\bpages?\\s*\\.?\\s*\\d+\\b",  # "page 1"
+#   "\\bpg\\.?\\s*\\d+\\b",     # "pg. 2"
+#   "#\\d{3,}",                  # receipt number: "#00123"
+#   "^\\d+$",                    # name is all digits
+#   "^.{0,2}$",                  # name is 0–2 chars
+# ]
+
+# ── Fuzzy merchant correction ─────────────────────────────────────────────────
+# After OCR, merchant names are fuzzy-matched against known keywords.
+# Raise the threshold (max 1.0) to be more conservative; lower it to correct
+# more aggressively.  Keywords shorter than 4 chars are always skipped.
+#
+# fuzzy_threshold = 0.82

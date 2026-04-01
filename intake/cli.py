@@ -38,7 +38,30 @@ def _require_receipt_dir(settings: dict, args_value: str | None) -> Path:
     return p
 
 
-def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
+def _get_extract_kwargs(settings: dict) -> dict:
+    """Build keyword arguments for extract_receipt() from settings."""
+    return {
+        "openai_api_key": settings.get("openai_api_key") or None,
+        "openai_model_low": (
+            settings.get("openai_model_low")
+            or settings.get("openai_model")
+            or "gpt-4o-mini"
+        ),
+        "openai_model_high": settings.get("openai_model_high") or "gpt-4o",
+        "escalation_patterns": settings.get("escalation_patterns") or None,
+        "fuzzy_threshold": float(settings.get("fuzzy_threshold", 0.82)),
+    }
+
+
+def _best_model(settings: dict) -> str:
+    """Return the highest-ranked model configured in *settings*."""
+    if not settings.get("openai_api_key"):
+        from intake.extract import OCR_MODEL
+        return OCR_MODEL
+    return settings.get("openai_model_high") or settings.get("openai_model") or "gpt-4o"
+
+
+
     from intake.classify import classify, load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
@@ -69,8 +92,8 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
         try:
             receipt, model = extract_receipt(
                 pdf,
-                openai_api_key=settings.get("openai_api_key"),
-                openai_model=settings.get("openai_model", "gpt-4o-mini"),
+                **_get_extract_kwargs(settings),
+                fuzzy_rules=rules,
             )
             category = classify(receipt.merchant, rules, receipt.raw_text)
             dest_dir = receipt_dir / category
@@ -99,6 +122,8 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
                 "receipt_dir": str(dest.relative_to(receipt_dir)),
                 "raw_text": receipt.raw_text,
                 "processed_by": model,
+                "purchaser": receipt.purchaser,
+                "card_last4": receipt.card_last4,
             }
             upsert_receipt(conn, row)
             write_sidecar(dest, {k: v for k, v in row.items() if k != "raw_text"})
@@ -130,21 +155,17 @@ def _cmd_report(args: argparse.Namespace, settings: dict) -> None:
 
 
 def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
+    from intake.classify import load_rules
     from intake.db import init_db, upsert_receipt
-    from intake.extract import OCR_MODEL, extract_receipt, model_rank, should_reprocess
-    from intake.sidecar import has_sidecar, read_sidecar, write_sidecar
+    from intake.extract import OCR_MODEL, extract_receipt, should_reprocess
+    from intake.sidecar import read_sidecar, write_sidecar
 
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
     db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    current_model = _best_model(settings)
+    rules = load_rules()
+    extract_kwargs = _get_extract_kwargs(settings)
 
-    # Determine the model that would be used for any (re)processing
-    current_model = (
-        settings.get("openai_model", "gpt-4o-mini")
-        if settings.get("openai_api_key")
-        else OCR_MODEL
-    )
-
-    # Collect PDFs from all category folders, skipping the intake/ staging dir
     all_pdfs = [
         pdf
         for pdf in sorted(receipt_dir.rglob("*.pdf"))
@@ -192,11 +213,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         category = "/".join(rel.parts[:-1])
         print(f"  Backfilling: {rel}")
         try:
-            receipt, model = extract_receipt(
-                pdf,
-                openai_api_key=settings.get("openai_api_key"),
-                openai_model=settings.get("openai_model", "gpt-4o-mini"),
-            )
+            receipt, model = extract_receipt(pdf, **extract_kwargs, fuzzy_rules=rules)
             row = {
                 "filename": pdf.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -206,6 +223,8 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
                 "receipt_dir": str(rel),
                 "raw_text": receipt.raw_text,
                 "processed_by": model,
+                "purchaser": receipt.purchaser,
+                "card_last4": receipt.card_last4,
             }
             upsert_receipt(conn, row)
             write_sidecar(pdf, {k: v for k, v in row.items() if k != "raw_text"})
