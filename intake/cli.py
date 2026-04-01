@@ -204,7 +204,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     all_pdfs = [
         pdf
         for pdf in sorted(receipt_dir.rglob("*.pdf"))
-        if pdf.relative_to(receipt_dir).parts[0] != "intake"
+        if pdf.relative_to(receipt_dir).parts[0] not in ("intake", "exhaust")
         and len(pdf.relative_to(receipt_dir).parts) >= 2
     ]
 
@@ -277,6 +277,92 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     print(f"\nBackfill complete: {ok} ingested, {failed} error(s).")
 
 
+# Keywords in merchant names that suggest product docs rather than receipts
+_EXHAUST_MERCHANT_KEYWORDS = frozenset(
+    [
+        "product brief",
+        "manual",
+        "user guide",
+        "datasheet",
+        "specification",
+        "quick start",
+        "installation guide",
+    ]
+)
+# Filename stem substrings that indicate product docs
+_EXHAUST_FILENAME_KEYWORDS = frozenset(
+    ["manual", "datasheet", "spec", "guide", "brief", "readme"]
+)
+
+
+def _is_exhaust_candidate(pdf: Path, sidecar: dict | None) -> bool:
+    """Return True if the PDF looks like a product doc rather than a receipt."""
+    stem = pdf.stem.lower()
+    if any(kw in stem for kw in _EXHAUST_FILENAME_KEYWORDS):
+        return True
+    if sidecar:
+        merchant = (sidecar.get("merchant") or "").lower()
+        if any(kw in merchant for kw in _EXHAUST_MERCHANT_KEYWORDS):
+            return True
+        # No total and merchant name looks non-transactional
+        if sidecar.get("total") in (None, 0.0) and any(
+            kw in merchant for kw in ("brief", "manual", "guide", "spec")
+        ):
+            return True
+    return False
+
+
+def _cmd_exhaust(args: argparse.Namespace, settings: dict) -> None:
+    """Move product docs / non-receipt PDFs to the exhaust folder."""
+    from intake.sidecar import read_sidecar
+
+    receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
+    exhaust_dir = receipt_dir / "exhaust"
+
+    all_pdfs = [
+        pdf
+        for pdf in sorted(receipt_dir.rglob("*.pdf"))
+        if pdf.relative_to(receipt_dir).parts[0] not in ("intake", "exhaust")
+        and len(pdf.relative_to(receipt_dir).parts) >= 2
+    ]
+
+    candidates = [
+        (pdf, read_sidecar(pdf))
+        for pdf in all_pdfs
+        if _is_exhaust_candidate(pdf, read_sidecar(pdf))
+    ]
+
+    if not candidates:
+        print("No exhaust candidates found.")
+        return
+
+    print(f"Found {len(candidates)} exhaust candidate(s):")
+    for pdf, sc in candidates:
+        merchant = sc.get("merchant", "?") if sc else "?"
+        total = sc.get("total", "?") if sc else "?"
+        print(
+            f"  {pdf.relative_to(receipt_dir)}  (merchant={merchant!r}, total={total})"
+        )
+
+    if args.dry_run:
+        return
+
+    moved = 0
+    for pdf, sc in candidates:
+        rel = pdf.relative_to(receipt_dir)
+        dest = exhaust_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        pdf.rename(dest)
+        # Move sidecar if it exists
+        sc_src = pdf.with_suffix(".intake.json")
+        if sc_src.exists():
+            sc_src.rename(dest.with_suffix(".intake.json"))
+        print(f"  moved → exhaust/{rel}")
+        moved += 1
+
+    print(f"\nExhaust complete: {moved} file(s) moved.")
+
+
 def _cmd_audit(args: argparse.Namespace, settings: dict) -> None:
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
     intake_dir = receipt_dir / "intake"
@@ -316,7 +402,7 @@ def _detect_merge_groups(receipt_dir: Path, window_minutes: int) -> list[list[Pa
     groups: list[list[Path]] = []
 
     for folder in sorted(p for p in receipt_dir.rglob("*") if p.is_dir()):
-        if folder.relative_to(receipt_dir).parts[0] == "intake":
+        if folder.relative_to(receipt_dir).parts[0] in ("intake", "exhaust"):
             continue
         pdfs = sorted(folder.glob("*.pdf"))
         if len(pdfs) < 2:
@@ -484,6 +570,16 @@ def main() -> None:
         "--dry-run", action="store_true", help="Show groups without merging"
     )
 
+    # exhaust
+    p_exh = sub.add_parser(
+        "exhaust",
+        help="Move product docs / non-receipt PDFs to the exhaust folder",
+    )
+    p_exh.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_exh.add_argument(
+        "--dry-run", action="store_true", help="Show candidates without moving"
+    )
+
     # audit
     p_aud = sub.add_parser("audit", help="List intake PDFs without processing them")
     p_aud.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
@@ -499,6 +595,8 @@ def main() -> None:
         _cmd_backfill(args, settings)
     elif args.command == "merge":
         _cmd_merge(args, settings)
+    elif args.command == "exhaust":
+        _cmd_exhaust(args, settings)
     elif args.command == "audit":
         _cmd_audit(args, settings)
 
