@@ -21,6 +21,21 @@ CREATE TABLE IF NOT EXISTS receipts (
 );
 """
 
+_EMAIL_SCHEMA = """
+CREATE TABLE IF NOT EXISTS email_receipts (
+    uid             INTEGER NOT NULL,
+    mailbox         TEXT NOT NULL,
+    message_id      TEXT,
+    subject         TEXT,
+    sender          TEXT,
+    received_at     TEXT,
+    processed_at    TEXT NOT NULL,
+    attachment_count INTEGER DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'processed',
+    PRIMARY KEY (uid, mailbox)
+);
+"""
+
 _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN processed_by TEXT NOT NULL DEFAULT 'tesseract'",
     "ALTER TABLE receipts ADD COLUMN purchaser TEXT",
@@ -35,6 +50,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    conn.executescript(_EMAIL_SCHEMA)
     conn.commit()
     _run_migrations(conn)
     return conn
@@ -234,3 +250,66 @@ def query_flagged(
     )
     cols = [d[0] for d in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
+# ── email receipt helpers ──────────────────────────────────────────────────────
+
+
+def is_email_processed(conn: sqlite3.Connection, uid: int, mailbox: str) -> bool:
+    """Return True if this (uid, mailbox) pair is already in email_receipts."""
+    row = conn.execute(
+        "SELECT 1 FROM email_receipts WHERE uid = ? AND mailbox = ?",
+        (uid, mailbox),
+    ).fetchone()
+    return row is not None
+
+
+def record_email_receipt(
+    conn: sqlite3.Connection,
+    uid: int,
+    mailbox: str,
+    message_id: str,
+    subject: str,
+    sender: str,
+    received_at: str,
+    attachment_count: int,
+    status: str = "processed",
+) -> None:
+    """Insert or replace a processed email record."""
+    processed_at = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO email_receipts
+            (uid, mailbox, message_id, subject, sender, received_at,
+             processed_at, attachment_count, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            uid,
+            mailbox,
+            message_id,
+            subject,
+            sender,
+            received_at,
+            processed_at,
+            attachment_count,
+            status,
+        ),
+    )
+    conn.commit()
+
+
+def query_email_stats(conn: sqlite3.Connection) -> dict:
+    """Return summary stats for email ingestion."""
+    row = conn.execute(
+        "SELECT COUNT(*), MAX(processed_at) FROM email_receipts"
+    ).fetchone()
+    total, last_run = (row[0], row[1]) if row else (0, None)
+    by_status = conn.execute(
+        "SELECT status, COUNT(*) FROM email_receipts GROUP BY status"
+    ).fetchall()
+    return {
+        "total_processed": total,
+        "last_run": last_run,
+        "by_status": {r[0]: r[1] for r in by_status},
+    }

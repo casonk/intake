@@ -40,3 +40,34 @@ reports_dir = "reports"
 # more aggressively.  Keywords shorter than 4 chars are always skipped.
 #
 # fuzzy_threshold = 0.82
+
+# ── Email receipt ingestion (optional) ───────────────────────────────────────
+# Fetches receipt emails from Gmail via IMAP using shock-relay.
+# Run: intake email fetch       (one-shot)
+#      intake email daemon       (continuous polling)
+#      intake email status       (show stats)
+#
+# [email]
+# shock_relay_config = "/path/to/shock-relay/services/gmail-imap/config.local.yaml"
+#
+# # Gmail label to move processed emails into (created automatically if absent)
+# processed_label = "intake/processed"
+#
+# # Subject keywords — any match triggers fetch (case-insensitive)
+# receipt_subjects = [
+#   "receipt",
+#   "invoice",
+#   "order confirmation",
+#   "your order",
+#   "order #",
+# ]
+#
+# # How far back to search on each run (days)
+# since_days = 90
+#
+# # Daemon polling interval (seconds)
+# poll_interval_seconds = 300
+#
+# # Max emails to process per run
+# limit = 500
+
