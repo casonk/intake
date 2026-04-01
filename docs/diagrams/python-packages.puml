@@ -1,0 +1,18 @@
+@startuml packages_intake
+set namespaceSeparator none
+top to bottom direction
+skinparam componentStyle rectangle
+rectangle "intake\n0 child pkg, 6 modules\n7 python files\nexamples: classify, cli, db" as intake
+rectangle "intake.classify\n1 python file" as intake.classify
+rectangle "intake.cli\n1 python file" as intake.cli
+rectangle "intake.db\n1 python file" as intake.db
+rectangle "intake.ocr\n1 python file" as intake.ocr
+rectangle "intake.parse\n1 python file" as intake.parse
+rectangle "intake.report\n1 python file" as intake.report
+intake.cli --> intake.classify
+intake.cli --> intake.db
+intake.cli --> intake.ocr
+intake.cli --> intake.parse
+intake.cli --> intake.report
+intake.report --> intake.db
+@enduml
