@@ -26,6 +26,11 @@ dev = [
 ai = [
     "openai>=1.0",
 ]
+secrets = [
+    # Install auto-pass from the portfolio sibling repo:
+    #   pip install -e ../auto-pass
+    # Listed here for documentation; adjust the path for your environment.
+]
 
 [project.scripts]
 intake = "intake.cli:main"
