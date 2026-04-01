@@ -1,0 +1,18 @@
+@startuml classes_intake
+set namespaceSeparator none
+class "Receipt" as intake.parse.Receipt {
+  filename : str
+  merchant : str
+  raw_text : str
+  receipt_date : date | None
+  receipt_time : time | None
+  scan_date : date
+  total : float | None
+  suggested_filename() -> str
+}
+note as archilityPythonSurfaceNote
+Minimal class surface detected.
+Scanned 7 Python modules.
+See python-import-deps-intake.svg for module-level imports.
+end note
+@enduml
