@@ -19,7 +19,24 @@ def _load_settings() -> dict:
         return {}
     import toml
 
-    return toml.load(settings_path)
+    settings = toml.load(settings_path)
+
+    # Resolve OpenAI API key from KeePassXC via auto-pass if not set directly
+    if not settings.get("openai_api_key") and settings.get("openai_api_key_entry"):
+        try:
+            from auto_pass.keepassxc import resolve_keepassxc_entry
+
+            result = resolve_keepassxc_entry(
+                settings["openai_api_key_entry"],
+                attrs_map={"password": "password"},
+            )
+            key = result.get("password", "").strip()
+            if key:
+                settings["openai_api_key"] = key
+        except Exception:  # noqa: BLE001
+            pass
+
+    return settings
 
 
 def _require_receipt_dir(settings: dict, args_value: str | None) -> Path:

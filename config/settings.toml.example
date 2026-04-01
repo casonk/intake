@@ -11,7 +11,12 @@ reports_dir = "reports"
 # Model rank (higher = more capable):  gpt-4o > gpt-4o-mini > tesseract
 # Backfill re-processes any receipt whose sidecar model rank < current high model.
 #
-# openai_api_key    = "sk-..."
+# Preferred: resolve the API key from KeePassXC via auto-pass:
+#   openai_api_key_entry = "api/openai"   # KeePass entry path; Password field used
+#
+# Fallback: set the key directly (not recommended — keep secrets out of config):
+#   openai_api_key = "sk-..."
+#
 # openai_model_low  = "gpt-4o-mini"   # borderline OCR quality
 # openai_model_high = "gpt-4o"        # confirmed bad extraction / escalation
 
