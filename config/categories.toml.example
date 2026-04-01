@@ -1,0 +1,116 @@
+# categories.toml.example — copy to categories.toml and fill in your own keywords.
+#
+# Structure
+# ---------
+# Each top-level entry under [categories.<name>] defines a category.
+# Nested tables define subcategories: [categories.<name>.<subcat>]
+#
+# Keys:
+#   label    – Human-readable display name used in reports.
+#   keywords – List of lowercase substrings to match against merchant/OCR text.
+#              Subcategory keywords are checked before the parent's keywords.
+#              The most specific match wins; falls back to 'general'.
+#
+# Naming rules:
+#   - Category and subcategory keys must be lowercase.
+#   - Only letters, digits, hyphens (-), and underscores (_) are allowed.
+#
+# Classification result format:
+#   "category"             – matched at the top level
+#   "category/subcategory" – matched at a subcategory level
+
+[categories.grocery]
+label    = "Grocery & Supermarkets"
+keywords = []
+
+[categories.grocery.supermarket]
+label    = "Supermarket Chains"
+keywords = ["acme", "freshmart", "city-market", "corner-foods"]
+
+[categories.grocery.specialty]
+label    = "Specialty & Natural"
+keywords = ["nature-foods", "organic-basket", "co-op"]
+
+[categories.fuel]
+label    = "Fuel & Gas Stations"
+keywords = []
+
+[categories.fuel.station]
+label    = "Gas Stations"
+keywords = ["pump-n-go", "quik-fuel", "speedfuel"]
+
+[categories.fuel.ev]
+label    = "EV Charging"
+keywords = ["chargepoint", "evgo", "blink-charging"]
+
+[categories.pharmacy]
+label    = "Pharmacy & Drug Stores"
+keywords = ["rx-plus", "health-mart"]
+
+[categories.auto]
+label    = "Automotive"
+keywords = []
+
+[categories.auto.parts]
+label    = "Auto Parts"
+keywords = ["parts-depot", "motor-supply"]
+
+[categories.auto.service]
+label    = "Auto Service"
+keywords = ["quick-lube", "tire-center"]
+
+[categories.tech]
+label    = "Technology"
+keywords = []
+
+[categories.tech.hardware]
+label    = "Computer Hardware"
+keywords = ["byte-shop", "pc-direct"]
+
+[categories.tech.software]
+label    = "Software & Subscriptions"
+keywords = ["softco", "dev-tools-inc"]
+
+[categories.tech.mobile]
+label    = "Mobile & Carriers"
+keywords = ["mobilenet", "carrier-plus"]
+
+[categories.dining]
+label    = "Dining & Restaurants"
+keywords = []
+
+[categories.dining.fast-food]
+label    = "Fast Food"
+keywords = ["burger-hut", "taco-town"]
+
+[categories.dining.sit-down]
+label    = "Sit-Down Restaurants"
+keywords = ["the-grill", "main-street-bistro"]
+
+[categories.edu]
+label    = "Education"
+keywords = []
+
+[categories.edu.online]
+label    = "Online Courses & Learning"
+keywords = ["learnco", "skill-stream"]
+
+[categories.edu.university]
+label    = "University & College"
+keywords = ["state-university", "community-college"]
+
+[categories.outdoor]
+label    = "Outdoor Recreation & Sports"
+keywords = []
+
+[categories.outdoor.gear]
+label    = "Outdoor Gear & Equipment"
+keywords = ["trail-outfitters", "base-camp-supply"]
+
+[categories.outdoor.resort]
+label    = "Ski & Mountain Resorts"
+keywords = ["summit-ski", "alpine-resort"]
+
+[categories.general]
+label    = "General / Uncategorized"
+keywords = []

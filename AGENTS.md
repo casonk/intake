@@ -5,15 +5,16 @@
 `intake` processes incoming receipt PDF scans from a snowbridge SMB share into a structured SQLite database and Markdown/HTML summary reports.
 
 - **Receipt source**: `/mnt/setup/bully/info/receipt/` (snowbridge SMB share)
-- **Inbox**: `inbox/` subfolder where new PDFs land, named `YYYYMMDD_HHMM.pdf`
-- **Categories**: `auto`, `cvs`, `edu`, `gas-station`, `general`, `grocery`, `moto`, `office`, `outdoor`, `PC`, `phone`, `sw`, `weed`
+- **Inbox**: `intake/` subfolder where new PDFs land, named `YYYYMMDD_HHMM.pdf`
+- **Categories**: `auto`, `edu`, `gas-station`, `general`, `grocery`, `moto`, `office`, `outdoor`, `pc`, `pharmacy`, `phone`, `sw`, `weed` — each supports subcategories (e.g. `grocery/supermarket`)
 
 ## Key Entry Points
 
 ```bash
-intake process   # OCR → parse → classify → move → upsert DB
+intake process   # OCR → parse → classify → move → upsert DB → write sidecar
+intake backfill  # ingest receipts already in category folders (skips sidecared files)
 intake report    # generate Markdown + HTML spending summary
-intake audit     # list inbox PDFs without processing
+intake audit     # list intake PDFs without processing
 ```
 
 ## Configuration
@@ -29,9 +30,10 @@ cp config/settings.toml.example config/settings.toml
 
 1. **OCR** (`intake/ocr.py`): pdfplumber text extraction, pytesseract fallback for image-only pages
 2. **Parse** (`intake/parse.py`): extract date (from filename), merchant (first OCR line), total (last Total/Amount Due match)
-3. **Classify** (`intake/classify.py`): keyword rules from `config/categories.toml`; falls back to `general`
-4. **Move**: PDF moves from `inbox/` to the matched category folder
+3. **Classify** (`intake/classify.py`): keyword rules from `config/categories.toml` (gitignored; copy from `config/categories.toml.example`); subcategory keywords checked first; returns `"category"` or `"category/subcategory"`; falls back to `general`
+4. **Move**: PDF moves from `intake/` to the matched category folder; a `<stem>.intake.json` sidecar is written alongside it
 5. **DB** (`intake/db.py`): upsert into `data/intake.db` (SQLite)
+6. **Backfill** (`intake backfill`): walks all category folders, skips PDFs that already have a sidecar, OCRs and upserts the rest — use this to onboard receipts that pre-date the pipeline
 6. **Report** (`intake/report.py`): Jinja2-rendered Markdown + HTML to `reports/`
 
 ## Session Continuity

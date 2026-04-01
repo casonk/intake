@@ -39,12 +39,19 @@ _MD_TEMPLATE = """\
 {% for row in data.top_merchants -%}
 | {{ row.merchant or "Unknown" }} | {{ row.count }} | ${{ "%.2f"|format(row.total_spend) }} |
 {% endfor %}
+## Extraction Model Breakdown
+
+| Model | Receipt Count |
+|---|---|
+{% for row in data.by_model -%}
+| {{ row.model }} | {{ row.count }} |
+{% endfor %}
 ## Recent Receipts (last 20)
 
-| Date | Merchant | Category | Total | Filename |
-|---|---|---|---|---|
+| Date | Merchant | Category | Total | Filename | Model | Processed At |
+|---|---|---|---|---|---|---|
 {% for row in data.recent -%}
-| {{ row.scan_date }} | {{ row.merchant or "Unknown" }} | {{ row.category }} | {% if row.total is not none %}${{ "%.2f"|format(row.total) }}{% else %}—{% endif %} | {{ row.filename }} |
+| {{ row.scan_date }} | {{ row.merchant or "Unknown" }} | {{ row.category }} | {% if row.total is not none %}${{ "%.2f"|format(row.total) }}{% else %}—{% endif %} | {{ row.filename }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at[:19] if row.processed_at else "—" }} |
 {% endfor %}
 """
 
@@ -111,9 +118,19 @@ _HTML_TEMPLATE = """\
   </tbody>
 </table>
 
+<h2>Extraction Model Breakdown</h2>
+<table>
+  <thead><tr><th>Model</th><th>Receipt Count</th></tr></thead>
+  <tbody>
+  {% for row in data.by_model %}
+  <tr><td>{{ row.model }}</td><td>{{ row.count }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
 <h2>Recent Receipts (last 20)</h2>
 <table>
-  <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Total</th><th>Filename</th></tr></thead>
+  <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Total</th><th>Filename</th><th>Model</th><th>Processed At</th></tr></thead>
   <tbody>
   {% for row in data.recent %}
   <tr>
@@ -122,6 +139,8 @@ _HTML_TEMPLATE = """\
     <td>{{ row.category }}</td>
     <td>{% if row.total is not none %}${{ "%.2f"|format(row.total) }}{% else %}—{% endif %}</td>
     <td>{{ row.filename }}</td>
+    <td>{{ row.processed_by or "tesseract" }}</td>
+    <td>{{ row.processed_at[:19] if row.processed_at else "—" }}</td>
   </tr>
   {% endfor %}
   </tbody>

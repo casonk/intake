@@ -22,6 +22,9 @@ dev = [
     "pytest>=8",
     "pytest-cov>=5",
 ]
+ai = [
+    "openai>=1.0",
+]
 
 [project.scripts]
 intake = "intake.cli:main"
