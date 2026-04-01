@@ -72,13 +72,25 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
             category = classify(receipt.merchant, rules, receipt.raw_text)
             dest_dir = receipt_dir / category
             dest_dir.mkdir(exist_ok=True)
-            dest = dest_dir / pdf.name
+
+            # Rename based on the date/time printed on the receipt
+            new_name = receipt.suggested_filename()
+            dest = dest_dir / new_name
+            # Avoid overwriting an existing file by appending a counter suffix
+            if dest.exists() and dest != pdf:
+                stem = dest.stem
+                counter = 1
+                while dest.exists():
+                    dest = dest_dir / f"{stem}-{counter}.pdf"
+                    counter += 1
+
             shutil.move(str(pdf), dest)
+            renamed = f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
 
             upsert_receipt(
                 conn,
                 {
-                    "filename": pdf.name,
+                    "filename": dest.name,
                     "scan_date": receipt.scan_date.isoformat(),
                     "merchant": receipt.merchant,
                     "total": receipt.total,
@@ -88,7 +100,7 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
                 },
             )
             print(
-                f"    → {category}/ (merchant={receipt.merchant!r}, total={receipt.total})"
+                f"    -> {category}/{dest.name} (merchant={receipt.merchant!r}, total={receipt.total}){renamed}"
             )
         except Exception as exc:  # noqa: BLE001
             print(f"    ERROR processing {pdf.name}: {exc}", file=sys.stderr)
