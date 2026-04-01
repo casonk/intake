@@ -53,12 +53,16 @@ def test_balance_due_parsed():
 
 
 def test_card_last4_from_visa():
-    r = parse_receipt("20260401_0900.pdf", "Store\nVISA xxxx xxxx xxxx 4321\nTotal $5.00")
+    r = parse_receipt(
+        "20260401_0900.pdf", "Store\nVISA xxxx xxxx xxxx 4321\nTotal $5.00"
+    )
     assert r.card_last4 == "4321"
 
 
 def test_card_last4_from_masked_pattern():
-    r = parse_receipt("20260401_0900.pdf", "Store\nCard: XXXX-XXXX-XXXX-7890\nTotal $5.00")
+    r = parse_receipt(
+        "20260401_0900.pdf", "Store\nCard: XXXX-XXXX-XXXX-7890\nTotal $5.00"
+    )
     assert r.card_last4 == "7890"
 
 
@@ -76,4 +80,3 @@ def test_purchaser_extracted():
 def test_purchaser_absent_when_not_present():
     r = parse_receipt("20260401_0900.pdf", "Store\nTotal $5.00")
     assert r.purchaser is None
-

@@ -56,13 +56,19 @@ def _get_extract_kwargs(settings: dict) -> dict:
 def _low_model(settings: dict) -> str:
     if not settings.get("openai_api_key"):
         from intake.extract import OCR_MODEL
+
         return OCR_MODEL
-    return settings.get("openai_model_low") or settings.get("openai_model") or "gpt-4o-mini"
+    return (
+        settings.get("openai_model_low")
+        or settings.get("openai_model")
+        or "gpt-4o-mini"
+    )
 
 
 def _high_model(settings: dict) -> str:
     if not settings.get("openai_api_key"):
         from intake.extract import OCR_MODEL
+
         return OCR_MODEL
     return settings.get("openai_model_high") or "gpt-4o"
 
@@ -76,6 +82,7 @@ def _skip_sidecar(sc: dict, settings: dict) -> bool:
     being endlessly re-queued just because a high model is also configured.
     """
     from intake.extract import OCR_MODEL, model_rank
+
     tier = sc.get("tier", "ok")
     sidecar_model = sc.get("processed_by", OCR_MODEL)
     if tier == "ok":
@@ -87,6 +94,7 @@ def _skip_sidecar(sc: dict, settings: dict) -> bool:
     return False
 
 
+def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
     from intake.classify import classify, load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
@@ -136,7 +144,9 @@ def _skip_sidecar(sc: dict, settings: dict) -> bool:
                     counter += 1
 
             shutil.move(str(pdf), dest)
-            renamed = f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
+            renamed = (
+                f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
+            )
 
             row = {
                 "filename": dest.name,
@@ -211,7 +221,9 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
             continue
         pending.append(pdf)
 
-    print(f"Found {len(all_pdfs)} receipt(s); {skipped} up-to-date, {len(pending)} pending.")
+    print(
+        f"Found {len(all_pdfs)} receipt(s); {skipped} up-to-date, {len(pending)} pending."
+    )
 
     if not pending:
         print("Nothing to backfill.")
@@ -234,7 +246,9 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         category = "/".join(rel.parts[:-1])
         print(f"  Backfilling: {rel}")
         try:
-            receipt, model, tier = extract_receipt(pdf, **extract_kwargs, fuzzy_rules=rules)
+            receipt, model, tier = extract_receipt(
+                pdf, **extract_kwargs, fuzzy_rules=rules
+            )
             row = {
                 "filename": pdf.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -285,6 +299,7 @@ def _parse_scan_datetime(pdf: Path):
     """Return a datetime from a YYYYMMDD_HHMM filename, or None."""
     import re
     from datetime import datetime
+
     m = re.match(r"(\d{8})_?(\d{4})?", pdf.stem)
     if m:
         try:
@@ -333,7 +348,7 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
     from intake.classify import load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
-    from intake.sidecar import read_sidecar, write_sidecar
+    from intake.sidecar import write_sidecar
 
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
     db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
@@ -382,7 +397,9 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
                 print(f"    removed {sec.name}")
 
             # Re-extract merged PDF
-            receipt, model, tier = extract_receipt(primary, **extract_kwargs, fuzzy_rules=rules)
+            receipt, model, tier = extract_receipt(
+                primary, **extract_kwargs, fuzzy_rules=rules
+            )
             row = {
                 "filename": primary.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -398,7 +415,9 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
             }
             upsert_receipt(conn, row)
             write_sidecar(primary, {k: v for k, v in row.items() if k != "raw_text"})
-            print(f"    -> merchant={receipt.merchant!r}, total={receipt.total}, model={model}")
+            print(
+                f"    -> merchant={receipt.merchant!r}, total={receipt.total}, model={model}"
+            )
             ok += 1
         except Exception as exc:  # noqa: BLE001
             print(f"    ERROR: {exc}", file=sys.stderr)
@@ -456,7 +475,9 @@ def main() -> None:
     p_mrg.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
     p_mrg.add_argument("--db", metavar="PATH", help="SQLite database path")
     p_mrg.add_argument(
-        "--window", metavar="MINUTES", default=5,
+        "--window",
+        metavar="MINUTES",
+        default=5,
         help="Group PDFs whose scan times are within this many minutes (default: 5)",
     )
     p_mrg.add_argument(

@@ -49,7 +49,10 @@ def extract_with_openai(
         },
         {
             "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{image_b64}", "detail": "high"},
+            "image_url": {
+                "url": f"data:image/png;base64,{image_b64}",
+                "detail": "high",
+            },
         },
     ]
 
@@ -71,7 +74,13 @@ def extract_with_openai(
 
     raw = response.choices[0].message.content or "{}"
     # Strip accidental markdown fences
-    raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    raw = (
+        raw.strip()
+        .removeprefix("```json")
+        .removeprefix("```")
+        .removesuffix("```")
+        .strip()
+    )
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
