@@ -711,6 +711,49 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
     print(f"\nMerge complete: {ok} group(s) merged, {failed} error(s).")
 
 
+def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
+    from intake.db import init_db, query_email_stats
+    from intake.email import fetch_receipts, run_daemon
+
+    db_path = Path(getattr(args, "db", None) or settings.get("db_path") or _DEFAULT_DB)
+    conn = init_db(db_path)
+
+    email_cfg = settings.setdefault("email", {})
+
+    if args.email_command == "fetch":
+        if hasattr(args, "since_days") and args.since_days is not None:
+            email_cfg["since_days"] = args.since_days
+        dry = getattr(args, "dry_run", False)
+        print(f"Fetching receipt emails{'(dry run)' if dry else ''}…")
+        result = fetch_receipts(settings, conn, dry_run=dry, verbose=True)
+        print(
+            f"\nFetch complete: {result.attachments_saved} PDF attachment(s) saved, "
+            f"{result.html_processed} inline receipt(s) processed, "
+            f"{result.skipped} skipped, {result.errors} error(s)."
+        )
+        if result.saved_files:
+            print("Saved files:")
+            for f in result.saved_files:
+                print(f"  {f}")
+            print("\nRun 'intake backfill' to OCR the new attachments.")
+
+    elif args.email_command == "daemon":
+        if hasattr(args, "interval") and args.interval is not None:
+            email_cfg["poll_interval_seconds"] = args.interval
+        run_daemon(settings, conn, verbose=True)
+
+    elif args.email_command == "status":
+        stats = query_email_stats(conn)
+        print(f"Email receipts processed : {stats['total_processed']}")
+        print(f"Last run                 : {stats['last_run'] or 'never'}")
+        if stats["by_status"]:
+            print("By status:")
+            for status_val, count in stats["by_status"].items():
+                print(f"  {status_val:<20} {count}")
+
+    conn.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="intake",
@@ -821,6 +864,38 @@ def main() -> None:
     p_aud = sub.add_parser("audit", help="List intake PDFs without processing them")
     p_aud.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
 
+    # email
+    p_em = sub.add_parser(
+        "email",
+        help="Fetch receipt emails from Gmail via IMAP (shock-relay)",
+    )
+    p_em_sub = p_em.add_subparsers(dest="email_command", required=True)
+
+    p_em_fetch = p_em_sub.add_parser(
+        "fetch", help="One-shot: fetch and process new receipt emails"
+    )
+    p_em_fetch.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_em_fetch.add_argument(
+        "--dry-run", action="store_true", help="Show what would be fetched"
+    )
+    p_em_fetch.add_argument(
+        "--since-days", metavar="N", type=int, help="Override since_days from settings"
+    )
+
+    p_em_daemon = p_em_sub.add_parser(
+        "daemon", help="Poll for new receipt emails continuously (systemd-compatible)"
+    )
+    p_em_daemon.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_em_daemon.add_argument(
+        "--interval",
+        metavar="SECONDS",
+        type=int,
+        help="Override poll_interval_seconds from settings",
+    )
+
+    p_em_status = p_em_sub.add_parser("status", help="Show email ingestion statistics")
+    p_em_status.add_argument("--db", metavar="PATH", help="SQLite database path")
+
     args = parser.parse_args()
     settings = _load_settings()
 
@@ -840,6 +915,8 @@ def main() -> None:
         _cmd_suppress(args, settings)
     elif args.command == "audit":
         _cmd_audit(args, settings)
+    elif args.command == "email":
+        _cmd_email(args, settings)
 
 
 if __name__ == "__main__":
