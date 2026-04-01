@@ -424,12 +424,19 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
     from intake.db import init_db, query_flagged
 
     db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    include_suppressed = getattr(args, "show_suppressed", False)
     conn = init_db(db_path)
-    flagged = query_flagged(conn)
+    flagged = query_flagged(conn, include_suppressed=include_suppressed)
     conn.close()
 
     if not flagged:
-        print("No suspicious records found — all receipts look clean.")
+        msg = "No suspicious records found"
+        msg += (
+            " (suppressed records hidden — use --show-suppressed to see all)."
+            if not include_suppressed
+            else "."
+        )
+        print(msg)
         return
 
     # ── terminal summary ──────────────────────────────────────────────────────
@@ -511,6 +518,47 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
 
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\nReview file written → {md_path}")
+
+
+def _cmd_suppress(args: argparse.Namespace, settings: dict) -> None:
+    """Mark flagged receipts as reviewed so they no longer appear in 'intake review'."""
+    from intake.db import init_db, query_flagged, suppress_receipts, unsuppress_receipts
+
+    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    conn = init_db(db_path)
+
+    if args.unsuppress:
+        if args.filenames:
+            n = unsuppress_receipts(conn, args.filenames)
+            print(f"Unsuppressed {n} record(s).")
+        else:
+            print(
+                "ERROR: --unsuppress requires at least one filename.", file=sys.stderr
+            )
+            sys.exit(1)
+        conn.close()
+        return
+
+    if args.all:
+        # Suppress everything currently flagged
+        flagged = query_flagged(conn, include_suppressed=False)
+        if not flagged:
+            print("Nothing to suppress — no unsuppressed flagged records.")
+            conn.close()
+            return
+        filenames = [r["filename"] for r in flagged]
+        n = suppress_receipts(conn, filenames)
+        print(f"Suppressed {n} record(s):")
+        for f in filenames:
+            print(f"  {f}")
+    elif args.filenames:
+        n = suppress_receipts(conn, args.filenames)
+        print(f"Suppressed {n} record(s).")
+    else:
+        print("ERROR: provide filename(s) or --all.", file=sys.stderr)
+        sys.exit(1)
+
+    conn.close()
 
 
 def _cmd_audit(args: argparse.Namespace, settings: dict) -> None:
@@ -740,6 +788,34 @@ def main() -> None:
     p_rev.add_argument(
         "--output-dir", metavar="PATH", help="Directory to write review.md into"
     )
+    p_rev.add_argument(
+        "--show-suppressed",
+        action="store_true",
+        help="Include records already marked as reviewed",
+    )
+
+    # suppress
+    p_sup = sub.add_parser(
+        "suppress",
+        help="Mark flagged receipts as reviewed so they no longer appear in 'intake review'",
+    )
+    p_sup.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_sup.add_argument(
+        "filenames",
+        nargs="*",
+        metavar="FILENAME",
+        help="One or more PDF filenames to suppress (e.g. 20110729.pdf)",
+    )
+    p_sup.add_argument(
+        "--all",
+        action="store_true",
+        help="Suppress all currently flagged records at once",
+    )
+    p_sup.add_argument(
+        "--unsuppress",
+        action="store_true",
+        help="Clear the reviewed flag (requires filename argument)",
+    )
 
     # audit
     p_aud = sub.add_parser("audit", help="List intake PDFs without processing them")
@@ -760,6 +836,8 @@ def main() -> None:
         _cmd_exhaust(args, settings)
     elif args.command == "review":
         _cmd_review(args, settings)
+    elif args.command == "suppress":
+        _cmd_suppress(args, settings)
     elif args.command == "audit":
         _cmd_audit(args, settings)
 

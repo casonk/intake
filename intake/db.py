@@ -25,6 +25,7 @@ _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN processed_by TEXT NOT NULL DEFAULT 'tesseract'",
     "ALTER TABLE receipts ADD COLUMN purchaser TEXT",
     "ALTER TABLE receipts ADD COLUMN card_last4 TEXT",
+    "ALTER TABLE receipts ADD COLUMN reviewed_at TEXT",  # ISO timestamp when suppressed; NULL = not reviewed
 ]
 
 
@@ -89,7 +90,26 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
     conn.commit()
 
 
-def query_summary(conn: sqlite3.Connection) -> dict:
+def suppress_receipts(conn: sqlite3.Connection, filenames: list[str]) -> int:
+    """Mark *filenames* as manually reviewed; they are excluded from future review output."""
+    reviewed_at = datetime.now(timezone.utc).isoformat()
+    conn.executemany(
+        "UPDATE receipts SET reviewed_at = ? WHERE filename = ?",
+        [(reviewed_at, f) for f in filenames],
+    )
+    conn.commit()
+    return conn.total_changes
+
+
+def unsuppress_receipts(conn: sqlite3.Connection, filenames: list[str]) -> int:
+    """Clear the reviewed_at flag so records appear in review output again."""
+    conn.executemany(
+        "UPDATE receipts SET reviewed_at = NULL WHERE filename = ?",
+        [(f,) for f in filenames],
+    )
+    conn.commit()
+    return conn.total_changes
+
     """Return aggregated summary data for report generation."""
     rows = lambda sql, *a: [dict(r) for r in conn.execute(sql, *a).fetchall()]  # noqa: E731
 
@@ -169,7 +189,9 @@ def query_summary(conn: sqlite3.Connection) -> dict:
     }
 
 
-def query_flagged(conn: sqlite3.Connection) -> list[dict]:
+def query_flagged(
+    conn: sqlite3.Connection, include_suppressed: bool = False
+) -> list[dict]:
     """Return rows that look suspicious for manual review.
 
     Flags any receipt where:
@@ -177,10 +199,13 @@ def query_flagged(conn: sqlite3.Connection) -> list[dict]:
     - merchant contains an @ sign (email leaked in)
     - merchant is very short (≤ 3 chars)
     - total is null or exactly 0.0
-    - processed_by is tesseract but merchant smells like an escalation trigger
+
+    Rows with a ``reviewed_at`` timestamp are suppressed from results unless
+    *include_suppressed* is True.
     """
+    suppressed_clause = "" if include_suppressed else "AND reviewed_at IS NULL"
     cursor = conn.execute(
-        """
+        f"""
         SELECT
             id,
             filename,
@@ -192,15 +217,18 @@ def query_flagged(conn: sqlite3.Connection) -> list[dict]:
             purchaser,
             card_last4,
             processed_by,
-            processed_at
+            processed_at,
+            reviewed_at
         FROM receipts
-        WHERE
+        WHERE (
             merchant IS NULL
             OR LOWER(TRIM(merchant)) IN ('unknown', 'receipt', '')
             OR merchant LIKE '%@%'
             OR LENGTH(TRIM(merchant)) <= 3
             OR total IS NULL
             OR total = 0.0
+        )
+        {suppressed_clause}
         ORDER BY category, filename
         """
     )
