@@ -167,3 +167,42 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         "top_merchants": top_merchants,
         "recent": recent,
     }
+
+
+def query_flagged(conn: sqlite3.Connection) -> list[dict]:
+    """Return rows that look suspicious for manual review.
+
+    Flags any receipt where:
+    - merchant is null, 'unknown', or 'receipt' (OCR placeholder)
+    - merchant contains an @ sign (email leaked in)
+    - merchant is very short (≤ 3 chars)
+    - total is null or exactly 0.0
+    - processed_by is tesseract but merchant smells like an escalation trigger
+    """
+    cursor = conn.execute(
+        """
+        SELECT
+            id,
+            filename,
+            receipt_dir,
+            scan_date,
+            merchant,
+            total,
+            category,
+            purchaser,
+            card_last4,
+            processed_by,
+            processed_at
+        FROM receipts
+        WHERE
+            merchant IS NULL
+            OR LOWER(TRIM(merchant)) IN ('unknown', 'receipt', '')
+            OR merchant LIKE '%@%'
+            OR LENGTH(TRIM(merchant)) <= 3
+            OR total IS NULL
+            OR total = 0.0
+        ORDER BY category, filename
+        """
+    )
+    cols = [d[0] for d in cursor.description]
+    return [dict(zip(cols, row)) for row in cursor.fetchall()]
