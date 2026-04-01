@@ -43,6 +43,7 @@ DEFAULT_ESCALATION_PATTERNS: list[str] = [
     r"^\d+$",  # name is entirely digits
     r"^.{0,2}$",  # name too short (0–2 chars)
     r"\binvoice\b",  # document type, not a merchant name
+    r"\breceipt\b",  # generic "receipt" leaked into merchant name
     r"[@]",  # email address leaked into name
     r"\bgmail\b",  # Gmail / email domain
     r"\byahoo\b",  # Yahoo email domain
@@ -50,6 +51,12 @@ DEFAULT_ESCALATION_PATTERNS: list[str] = [
     r"\bvin\b",  # VIN number label
     r"\bvehicle\b",  # vehicle description text
     r"\b(make|model|plate)\b",  # vehicle field labels
+]
+
+# Filename stem patterns that should escalate regardless of OCR quality.
+DEFAULT_FILENAME_ESCALATION_PATTERNS: list[str] = [
+    r"^receipt[-_]",  # e.g. Receipt-2800-3904-3610.pdf
+    r"^invoice[-_]",  # e.g. Invoice-3404F5E4-0001.pdf
 ]
 
 
@@ -102,13 +109,24 @@ def _compile_patterns(raw: list[str]) -> list[re.Pattern]:
     return compiled
 
 
+def _filename_escalates(filename: str, patterns: list[re.Pattern]) -> bool:
+    """Return True if the PDF *filename* stem matches any filename escalation pattern."""
+    stem = Path(filename).stem.lower()
+    return any(p.search(stem) for p in patterns)
+
+
 def _extraction_tier(
     text: str,
     receipt: Receipt,
     escalation_compiled: list[re.Pattern],
+    filename_escalation_compiled: list[re.Pattern] | None = None,
 ) -> str:
     """Return ``'ok'``, ``'low'``, or ``'high'`` for the extraction tier needed."""
     if _merchant_escalates(receipt.merchant, escalation_compiled):
+        return "high"
+    if filename_escalation_compiled and _filename_escalates(
+        receipt.filename, filename_escalation_compiled
+    ):
         return "high"
     if not _ocr_quality_ok(text, receipt):
         return "low"
@@ -157,7 +175,8 @@ def extract_receipt(
         if escalation_patterns is not None
         else DEFAULT_ESCALATION_PATTERNS
     )
-    tier = _extraction_tier(raw_text, receipt, patterns)
+    filename_patterns = _compile_patterns(DEFAULT_FILENAME_ESCALATION_PATTERNS)
+    tier = _extraction_tier(raw_text, receipt, patterns, filename_patterns)
 
     if tier == "ok" or not openai_api_key:
         return receipt, OCR_MODEL, tier
