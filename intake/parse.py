@@ -28,9 +28,11 @@ class Receipt:
         return f"{d.strftime('%Y%m%d')}.pdf"
 
 
-def parse_receipt(filename: str, raw_text: str) -> Receipt:
+def parse_receipt(
+    filename: str, raw_text: str, pdf_path: Path | None = None
+) -> Receipt:
     """Parse filename and raw OCR text into a Receipt."""
-    scan_date = _parse_scan_date(filename)
+    scan_date = _parse_scan_date(filename, pdf_path)
     merchant = _parse_merchant(raw_text)
     total = _parse_total(raw_text)
     receipt_date, receipt_time = _parse_receipt_datetime(raw_text)
@@ -51,16 +53,40 @@ def parse_receipt(filename: str, raw_text: str) -> Receipt:
 
 # ── filename scan-date ────────────────────────────────────────────────────────
 
-_SCANDATE_RE = re.compile(r"(\d{8})")
+# YYYYMMDD (8 digits), YYYYMM (6 digits) — tried in order, longest first
+_DATE8_RE = re.compile(r"(\d{8})")
+_DATE6_RE = re.compile(r"(\d{6})")
 
 
-def _parse_scan_date(filename: str) -> date:
-    stem = Path(filename).stem if "." in filename else filename
-    m = _SCANDATE_RE.search(stem)
-    if m:
+def _parse_scan_date(filename: str, pdf_path: Path | None = None) -> date:
+    """Extract a scan date from the filename, falling back to file mtime.
+
+    Tries (in order):
+    1. YYYYMMDD (8-digit run) — validated, skips runs that produce invalid dates
+    2. YYYYMM   (6-digit run) — day defaults to 1
+    3. File mtime via *pdf_path*
+    4. Today's date as last resort
+    """
+    stem = Path(filename).stem
+
+    for m in _DATE8_RE.finditer(stem):
         raw = m.group(1)
-        return date(int(raw[:4]), int(raw[4:6]), int(raw[6:8]))
-    raise ValueError(f"Cannot parse date from filename: {filename!r}")
+        try:
+            return date(int(raw[:4]), int(raw[4:6]), int(raw[6:8]))
+        except ValueError:
+            continue
+
+    for m in _DATE6_RE.finditer(stem):
+        raw = m.group(1)
+        try:
+            return date(int(raw[:4]), int(raw[4:6]), 1)
+        except ValueError:
+            continue
+
+    if pdf_path and pdf_path.exists():
+        return date.fromtimestamp(pdf_path.stat().st_mtime)
+
+    return date.today()
 
 
 # ── receipt date/time from OCR text ──────────────────────────────────────────
