@@ -73,19 +73,33 @@ def _high_model(settings: dict) -> str:
     return settings.get("openai_model_high") or "gpt-4o"
 
 
-def _skip_sidecar(sc: dict, settings: dict) -> bool:
+def _skip_sidecar(sc: dict, settings: dict, pdf_path: Path | None = None) -> bool:
     """Return True if a sidecar indicates the receipt is already up-to-date.
 
     Uses tier-aware comparison so a receipt processed at the low-fidelity
     model level is only re-queued when a better *low* model is configured,
     and similarly for high-fidelity.  This prevents low-tier receipts from
     being endlessly re-queued just because a high model is also configured.
+
+    Exception: a previously ``ok``-tier file whose filename matches the
+    filename escalation patterns is re-queued for high-fidelity extraction.
     """
-    from intake.extract import OCR_MODEL, model_rank
+    from intake.extract import (
+        DEFAULT_FILENAME_ESCALATION_PATTERNS,
+        OCR_MODEL,
+        _compile_patterns,
+        _filename_escalates,
+        model_rank,
+    )
 
     tier = sc.get("tier", "ok")
     sidecar_model = sc.get("processed_by", OCR_MODEL)
     if tier == "ok":
+        # Re-queue if filename now matches escalation and we have an AI key
+        if pdf_path and settings.get("openai_api_key"):
+            fname_patterns = _compile_patterns(DEFAULT_FILENAME_ESCALATION_PATTERNS)
+            if _filename_escalates(pdf_path.name, fname_patterns):
+                return model_rank(sidecar_model) >= model_rank(_high_model(settings))
         return True
     if tier == "low":
         return model_rank(sidecar_model) >= model_rank(_low_model(settings))
@@ -216,7 +230,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     skipped = 0
     for pdf in all_pdfs:
         sc = read_sidecar(pdf)
-        if sc is not None and _skip_sidecar(sc, settings):
+        if sc is not None and _skip_sidecar(sc, settings, pdf_path=pdf):
             skipped += 1
             continue
         pending.append(pdf)
