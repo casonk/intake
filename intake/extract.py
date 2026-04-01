@@ -41,7 +41,8 @@ DEFAULT_ESCALATION_PATTERNS: list[str] = [
     r"\bpg\.?\s*\d+\b",  # "pg. 1"
     r"#\d{3,}",  # receipt/order number in name: "#00123"
     r"^\d+$",  # name is entirely digits
-    r"^.{0,2}$",  # name too short (0–2 chars)
+    r"^.{0,3}$",  # name too short (0–3 chars, catches "(os")
+    r"^\W",  # name starts with non-letter character (e.g. "(os", "@...")
     r"\binvoice\b",  # document type, not a merchant name
     r"\breceipt\b",  # generic "receipt" leaked into merchant name
     r"[@]",  # email address leaked into name
@@ -51,6 +52,9 @@ DEFAULT_ESCALATION_PATTERNS: list[str] = [
     r"\bvin\b",  # VIN number label
     r"\bvehicle\b",  # vehicle description text
     r"\b(make|model|plate)\b",  # vehicle field labels
+    r"[a-z]{3,}\d{5,}",  # alphanumeric code (e.g. "bmcs511440")
+    r"\bpacking\s+list\b",  # packing list, not a receipt
+    r"\bhttps?://",  # URL leaked into merchant name
 ]
 
 # Filename stem patterns that should escalate regardless of OCR quality.
