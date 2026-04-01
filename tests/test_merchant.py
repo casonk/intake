@@ -33,14 +33,14 @@ def test_build_keyword_list_excludes_short_keywords():
 
 def test_fuzzy_correct_exact_match():
     kws = build_keyword_list(_RULES)
-    assert fuzzy_correct("Kroger #123", kws) == "Kroger"
+    assert fuzzy_correct("Kroger #123", kws) == "kroger"
 
 
 def test_fuzzy_correct_ocr_noise():
     kws = build_keyword_list(_RULES)
     # "Kr0ger" — OCR substituted '0' for 'o'
     result = fuzzy_correct("Kr0ger Store", kws)
-    assert result == "Kroger"
+    assert result == "kroger"
 
 
 def test_fuzzy_correct_no_match_returns_original():

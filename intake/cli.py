@@ -53,13 +53,38 @@ def _get_extract_kwargs(settings: dict) -> dict:
     }
 
 
-def _best_model(settings: dict) -> str:
-    """Return the highest-ranked model configured in *settings*."""
+def _low_model(settings: dict) -> str:
     if not settings.get("openai_api_key"):
         from intake.extract import OCR_MODEL
         return OCR_MODEL
-    return settings.get("openai_model_high") or settings.get("openai_model") or "gpt-4o"
+    return settings.get("openai_model_low") or settings.get("openai_model") or "gpt-4o-mini"
 
+
+def _high_model(settings: dict) -> str:
+    if not settings.get("openai_api_key"):
+        from intake.extract import OCR_MODEL
+        return OCR_MODEL
+    return settings.get("openai_model_high") or "gpt-4o"
+
+
+def _skip_sidecar(sc: dict, settings: dict) -> bool:
+    """Return True if a sidecar indicates the receipt is already up-to-date.
+
+    Uses tier-aware comparison so a receipt processed at the low-fidelity
+    model level is only re-queued when a better *low* model is configured,
+    and similarly for high-fidelity.  This prevents low-tier receipts from
+    being endlessly re-queued just because a high model is also configured.
+    """
+    from intake.extract import OCR_MODEL, model_rank
+    tier = sc.get("tier", "ok")
+    sidecar_model = sc.get("processed_by", OCR_MODEL)
+    if tier == "ok":
+        return True
+    if tier == "low":
+        return model_rank(sidecar_model) >= model_rank(_low_model(settings))
+    if tier == "high":
+        return model_rank(sidecar_model) >= model_rank(_high_model(settings))
+    return False
 
 
     from intake.classify import classify, load_rules
@@ -90,7 +115,7 @@ def _best_model(settings: dict) -> str:
             continue
 
         try:
-            receipt, model = extract_receipt(
+            receipt, model, tier = extract_receipt(
                 pdf,
                 **_get_extract_kwargs(settings),
                 fuzzy_rules=rules,
@@ -124,6 +149,7 @@ def _best_model(settings: dict) -> str:
                 "processed_by": model,
                 "purchaser": receipt.purchaser,
                 "card_last4": receipt.card_last4,
+                "tier": tier,
             }
             upsert_receipt(conn, row)
             write_sidecar(dest, {k: v for k, v in row.items() if k != "raw_text"})
@@ -157,12 +183,11 @@ def _cmd_report(args: argparse.Namespace, settings: dict) -> None:
 def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     from intake.classify import load_rules
     from intake.db import init_db, upsert_receipt
-    from intake.extract import OCR_MODEL, extract_receipt, should_reprocess
+    from intake.extract import extract_receipt
     from intake.sidecar import read_sidecar, write_sidecar
 
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
     db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
-    current_model = _best_model(settings)
     rules = load_rules()
     extract_kwargs = _get_extract_kwargs(settings)
 
@@ -181,17 +206,12 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     skipped = 0
     for pdf in all_pdfs:
         sc = read_sidecar(pdf)
-        if sc is not None:
-            sidecar_model = sc.get("processed_by", OCR_MODEL)
-            if not should_reprocess(sidecar_model, current_model):
-                skipped += 1
-                continue
+        if sc is not None and _skip_sidecar(sc, settings):
+            skipped += 1
+            continue
         pending.append(pdf)
 
-    print(
-        f"Found {len(all_pdfs)} receipt(s); {skipped} up-to-date "
-        f"(model={current_model!r}), {len(pending)} pending."
-    )
+    print(f"Found {len(all_pdfs)} receipt(s); {skipped} up-to-date, {len(pending)} pending.")
 
     if not pending:
         print("Nothing to backfill.")
@@ -201,8 +221,9 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         for pdf in pending:
             rel = pdf.relative_to(receipt_dir)
             sc = read_sidecar(pdf)
-            prior = sc.get("processed_by", "none") if sc else "none"
-            print(f"  [dry-run] {rel}  (was: {prior} → would use: {current_model})")
+            prior_model = sc.get("processed_by", "none") if sc else "none"
+            prior_tier = sc.get("tier", "—") if sc else "—"
+            print(f"  [dry-run] {rel}  (prior: {prior_model}/{prior_tier})")
         return
 
     conn = init_db(db_path)
@@ -213,7 +234,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         category = "/".join(rel.parts[:-1])
         print(f"  Backfilling: {rel}")
         try:
-            receipt, model = extract_receipt(pdf, **extract_kwargs, fuzzy_rules=rules)
+            receipt, model, tier = extract_receipt(pdf, **extract_kwargs, fuzzy_rules=rules)
             row = {
                 "filename": pdf.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -225,11 +246,12 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
                 "processed_by": model,
                 "purchaser": receipt.purchaser,
                 "card_last4": receipt.card_last4,
+                "tier": tier,
             }
             upsert_receipt(conn, row)
             write_sidecar(pdf, {k: v for k, v in row.items() if k != "raw_text"})
             print(
-                f"    -> category={category!r}, merchant={receipt.merchant!r}, "
+                f"    -> [{tier}] category={category!r}, merchant={receipt.merchant!r}, "
                 f"total={receipt.total}, model={model}"
             )
             ok += 1
@@ -241,7 +263,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     print(f"\nBackfill complete: {ok} ingested, {failed} error(s).")
 
 
-
+def _cmd_audit(args: argparse.Namespace, settings: dict) -> None:
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
     intake_dir = receipt_dir / "intake"
 
@@ -257,6 +279,133 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     print(f"Found {len(pdfs)} PDF(s) in {intake_dir}:")
     for pdf in pdfs:
         print(f"  {pdf.name}")
+
+
+def _parse_scan_datetime(pdf: Path):
+    """Return a datetime from a YYYYMMDD_HHMM filename, or None."""
+    import re
+    from datetime import datetime
+    m = re.match(r"(\d{8})_?(\d{4})?", pdf.stem)
+    if m:
+        try:
+            return datetime.strptime(m.group(1) + (m.group(2) or "0000"), "%Y%m%d%H%M")
+        except ValueError:
+            pass
+    return None
+
+
+def _detect_merge_groups(receipt_dir: Path, window_minutes: int) -> list[list[Path]]:
+    """Return groups of PDFs in the same folder whose scan times are within *window_minutes*."""
+    from datetime import timedelta
+
+    groups: list[list[Path]] = []
+
+    for folder in sorted(p for p in receipt_dir.rglob("*") if p.is_dir()):
+        if folder.relative_to(receipt_dir).parts[0] == "intake":
+            continue
+        pdfs = sorted(folder.glob("*.pdf"))
+        if len(pdfs) < 2:
+            continue
+
+        timed = [(p, _parse_scan_datetime(p)) for p in pdfs]
+        timed = [(p, t) for p, t in timed if t is not None]
+        if len(timed) < 2:
+            continue
+        timed.sort(key=lambda x: x[1])
+
+        current: list[Path] = [timed[0][0]]
+        for pdf, dt in timed[1:]:
+            prev_dt = _parse_scan_datetime(current[-1])
+            if prev_dt and (dt - prev_dt) <= timedelta(minutes=window_minutes):
+                current.append(pdf)
+            else:
+                if len(current) >= 2:
+                    groups.append(current)
+                current = [pdf]
+        if len(current) >= 2:
+            groups.append(current)
+
+    return groups
+
+
+def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
+    from pypdf import PdfReader, PdfWriter
+    from intake.classify import load_rules
+    from intake.db import init_db, upsert_receipt
+    from intake.extract import extract_receipt
+    from intake.sidecar import read_sidecar, write_sidecar
+
+    receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
+    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    window = int(args.window)
+
+    groups = _detect_merge_groups(receipt_dir, window)
+    if not groups:
+        print("No multi-page groups detected.")
+        return
+
+    print(f"Found {len(groups)} merge group(s) (scan window: {window} min):")
+    for i, group in enumerate(groups, 1):
+        print(f"  Group {i}: {len(group)} page(s)")
+        for pdf in group:
+            print(f"    {pdf.relative_to(receipt_dir)}")
+
+    if args.dry_run:
+        return
+
+    rules = load_rules()
+    extract_kwargs = _get_extract_kwargs(settings)
+    conn = init_db(db_path)
+    ok = failed = 0
+
+    for group in groups:
+        primary = group[0]
+        secondaries = group[1:]
+        rel = primary.relative_to(receipt_dir)
+        category = "/".join(rel.parts[:-1])
+        print(f"\n  Merging {len(group)} pages → {rel}")
+        try:
+            # Merge all PDF pages into primary
+            writer = PdfWriter()
+            for pdf in group:
+                for page in PdfReader(str(pdf)).pages:
+                    writer.add_page(page)
+            with open(primary, "wb") as f:
+                writer.write(f)
+
+            # Remove secondary files and their sidecars
+            for sec in secondaries:
+                sc_path = sec.with_suffix(".intake.json")
+                if sc_path.exists():
+                    sc_path.unlink()
+                sec.unlink()
+                print(f"    removed {sec.name}")
+
+            # Re-extract merged PDF
+            receipt, model, tier = extract_receipt(primary, **extract_kwargs, fuzzy_rules=rules)
+            row = {
+                "filename": primary.name,
+                "scan_date": receipt.scan_date.isoformat(),
+                "merchant": receipt.merchant,
+                "total": receipt.total,
+                "category": category,
+                "receipt_dir": str(rel),
+                "raw_text": receipt.raw_text,
+                "processed_by": model,
+                "purchaser": receipt.purchaser,
+                "card_last4": receipt.card_last4,
+                "tier": tier,
+            }
+            upsert_receipt(conn, row)
+            write_sidecar(primary, {k: v for k, v in row.items() if k != "raw_text"})
+            print(f"    -> merchant={receipt.merchant!r}, total={receipt.total}, model={model}")
+            ok += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"    ERROR: {exc}", file=sys.stderr)
+            failed += 1
+
+    conn.close()
+    print(f"\nMerge complete: {ok} group(s) merged, {failed} error(s).")
 
 
 def main() -> None:
@@ -291,12 +440,27 @@ def main() -> None:
     # backfill
     p_bf = sub.add_parser(
         "backfill",
-        help="Ingest receipts already in category folders (skips those with sidecars)",
+        help="Ingest receipts already in category folders (tier-aware skip)",
     )
     p_bf.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
     p_bf.add_argument("--db", metavar="PATH", help="SQLite database path")
     p_bf.add_argument(
         "--dry-run", action="store_true", help="Print actions without writing to DB"
+    )
+
+    # merge
+    p_mrg = sub.add_parser(
+        "merge",
+        help="Detect and merge multi-page receipt scans into single documents",
+    )
+    p_mrg.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_mrg.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_mrg.add_argument(
+        "--window", metavar="MINUTES", default=5,
+        help="Group PDFs whose scan times are within this many minutes (default: 5)",
+    )
+    p_mrg.add_argument(
+        "--dry-run", action="store_true", help="Show groups without merging"
     )
 
     # audit
@@ -312,6 +476,8 @@ def main() -> None:
         _cmd_report(args, settings)
     elif args.command == "backfill":
         _cmd_backfill(args, settings)
+    elif args.command == "merge":
+        _cmd_merge(args, settings)
     elif args.command == "audit":
         _cmd_audit(args, settings)
 

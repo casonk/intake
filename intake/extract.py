@@ -36,12 +36,20 @@ _MODEL_RANK: dict[str, int] = {
 # Patterns that, when matched against the extracted merchant name, force
 # escalation to the high-fidelity model.
 DEFAULT_ESCALATION_PATTERNS: list[str] = [
-    r"\d{1,2}[/\-]\d{1,2}",    # date fragment: "03/15" or "3-15"
-    r"\bpages?\s*\.?\s*\d+\b",  # "page 1", "pages 2"
-    r"\bpg\.?\s*\d+\b",         # "pg. 1"
-    r"#\d{3,}",                  # receipt/order number in name: "#00123"
-    r"^\d+$",                    # name is entirely digits
-    r"^.{0,2}$",                 # name too short (0–2 chars)
+    r"\d{1,2}[/\-]\d{1,2}",          # date fragment: "03/15" or "3-15"
+    r"\bpages?\s*\.?\s*\d+\b",        # "page 1", "pages 2"
+    r"\bpg\.?\s*\d+\b",               # "pg. 1"
+    r"#\d{3,}",                        # receipt/order number in name: "#00123"
+    r"^\d+$",                          # name is entirely digits
+    r"^.{0,2}$",                       # name too short (0–2 chars)
+    r"\binvoice\b",                    # document type, not a merchant name
+    r"[@]",                            # email address leaked into name
+    r"\bgmail\b",                      # Gmail / email domain
+    r"\byahoo\b",                      # Yahoo email domain
+    r"^\d{4}\s+[a-z]",                # year + make/model: "2019 ford f-150"
+    r"\bvin\b",                        # VIN number label
+    r"\bvehicle\b",                    # vehicle description text
+    r"\b(make|model|plate)\b",         # vehicle field labels
 ]
 
 
@@ -66,7 +74,7 @@ def _ocr_quality_ok(text: str, receipt: Receipt) -> bool:
     """Return True if OCR output looks reliable enough without AI help."""
     if len(text.strip()) < 100:
         return False
-    if receipt.merchant == "Unknown":
+    if receipt.merchant == "unknown":
         return False
     if receipt.total is None:
         return False
@@ -119,25 +127,22 @@ def extract_receipt(
     escalation_patterns: list[str] | None = None,
     fuzzy_rules: dict | None = None,
     fuzzy_threshold: float = 0.82,
-) -> tuple[Receipt, str]:
+) -> tuple[Receipt, str, str]:
     """Extract a Receipt from *pdf_path*, with optional tiered AI fallback.
 
-    Returns ``(receipt, model_name)`` where *model_name* identifies the
-    extraction pipeline used (``"tesseract"``, ``openai_model_low``, or
-    ``openai_model_high``).
+    Returns ``(receipt, model_name, tier)`` where:
+    - *model_name* — ``"tesseract"``, ``openai_model_low``, or ``openai_model_high``
+    - *tier* — ``"ok"`` / ``"low"`` / ``"high"`` (preserved even on AI failure so
+      the next backfill run knows to retry with the appropriate model)
 
-    Pipeline
-    --------
-    1. Tesseract OCR + parse
-    2. Fuzzy-correct merchant name against *fuzzy_rules* keywords
-    3. Determine extraction tier (ok / low / high)
-    4. If tier != ok and *openai_api_key* set → call AI with appropriate model
-    5. Merge AI result; degrade gracefully on any API error
+    Storing the tier in sidecars enables precise model-aware skip decisions:
+    an ``"ok"`` receipt is never re-queued; a ``"low"`` receipt is re-queued
+    only when a better *low* model becomes available, and similarly for ``"high"``.
     """
     raw_text = extract_text(pdf_path)
     receipt = parse_receipt(pdf_path.name, raw_text)
 
-    # Fuzzy-correct garbled merchant name
+    # Fuzzy-correct garbled merchant name before quality/escalation checks
     if fuzzy_rules:
         from intake.merchant import build_keyword_list, fuzzy_correct
         keywords = build_keyword_list(fuzzy_rules)
@@ -146,16 +151,13 @@ def extract_receipt(
             from dataclasses import replace
             receipt = replace(receipt, merchant=corrected)
 
-    if not openai_api_key:
-        return receipt, OCR_MODEL
-
     patterns = _compile_patterns(
         escalation_patterns if escalation_patterns is not None else DEFAULT_ESCALATION_PATTERNS
     )
     tier = _extraction_tier(raw_text, receipt, patterns)
 
-    if tier == "ok":
-        return receipt, OCR_MODEL
+    if tier == "ok" or not openai_api_key:
+        return receipt, OCR_MODEL, tier
 
     model = openai_model_high if tier == "high" else openai_model_low
 
@@ -163,7 +165,7 @@ def extract_receipt(
         from intake.ai import extract_with_openai, merge_ai_result
         ai_data = extract_with_openai(pdf_path, raw_text, openai_api_key, model)
         receipt = merge_ai_result(receipt, ai_data)
-        return receipt, model
+        return receipt, model, tier
     except Exception:  # noqa: BLE001
-        return receipt, OCR_MODEL
+        return receipt, OCR_MODEL, tier  # preserve tier so next run retries
 

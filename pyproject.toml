@@ -15,6 +15,7 @@ dependencies = [
     "Pillow>=10",
     "toml>=0.10",
     "Jinja2>=3.1",
+    "pypdf>=4",
 ]
 
 [project.optional-dependencies]

@@ -31,7 +31,7 @@ def test_merchant_from_first_line():
     r = parse_receipt(
         "20260401_0900.pdf", "Acme Supply Co\nSome item  9.99\nTOTAL $9.99"
     )
-    assert r.merchant == "Acme Supply Co"
+    assert r.merchant == "acme supply co"
 
 
 def test_merchant_truncated_to_60_chars():
@@ -70,7 +70,7 @@ def test_card_last4_absent_when_not_present():
 def test_purchaser_extracted():
     r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: JOHN DOE\nTotal $5.00")
     assert r.purchaser is not None
-    assert "JOHN" in r.purchaser
+    assert "john" in r.purchaser
 
 
 def test_purchaser_absent_when_not_present():
