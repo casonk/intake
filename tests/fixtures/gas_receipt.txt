@@ -1,0 +1,15 @@
+SHELL OIL 57442304
+789 Highway Blvd, Anytown, OH 43210
+
+Regular Unleaded 87
+Gallons: 12.453
+Price/Gal: $3.459
+
+Fuel                      43.07
+Car Wash                   8.00
+
+SUBTOTAL                  51.07
+Amount Due $51.07
+
+Pump #4  Visa ending 1234
+Thank you, drive safely!

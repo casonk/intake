@@ -1,0 +1,16 @@
+KROGER #0571
+1234 Main St, Anytown, OH 43210
+
+MILK 2%                    3.49
+BREAD WHITE                2.29
+EGGS LARGE 12CT            4.99
+BANANAS 2LB                1.49
+ORANGE JUICE 64OZ          4.79
+CHEDDAR CHEESE 8OZ         3.99
+
+SUBTOTAL                  21.04
+TAX                        0.42
+TOTAL $21.46
+
+Thank you for shopping at Kroger!
+Fuel Points Earned: 21

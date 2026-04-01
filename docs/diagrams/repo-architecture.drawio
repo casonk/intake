@@ -1,0 +1,119 @@
+<mxfile host="app.diagrams.net" modified="2026-04-01T00:00:00.000Z" agent="intake" version="24.0.0">
+  <diagram name="intake pipeline" id="intake-pipeline">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Snowbridge SMB Share -->
+        <mxCell id="2" value="snowbridge SMB Share" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="130" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- inbox/ folder -->
+        <mxCell id="3" value="inbox/" style="shape=folder;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="240" y="120" width="100" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: SMB -> inbox -->
+        <mxCell id="4" value="PDF lands (YYYYMMDD_HHMM.pdf)" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="2" target="3" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- intake process -->
+        <mxCell id="5" value="intake process" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="420" y="40" width="120" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- intake audit -->
+        <mxCell id="6" value="intake audit" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="420" y="140" width="120" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: process -> inbox -->
+        <mxCell id="7" value="" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="5" target="3" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: audit -> inbox -->
+        <mxCell id="8" value="lists only" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="6" target="3" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- OCR -->
+        <mxCell id="9" value="ocr.py&#xa;pdfplumber + pytesseract" style="rounded=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="600" y="40" width="160" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- parse.py -->
+        <mxCell id="10" value="parse.py&#xa;date / merchant / total" style="rounded=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="600" y="130" width="160" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- classify.py -->
+        <mxCell id="11" value="classify.py&#xa;keyword rules" style="rounded=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="600" y="220" width="160" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- categories.toml -->
+        <mxCell id="12" value="config/categories.toml" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="820" y="220" width="140" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- category folders -->
+        <mxCell id="13" value="category folders&#xa;(auto/grocery/gas-station/...)" style="shape=folder;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="600" y="320" width="160" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- SQLite DB -->
+        <mxCell id="14" value="data/intake.db (SQLite)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="820" y="320" width="140" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- report.py -->
+        <mxCell id="15" value="report.py (Jinja2)" style="rounded=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="820" y="430" width="140" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- intake report -->
+        <mxCell id="16" value="intake report" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="620" y="430" width="120" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- report files -->
+        <mxCell id="17" value="reports/intake-report.md&#xa;reports/intake-report.html" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="420" width="150" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Edges -->
+        <mxCell id="18" value="" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="5" target="9" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="19" value="" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="9" target="10" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="20" value="" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="10" target="11" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="21" value="reads rules" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="11" target="12" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="22" value="moves PDF" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="11" target="13" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="23" value="upsert" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="11" target="14" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="24" value="" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="16" target="15" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="25" value="reads" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="15" target="14" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="26" value="" style="edgeStyle=orthogonalEdgeStyle;" edge="1" source="15" target="17" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
