@@ -48,10 +48,10 @@ _MD_TEMPLATE = """\
 {% endfor %}
 ## Recent Receipts (last 20)
 
-| Date | Merchant | Category | Total | Filename | Model | Processed At |
-|---|---|---|---|---|---|---|
+| Date | Merchant | Category | Total | Purchaser | Card | Filename | Model | Processed At |
+|---|---|---|---|---|---|---|---|---|
 {% for row in data.recent -%}
-| {{ row.scan_date }} | {{ row.merchant or "Unknown" }} | {{ row.category }} | {% if row.total is not none %}${{ "%.2f"|format(row.total) }}{% else %}—{% endif %} | {{ row.filename }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at[:19] if row.processed_at else "—" }} |
+| {{ row.scan_date }} | {{ row.merchant or "Unknown" }} | {{ row.category }} | {% if row.total is not none %}${{ "%.2f"|format(row.total) }}{% else %}—{% endif %} | {{ row.purchaser or "—" }} | {{ row.card_last4 or "—" }} | {{ row.filename }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at[:19] if row.processed_at else "—" }} |
 {% endfor %}
 """
 
@@ -130,7 +130,7 @@ _HTML_TEMPLATE = """\
 
 <h2>Recent Receipts (last 20)</h2>
 <table>
-  <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Total</th><th>Filename</th><th>Model</th><th>Processed At</th></tr></thead>
+  <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Total</th><th>Purchaser</th><th>Card</th><th>Filename</th><th>Model</th><th>Processed At</th></tr></thead>
   <tbody>
   {% for row in data.recent %}
   <tr>
@@ -138,6 +138,8 @@ _HTML_TEMPLATE = """\
     <td>{{ row.merchant or "Unknown" }}</td>
     <td>{{ row.category }}</td>
     <td>{% if row.total is not none %}${{ "%.2f"|format(row.total) }}{% else %}—{% endif %}</td>
+    <td>{{ row.purchaser or "—" }}</td>
+    <td>{{ "···· " + row.card_last4 if row.card_last4 else "—" }}</td>
     <td>{{ row.filename }}</td>
     <td>{{ row.processed_by or "tesseract" }}</td>
     <td>{{ row.processed_at[:19] if row.processed_at else "—" }}</td>

@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 from datetime import date, time
 from pathlib import Path
 
@@ -41,6 +42,8 @@ def extract_with_openai(
                 '  "total"         — final amount charged, as a number (float)\n'
                 '  "receipt_date"  — date printed on the receipt in YYYY-MM-DD format (string)\n'
                 '  "receipt_time"  — time printed on the receipt in HH:MM 24-hr format (string)\n'
+                '  "purchaser"     — cardholder or customer name if visible (string)\n'
+                '  "card_last4"    — last 4 digits of the payment card if visible (string)\n'
                 "Output only the JSON object, no markdown, no explanation."
             ),
         },
@@ -110,6 +113,16 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
             kwargs["receipt_time"] = time(int(h), int(m))
         except (ValueError, TypeError):
             pass
+
+    purchaser = ai.get("purchaser")
+    if purchaser and isinstance(purchaser, str) and purchaser.strip():
+        kwargs["purchaser"] = purchaser.strip()[:60]
+
+    card_last4 = ai.get("card_last4")
+    if card_last4 and isinstance(card_last4, str):
+        digits = re.sub(r"\D", "", card_last4)
+        if len(digits) == 4:
+            kwargs["card_last4"] = digits
 
     return replace(receipt, **kwargs) if kwargs else receipt
 

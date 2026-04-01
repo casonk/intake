@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from intake.extract import (
+    DEFAULT_ESCALATION_PATTERNS,
     OCR_MODEL,
+    _compile_patterns,
+    _extraction_tier,
+    _merchant_escalates,
     _ocr_quality_ok,
     extract_receipt,
     model_rank,
@@ -129,7 +134,7 @@ def test_extract_receipt_uses_ai_when_quality_low(mock_ai, mock_merge, mock_pars
     pdf = tmp_path / "20260401_1000.pdf"
     pdf.write_bytes(b"%PDF fake")
 
-    receipt, model = extract_receipt(pdf, openai_api_key="sk-test", openai_model="gpt-4o-mini")
+    receipt, model = extract_receipt(pdf, openai_api_key="sk-test", openai_model_low="gpt-4o-mini")
     assert model == "gpt-4o-mini"
     assert receipt.merchant == "Real Store"
 
@@ -146,3 +151,44 @@ def test_extract_receipt_degrades_gracefully_on_ai_failure(mock_ai, mock_parse, 
 
     receipt, model = extract_receipt(pdf, openai_api_key="sk-test")
     assert model == OCR_MODEL  # fell back gracefully
+
+
+# ── escalation tier ───────────────────────────────────────────────────────────
+
+def test_merchant_escalates_on_date_fragment():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    assert _merchant_escalates("03/15 Receipt", patterns) is True
+
+
+def test_merchant_escalates_on_page_number():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    assert _merchant_escalates("Page 1 of 3", patterns) is True
+
+
+def test_merchant_escalates_on_receipt_number():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    assert _merchant_escalates("#00123", patterns) is True
+
+
+def test_merchant_does_not_escalate_clean_name():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    assert _merchant_escalates("Kroger", patterns) is False
+
+
+def test_extraction_tier_ok_for_good_receipt():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    r = _receipt()
+    assert _extraction_tier(_fake_good_text(), r, patterns) == "ok"
+
+
+def test_extraction_tier_high_for_escalated_merchant():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    r = _receipt(merchant="03/15 Store")
+    assert _extraction_tier(_fake_good_text(), r, patterns) == "high"
+
+
+def test_extraction_tier_low_for_poor_quality():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    r = _receipt(merchant="Unknown", total=None)
+    assert _extraction_tier("short", r, patterns) == "low"
+

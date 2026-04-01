@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS receipts (
 
 _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN processed_by TEXT NOT NULL DEFAULT 'tesseract'",
+    "ALTER TABLE receipts ADD COLUMN purchaser TEXT",
+    "ALTER TABLE receipts ADD COLUMN card_last4 TEXT",
 ]
 
 
@@ -51,7 +53,8 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
     """Insert or replace a receipt record.
 
     *data* keys: filename, scan_date, merchant, total, category,
-                 receipt_dir, raw_text, processed_by (optional, defaults to 'tesseract').
+                 receipt_dir, raw_text, processed_by (optional),
+                 purchaser (optional), card_last4 (optional).
     processed_at is set automatically to now (UTC).
     """
     processed_at = datetime.now(timezone.utc).isoformat()
@@ -59,10 +62,10 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
         """
         INSERT INTO receipts
             (filename, scan_date, merchant, total, category, receipt_dir,
-             raw_text, processed_by, processed_at)
+             raw_text, processed_by, purchaser, card_last4, processed_at)
         VALUES
             (:filename, :scan_date, :merchant, :total, :category, :receipt_dir,
-             :raw_text, :processed_by, :processed_at)
+             :raw_text, :processed_by, :purchaser, :card_last4, :processed_at)
         ON CONFLICT(filename) DO UPDATE SET
             scan_date    = excluded.scan_date,
             merchant     = excluded.merchant,
@@ -71,9 +74,17 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             receipt_dir  = excluded.receipt_dir,
             raw_text     = excluded.raw_text,
             processed_by = excluded.processed_by,
+            purchaser    = excluded.purchaser,
+            card_last4   = excluded.card_last4,
             processed_at = excluded.processed_at
         """,
-        {"processed_by": "tesseract", **data, "processed_at": processed_at},
+        {
+            "processed_by": "tesseract",
+            "purchaser": None,
+            "card_last4": None,
+            **data,
+            "processed_at": processed_at,
+        },
     )
     conn.commit()
 
@@ -138,7 +149,7 @@ def query_summary(conn: sqlite3.Connection) -> dict:
     recent = rows(
         """
         SELECT scan_date, merchant, category, total, filename,
-               processed_by, processed_at
+               purchaser, card_last4, processed_by, processed_at
         FROM receipts
         ORDER BY scan_date DESC, processed_at DESC
         LIMIT 20

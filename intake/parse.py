@@ -17,6 +17,8 @@ class Receipt:
     merchant: str
     total: float | None
     raw_text: str
+    purchaser: str | None = None    # cardholder name if found on receipt
+    card_last4: str | None = None   # last 4 digits of payment card if found
 
     def suggested_filename(self) -> str:
         """Return a filename derived from the receipt date/time, falling back to scan_date."""
@@ -32,6 +34,8 @@ def parse_receipt(filename: str, raw_text: str) -> Receipt:
     merchant = _parse_merchant(raw_text)
     total = _parse_total(raw_text)
     receipt_date, receipt_time = _parse_receipt_datetime(raw_text)
+    purchaser = _parse_purchaser(raw_text)
+    card_last4 = _parse_card_last4(raw_text)
     return Receipt(
         filename=filename,
         scan_date=scan_date,
@@ -40,6 +44,8 @@ def parse_receipt(filename: str, raw_text: str) -> Receipt:
         merchant=merchant,
         total=total,
         raw_text=raw_text,
+        purchaser=purchaser,
+        card_last4=card_last4,
     )
 
 
@@ -147,3 +153,44 @@ def _parse_total(raw_text: str) -> float | None:
         return float(raw)
     except ValueError:
         return None
+
+
+# ── purchaser / card ──────────────────────────────────────────────────────────
+
+# Masked card patterns: "VISA xxxx1234", "MC **** 5678", "xxxx-xxxx-xxxx-9012"
+_CARD_BRAND_RE = re.compile(
+    r"(?:visa|v\.?i\.?s\.?a|mastercard|mc|amex|american\s*express|discover)"
+    r"[^0-9]{0,20}(?:[xX*]{2,}[-\s]?)*(\d{4})",
+    re.IGNORECASE,
+)
+_MASKED_RE = re.compile(r"[xX*]{4}[-\s]?[xX*]{0,4}[-\s]?[xX*]{0,4}[-\s]?(\d{4})")
+
+
+def _parse_card_last4(raw_text: str) -> str | None:
+    """Extract the last 4 digits of the payment card from OCR text."""
+    m = _CARD_BRAND_RE.search(raw_text)
+    if m:
+        return m.group(1)
+    m = _MASKED_RE.search(raw_text)
+    if m:
+        return m.group(1)
+    return None
+
+
+# Cardholder name often follows "cardholder:", "member:", "approved for:", etc.
+_PURCHASER_RE = re.compile(
+    r"(?:card\s*holder|cardholder|member(?:\s*name)?|customer(?:\s*name)?|approved\s*for|name)"
+    r"[:\s]+([A-Z][A-Za-z\s'\-]{2,40}?)(?:\s{2,}|\n|$)",
+    re.IGNORECASE,
+)
+
+
+def _parse_purchaser(raw_text: str) -> str | None:
+    """Extract the cardholder / customer name from OCR text if present."""
+    m = _PURCHASER_RE.search(raw_text)
+    if m:
+        name = m.group(1).strip()
+        if name and not name.isdigit():
+            return name[:60]
+    return None
+
