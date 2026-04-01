@@ -1,0 +1,42 @@
+# Test fixture — minimal categories config for unit tests.
+# Kept independent of the real categories.toml so tests never rely on local config.
+
+[categories.grocery]
+label    = "Grocery & Supermarkets"
+keywords = []
+
+[categories.grocery.supermarket]
+label    = "Supermarket Chains"
+keywords = ["kroger", "walmart"]
+
+[categories.fuel]
+label    = "Fuel & Gas Stations"
+keywords = []
+
+[categories.fuel.station]
+label    = "Gas Stations"
+keywords = ["shell", "bp"]
+
+[categories.pharmacy]
+label    = "Pharmacy & Drug Stores"
+keywords = ["cvs", "walgreens", "rite aid"]
+
+[categories.auto]
+label    = "Automotive"
+keywords = []
+
+[categories.auto.parts]
+label    = "Auto Parts"
+keywords = ["autozone"]
+
+[categories.pc]
+label    = "Computer Hardware"
+keywords = ["newegg"]
+
+[categories.sw]
+label    = "Software & Dev Tools"
+keywords = ["steam"]
+
+[categories.general]
+label    = "General / Uncategorized"
+keywords = []

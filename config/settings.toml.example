@@ -1,3 +1,15 @@
 receipt_dir = "/mnt/setup/bully/info/receipt"
 db_path = "data/intake.db"
 reports_dir = "reports"
+
+# ── OpenAI fallback (optional) ────────────────────────────────────────────────
+# When set, receipts where Tesseract OCR quality is poor (short text, missing
+# vendor name, missing total, or high noise ratio) are re-extracted using the
+# OpenAI vision API.  The model name is stored per-receipt so that
+# `intake backfill` can automatically re-run only the receipts processed with
+# an older / weaker model.
+#
+# Model rank (higher = more capable):  gpt-4o > gpt-4o-mini > tesseract
+#
+# openai_api_key = "sk-..."
+# openai_model   = "gpt-4o-mini"   # or "gpt-4o"

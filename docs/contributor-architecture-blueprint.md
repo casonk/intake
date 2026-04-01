@@ -7,14 +7,14 @@
 ## Receipt Source
 
 - **Mount point**: `/mnt/setup/bully/info/receipt/` (snowbridge SMB share)
-- **Inbox**: `receipt/inbox/` — new PDFs land here, named `YYYYMMDD_HHMM.pdf`
-- **Category folders** alongside inbox: `auto`, `cvs`, `edu`, `gas-station`, `general`, `grocery`, `moto`, `office`, `outdoor`, `PC`, `phone`, `sw`, `weed`
+- **Inbox**: `receipt/intake/` — new PDFs land here, named `YYYYMMDD_HHMM.pdf`
+- **Category folders** alongside intake: `auto`, `cvs`, `edu`, `gas-station`, `general`, `grocery`, `moto`, `office`, `outdoor`, `PC`, `phone`, `sw`, `weed`
 
 ## Pipeline Stages
 
 ### 1. OCR (`intake/ocr.py`)
 
-For each PDF in `inbox/`:
+For each PDF in `intake/`:
 - Open with `pdfplumber` and extract native text layer per page
 - If a page yields fewer than 20 characters, render at 300 DPI and run `pytesseract` OCR on the image
 - Return concatenated page text
@@ -28,13 +28,17 @@ From the filename and raw OCR text, produce a `Receipt` dataclass:
 
 ### 3. Classify (`intake/classify.py`)
 
-- Load keyword rules from `config/categories.toml`
-- Lowercase substring match against merchant name
-- First matching category wins; falls back to `general`
+- Load keyword rules from `config/categories.toml` (falls back to `categories.toml.example` if local file absent)
+- Subcategory keywords evaluated before parent keywords — most specific match wins
+- Lowercase substring match against merchant name, falling back to full OCR text
+- Returns `"category"` or `"category/subcategory"`; falls back to `general`
 
-### 4. Move
+### 4. Move & Sidecar
 
-PDF is moved from `inbox/` to `receipt/<category>/`.
+PDF is moved from `intake/` to `receipt/<category>/` (or `receipt/<category>/<subcategory>/`).
+A `<stem>.intake.json` sidecar is written alongside the PDF recording merchant, total, category,
+scan_date, and processed_at.  The sidecar is the filesystem-level "already ingested" marker used
+by `intake backfill` to avoid duplicate processing without needing a live DB connection.
 
 ### 5. Database Upsert (`intake/db.py`)
 
@@ -52,14 +56,17 @@ PDF is moved from `inbox/` to `receipt/<category>/`.
 
 | Command | Description |
 |---|---|
-| `intake process` | Run the full pipeline |
-| `intake report` | Generate reports from DB |
-| `intake audit` | List inbox PDFs without processing |
+| `intake process`  | Run the full pipeline |
+| `intake backfill` | Ingest pre-existing receipts from category folders |
+| `intake report`   | Generate reports from DB |
+| `intake audit`    | List intake PDFs without processing |
 
 ## Configuration
 
 - `config/settings.toml` (gitignored) — copy from `config/settings.toml.example`
-- `config/categories.toml` — tracked; defines merchant keyword → category mapping
+- `config/categories.toml` (gitignored) — copy from `config/categories.toml.example`; defines merchant keyword → category/subcategory mapping
+- Category and subcategory keys must be lowercase with only letters, digits, `-`, or `_`
+- Classification returns `"category"` or `"category/subcategory"` (most specific match wins)
 
 ## Outputs
 

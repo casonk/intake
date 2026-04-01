@@ -28,3 +28,6 @@ Thumbs.db
 
 # Diagram export sidecars
 *.cmapx
+
+# User-specific receipt categories (use categories.toml.example as template)
+config/categories.toml

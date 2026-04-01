@@ -1,16 +1,19 @@
 """Unit tests for intake.classify."""
 
-from intake.classify import classify, load_rules
+from pathlib import Path
 
-_RULES = load_rules()
+from intake.classify import classify, load_labels, load_rules
+
+_FIXTURE = Path(__file__).parent / "fixtures" / "categories.toml"
+_RULES = load_rules(_FIXTURE)
 
 
-def test_kroger_is_grocery():
-    assert classify("Kroger #123", _RULES) == "grocery"
+def test_kroger_is_grocery_supermarket():
+    assert classify("Kroger #123", _RULES) == "grocery/supermarket"
 
 
-def test_shell_is_gas_station():
-    assert classify("Shell Gas Station", _RULES) == "gas-station"
+def test_shell_is_fuel_station():
+    assert classify("Shell Gas Station", _RULES) == "fuel/station"
 
 
 def test_unknown_falls_back_to_general():
@@ -18,19 +21,19 @@ def test_unknown_falls_back_to_general():
 
 
 def test_case_insensitive_walmart():
-    assert classify("WALMART SUPERCENTER", _RULES) == "grocery"
+    assert classify("WALMART SUPERCENTER", _RULES) == "grocery/supermarket"
 
 
-def test_cvs_pharmacy():
-    assert classify("CVS Pharmacy #8821", _RULES) == "cvs"
+def test_cvs_pharmacy_top_level():
+    assert classify("CVS Pharmacy #8821", _RULES) == "pharmacy"
 
 
-def test_autozone():
-    assert classify("AutoZone #1234", _RULES) == "auto"
+def test_autozone_is_auto_parts():
+    assert classify("AutoZone #1234", _RULES) == "auto/parts"
 
 
 def test_newegg_is_pc():
-    assert classify("Newegg.com", _RULES) == "PC"
+    assert classify("Newegg.com", _RULES) == "pc"
 
 
 def test_steam_is_sw():
@@ -39,3 +42,37 @@ def test_steam_is_sw():
 
 def test_empty_merchant_is_general():
     assert classify("", _RULES) == "general"
+
+
+def test_subcategory_beats_parent_keywords():
+    """Subcategory match must win even when parent also has matching keywords."""
+    from intake.classify import load_rules as lr
+    import tempfile, textwrap
+    from pathlib import Path
+
+    cfg = textwrap.dedent("""
+        [categories.shop]
+        label    = "Shop"
+        keywords = ["acme"]
+
+        [categories.shop.online]
+        label    = "Online Shop"
+        keywords = ["acme online"]
+
+        [categories.general]
+        label    = "General"
+        keywords = []
+    """)
+    with tempfile.NamedTemporaryFile(suffix=".toml", mode="w", delete=False) as f:
+        f.write(cfg)
+        tmp = Path(f.name)
+    rules = lr(tmp)
+    assert classify("Acme Online Store", rules) == "shop/online"
+    tmp.unlink()
+
+
+def test_load_labels_includes_subcategories():
+    labels = load_labels(_FIXTURE)
+    assert labels["grocery"] == "Grocery & Supermarkets"
+    assert labels["grocery/supermarket"] == "Supermarket Chains"
+    assert labels["fuel/station"] == "Gas Stations"

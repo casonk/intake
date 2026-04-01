@@ -16,9 +16,14 @@ CREATE TABLE IF NOT EXISTS receipts (
     category        TEXT NOT NULL,
     receipt_dir     TEXT NOT NULL,
     raw_text        TEXT,
+    processed_by    TEXT NOT NULL DEFAULT 'tesseract',
     processed_at    TEXT NOT NULL
 );
 """
+
+_MIGRATIONS = [
+    "ALTER TABLE receipts ADD COLUMN processed_by TEXT NOT NULL DEFAULT 'tesseract'",
+]
 
 
 def init_db(db_path: Path) -> sqlite3.Connection:
@@ -28,23 +33,36 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     conn.commit()
+    _run_migrations(conn)
     return conn
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Apply any pending schema migrations (idempotent)."""
+    for sql in _MIGRATIONS:
+        try:
+            conn.execute(sql)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column / index already exists
 
 
 def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
     """Insert or replace a receipt record.
 
     *data* keys: filename, scan_date, merchant, total, category,
-                 receipt_dir, raw_text.
+                 receipt_dir, raw_text, processed_by (optional, defaults to 'tesseract').
     processed_at is set automatically to now (UTC).
     """
     processed_at = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """
         INSERT INTO receipts
-            (filename, scan_date, merchant, total, category, receipt_dir, raw_text, processed_at)
+            (filename, scan_date, merchant, total, category, receipt_dir,
+             raw_text, processed_by, processed_at)
         VALUES
-            (:filename, :scan_date, :merchant, :total, :category, :receipt_dir, :raw_text, :processed_at)
+            (:filename, :scan_date, :merchant, :total, :category, :receipt_dir,
+             :raw_text, :processed_by, :processed_at)
         ON CONFLICT(filename) DO UPDATE SET
             scan_date    = excluded.scan_date,
             merchant     = excluded.merchant,
@@ -52,9 +70,10 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             category     = excluded.category,
             receipt_dir  = excluded.receipt_dir,
             raw_text     = excluded.raw_text,
+            processed_by = excluded.processed_by,
             processed_at = excluded.processed_at
         """,
-        {**data, "processed_at": processed_at},
+        {"processed_by": "tesseract", **data, "processed_at": processed_at},
     )
     conn.commit()
 
@@ -106,9 +125,20 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         """
     )
 
+    by_model = rows(
+        """
+        SELECT COALESCE(processed_by, 'tesseract') AS model,
+               COUNT(*) AS count
+        FROM receipts
+        GROUP BY model
+        ORDER BY count DESC
+        """
+    )
+
     recent = rows(
         """
-        SELECT scan_date, merchant, category, total, filename
+        SELECT scan_date, merchant, category, total, filename,
+               processed_by, processed_at
         FROM receipts
         ORDER BY scan_date DESC, processed_at DESC
         LIMIT 20
@@ -122,6 +152,7 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         "date_max": date_range[1],
         "by_category": by_category,
         "by_month": by_month,
+        "by_model": by_model,
         "top_merchants": top_merchants,
         "recent": recent,
     }

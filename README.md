@@ -16,15 +16,25 @@ pip install -e ".[dev]"
 ## Configuration
 
 ```bash
+cp config/categories.toml.example config/categories.toml
 cp config/settings.toml.example config/settings.toml
 # Edit config/settings.toml and set receipt_dir to your local SMB mount path
+# Edit config/categories.toml and fill in your own merchant keywords
 ```
 
-`config/settings.toml` is gitignored — never commit it.
+`config/settings.toml` and `config/categories.toml` are both gitignored — never commit them.
 
 ## Usage
 
-**Process new receipts** from `inbox/` → OCR → classify → move → database:
+**Backfill pre-existing receipts** already sorted into category folders:
+
+```bash
+intake backfill
+intake backfill --dry-run          # preview without writing
+intake backfill --receipt-dir /mnt/setup/bully/info/receipt
+```
+
+**Process new receipts** from `intake/` → OCR → classify → move → database:
 
 ```bash
 intake process
@@ -38,7 +48,7 @@ intake report
 intake report --format html --output-dir reports/
 ```
 
-**Audit inbox** — list pending PDFs without processing them:
+**Audit intake** — list pending PDFs without processing them:
 
 ```bash
 intake audit
