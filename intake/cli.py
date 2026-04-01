@@ -24,7 +24,25 @@ def _load_settings() -> dict:
     # Resolve OpenAI API key from KeePassXC via auto-pass if not set directly
     if not settings.get("openai_api_key") and settings.get("openai_api_key_entry"):
         try:
+            import os as _os
+            from pathlib import Path as _Path
+
+            from auto_pass.envfile import load_config_environment
             from auto_pass.keepassxc import resolve_keepassxc_entry
+
+            # auto-pass.env.local lives in the auto-pass sibling repo
+            _ap_env = (
+                _Path(__file__).parent.parent.parent
+                / "auto-pass/config/auto-pass.env.local"
+            )
+            load_config_environment(path=_ap_env)
+
+            # Allow settings.toml to specify which profile to activate
+            if settings.get("auto_pass_profile"):
+                _os.environ["AUTO_PASS_PROFILE"] = settings["auto_pass_profile"]
+                from auto_pass.envfile import apply_keepass_profile_environment
+
+                apply_keepass_profile_environment(_os.environ)
 
             result = resolve_keepassxc_entry(
                 settings["openai_api_key_entry"],
@@ -345,9 +363,11 @@ def _is_exhaust_candidate(pdf: Path, sidecar: dict | None) -> bool:
 
 def _cmd_exhaust(args: argparse.Namespace, settings: dict) -> None:
     """Move product docs / non-receipt PDFs to the exhaust folder."""
+    from intake.db import init_db
     from intake.sidecar import read_sidecar
 
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
+    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
     exhaust_dir = receipt_dir / "exhaust"
 
     all_pdfs = [
@@ -378,19 +398,23 @@ def _cmd_exhaust(args: argparse.Namespace, settings: dict) -> None:
     if args.dry_run:
         return
 
+    conn = init_db(db_path)
     moved = 0
     for pdf, sc in candidates:
         rel = pdf.relative_to(receipt_dir)
         dest = exhaust_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         pdf.rename(dest)
-        # Move sidecar if it exists
         sc_src = pdf.with_suffix(".intake.json")
         if sc_src.exists():
             sc_src.rename(dest.with_suffix(".intake.json"))
-        print(f"  moved → exhaust/{rel}")
+        # Remove from DB — exhausted items are not receipts
+        conn.execute("DELETE FROM receipts WHERE filename = ?", (pdf.name,))
+        conn.commit()
+        print(f"  moved → exhaust/{rel}  (removed from DB)")
         moved += 1
 
+    conn.close()
     print(f"\nExhaust complete: {moved} file(s) moved.")
 
 
@@ -702,6 +726,7 @@ def main() -> None:
         help="Move product docs / non-receipt PDFs to the exhaust folder",
     )
     p_exh.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_exh.add_argument("--db", metavar="PATH", help="SQLite database path")
     p_exh.add_argument(
         "--dry-run", action="store_true", help="Show candidates without moving"
     )
