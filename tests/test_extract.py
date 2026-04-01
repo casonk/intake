@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from datetime import date
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from intake.extract import (
     DEFAULT_ESCALATION_PATTERNS,

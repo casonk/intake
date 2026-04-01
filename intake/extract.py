@@ -139,7 +139,7 @@ def extract_receipt(
     only when a better *low* model becomes available, and similarly for ``"high"``.
     """
     raw_text = extract_text(pdf_path)
-    receipt = parse_receipt(pdf_path.name, raw_text)
+    receipt = parse_receipt(pdf_path.name, raw_text, pdf_path=pdf_path)
 
     # Fuzzy-correct garbled merchant name before quality/escalation checks
     if fuzzy_rules:

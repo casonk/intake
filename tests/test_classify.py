@@ -47,7 +47,8 @@ def test_empty_merchant_is_general():
 def test_subcategory_beats_parent_keywords():
     """Subcategory match must win even when parent also has matching keywords."""
     from intake.classify import load_rules as lr
-    import tempfile, textwrap
+    import tempfile
+    import textwrap
     from pathlib import Path
 
     cfg = textwrap.dedent("""

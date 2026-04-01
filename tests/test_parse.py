@@ -4,12 +4,34 @@ from datetime import date
 
 import pytest
 
-from intake.parse import parse_receipt
+from intake.parse import parse_receipt, _parse_scan_date
 
 
 def test_scan_date_from_filename():
     r = parse_receipt("20260401_1146.pdf", "Merchant Name\nTOTAL $10.00")
     assert r.scan_date == date(2026, 4, 1)
+
+
+def test_scan_date_yyyymm_fallback():
+    assert _parse_scan_date("202601_eSIM.pdf") == date(2026, 1, 1)
+
+
+def test_scan_date_invalid_8digit_skipped():
+    # Stata_Order_2000412779 — 20004127 has month=41 (invalid), falls to 6-digit
+    assert _parse_scan_date("Stata_Order_2000412779.pdf").year >= 2000
+
+
+def test_scan_date_no_digits_returns_date(tmp_path):
+    # Non-date filename with no digits: falls back to file mtime or today
+    f = tmp_path / "ASME.pdf"
+    f.write_bytes(b"")
+    result = _parse_scan_date("ASME.pdf", pdf_path=f)
+    assert isinstance(result, date)
+
+
+def test_scan_date_no_file_returns_today():
+    result = _parse_scan_date("NoDate.pdf")
+    assert result == date.today()
 
 
 def test_total_from_total_line():
