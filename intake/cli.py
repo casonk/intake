@@ -394,6 +394,101 @@ def _cmd_exhaust(args: argparse.Namespace, settings: dict) -> None:
     print(f"\nExhaust complete: {moved} file(s) moved.")
 
 
+def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
+    """Print flagged receipts to the terminal and optionally write a Markdown file."""
+    import textwrap
+    from intake.db import init_db, query_flagged
+
+    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    conn = init_db(db_path)
+    flagged = query_flagged(conn)
+    conn.close()
+
+    if not flagged:
+        print("No suspicious records found — all receipts look clean.")
+        return
+
+    # ── terminal summary ──────────────────────────────────────────────────────
+    col_w = {"#": 4, "file": 36, "merchant": 28, "total": 9, "model": 12, "dir": 34}
+    header = (
+        f"{'#':<{col_w['#']}} "
+        f"{'file':<{col_w['file']}} "
+        f"{'merchant':<{col_w['merchant']}} "
+        f"{'total':>{col_w['total']}} "
+        f"{'model':<{col_w['model']}} "
+        f"{'dir':<{col_w['dir']}}"
+    )
+    sep = "-" * len(header)
+
+    print(f"\nFlagged receipts: {len(flagged)}")
+    print(sep)
+    print(header)
+    print(sep)
+
+    for i, row in enumerate(flagged, 1):
+        merchant = (row["merchant"] or "—")[: col_w["merchant"]]
+        filename = row["filename"][: col_w["file"]]
+        total = f"{row['total']:.2f}" if row["total"] is not None else "—"
+        model = (row["processed_by"] or "tesseract")[: col_w["model"]]
+        receipt_dir = (row["receipt_dir"] or "")[: col_w["dir"]]
+        print(
+            f"{i:<{col_w['#']}} "
+            f"{filename:<{col_w['file']}} "
+            f"{merchant:<{col_w['merchant']}} "
+            f"{total:>{col_w['total']}} "
+            f"{model:<{col_w['model']}} "
+            f"{receipt_dir:<{col_w['dir']}}"
+        )
+
+    print(sep)
+    print(
+        "\nFlag reasons: null/unknown/short merchant · zero/null total · email in merchant"
+    )
+
+    # ── Markdown export ───────────────────────────────────────────────────────
+    output_dir = Path(args.output_dir or settings.get("reports_dir", "reports"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    md_path = output_dir / "review.md"
+
+    lines = [
+        "# Intake Review — Flagged Receipts",
+        "",
+        f"**{len(flagged)} record(s)** flagged for manual review.",
+        "Edit the `correction` column and re-import with `intake correct` *(future)*.",
+        "",
+        "| # | file | receipt_dir | merchant | total | model | correction |",
+        "|---|------|-------------|----------|-------|-------|------------|",
+    ]
+    for i, row in enumerate(flagged, 1):
+        merchant = (row["merchant"] or "—").replace("|", "\\|")
+        filename = row["filename"].replace("|", "\\|")
+        receipt_dir = (row["receipt_dir"] or "").replace("|", "\\|")
+        total = f"{row['total']:.2f}" if row["total"] is not None else "—"
+        model = row["processed_by"] or "tesseract"
+        lines.append(
+            f"| {i} | `{filename}` | `{receipt_dir}` | {merchant} | {total} | {model} |  |"
+        )
+
+    lines += [
+        "",
+        "## Notes",
+        "",
+        textwrap.dedent(
+            """\
+            - To force re-extraction with GPT: delete the `.intake.json` sidecar
+              next to the PDF and run `intake backfill`.
+            - To move a non-receipt to exhaust: `intake exhaust` (auto-detects) or
+              move manually then re-run `intake backfill`.
+            - To correct a merchant name directly:
+              `sqlite3 data/intake.db "UPDATE receipts SET merchant='name' WHERE filename='...'"`
+            """
+        ),
+    ]
+
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"\nReview file written → {md_path}")
+
+
 def _cmd_audit(args: argparse.Namespace, settings: dict) -> None:
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
     intake_dir = receipt_dir / "intake"
@@ -611,6 +706,16 @@ def main() -> None:
         "--dry-run", action="store_true", help="Show candidates without moving"
     )
 
+    # review
+    p_rev = sub.add_parser(
+        "review",
+        help="Print flagged receipts to terminal and write reports/review.md",
+    )
+    p_rev.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_rev.add_argument(
+        "--output-dir", metavar="PATH", help="Directory to write review.md into"
+    )
+
     # audit
     p_aud = sub.add_parser("audit", help="List intake PDFs without processing them")
     p_aud.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
@@ -628,6 +733,8 @@ def main() -> None:
         _cmd_merge(args, settings)
     elif args.command == "exhaust":
         _cmd_exhaust(args, settings)
+    elif args.command == "review":
+        _cmd_review(args, settings)
     elif args.command == "audit":
         _cmd_audit(args, settings)
 
