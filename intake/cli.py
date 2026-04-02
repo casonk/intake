@@ -735,7 +735,7 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
             print("Saved files:")
             for f in result.saved_files:
                 print(f"  {f}")
-            print("\nRun 'intake backfill' to OCR the new attachments.")
+            print("\nRun 'intake process' to OCR and classify the new attachments.")
 
     elif args.email_command == "daemon":
         if hasattr(args, "interval") and args.interval is not None:
