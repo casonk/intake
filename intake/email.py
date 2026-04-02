@@ -294,8 +294,9 @@ def _upsert_html_receipt(
     """Try to extract fields from an inline HTML receipt and upsert into DB."""
     from intake.parse import parse_receipt  # noqa: PLC0415
     from intake.db import upsert_receipt  # noqa: PLC0415
-    from intake.classify import classify  # noqa: PLC0415
+    from intake.classify import classify, load_rules  # noqa: PLC0415
 
+    rules = load_rules()
     # Build a synthetic filename for the receipt (uid-based)
     synthetic_name = f"email_{uid}_{mailbox.replace('/', '_')}.txt"
     receipt = parse_receipt(synthetic_name, plain_text)
@@ -337,7 +338,7 @@ def _upsert_html_receipt(
         except Exception:
             pass
 
-    category = classify(plain_text, receipt.merchant or "")
+    category = classify(receipt.merchant or "", rules, full_text=plain_text)
     upsert_receipt(
         db_conn,
         {
