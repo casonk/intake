@@ -50,6 +50,9 @@ reports_dir = "reports"
 # [email]
 # shock_relay_config = "/path/to/shock-relay/services/gmail-imap/config.local.yaml"
 #
+# # Gmail label to apply to identified receipt emails (created automatically if absent)
+# receipt_label = "receipt"
+#
 # # Gmail label to move processed emails into (created automatically if absent)
 # processed_label = "intake/processed"
 #
