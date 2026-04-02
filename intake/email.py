@@ -127,7 +127,6 @@ def fetch_receipts(
     inbox_dir.mkdir(parents=True, exist_ok=True)
 
     processed_label = email_cfg.get("processed_label", "intake/processed")
-    receipt_label = email_cfg.get("receipt_label", "receipt")
     since_days: int = int(email_cfg.get("since_days", 90))
     limit: int = int(email_cfg.get("limit", 500))
     subjects: list[str] = email_cfg.get(
@@ -227,10 +226,6 @@ def fetch_receipts(
                             attachment_count=saved_count,
                         )
                         sr.mark_message_read(conn, uid)
-                        if receipt_label:
-                            sr.label_message(conn, uid, receipt_label)
-                            if verbose:
-                                print(f"    labelled → {receipt_label}")
                         sr.move_message(conn, uid, processed_label)
                         to_expunge = True
 
