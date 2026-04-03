@@ -19,7 +19,6 @@ from intake.extract import (
 )
 from intake.parse import Receipt
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 

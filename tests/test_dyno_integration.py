@@ -19,7 +19,6 @@ from intake.sidecar import (
     write_sidecar,
 )
 
-
 # ---------------------------------------------------------------------------
 # Classify — TempWorkdir for custom TOML rules files
 # ---------------------------------------------------------------------------

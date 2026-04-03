@@ -16,7 +16,6 @@ from intake.email import (
 )
 from intake.db import init_db, is_email_processed, record_email_receipt
 
-
 # ── html_to_text ──────────────────────────────────────────────────────────────
 
 
