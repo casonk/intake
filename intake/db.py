@@ -127,7 +127,7 @@ def unsuppress_receipts(conn: sqlite3.Connection, filenames: list[str]) -> int:
     return conn.total_changes
 
     """Return aggregated summary data for report generation."""
-    rows = lambda sql, *a: [dict(r) for r in conn.execute(sql, *a).fetchall()]  # noqa: E731
+    rows = lambda sql, *a: [dict(r) for r in conn.execute(sql, *a).fetchall()]  # noqa: E731  # fmt: skip
 
     total_receipts = conn.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
     total_spend = conn.execute(
@@ -138,30 +138,25 @@ def unsuppress_receipts(conn: sqlite3.Connection, filenames: list[str]) -> int:
         "SELECT MIN(scan_date), MAX(scan_date) FROM receipts"
     ).fetchone()
 
-    by_category = rows(
-        """
+    by_category = rows("""
         SELECT category,
                COUNT(*) AS count,
                COALESCE(SUM(total), 0) AS total_spend
         FROM receipts
         GROUP BY category
         ORDER BY total_spend DESC
-        """
-    )
+        """)
 
-    by_month = rows(
-        """
+    by_month = rows("""
         SELECT SUBSTR(scan_date, 1, 7) AS month,
                COUNT(*) AS count,
                COALESCE(SUM(total), 0) AS total_spend
         FROM receipts
         GROUP BY month
         ORDER BY month
-        """
-    )
+        """)
 
-    top_merchants = rows(
-        """
+    top_merchants = rows("""
         SELECT merchant,
                COUNT(*) AS count,
                COALESCE(SUM(total), 0) AS total_spend
@@ -169,28 +164,23 @@ def unsuppress_receipts(conn: sqlite3.Connection, filenames: list[str]) -> int:
         GROUP BY merchant
         ORDER BY total_spend DESC
         LIMIT 10
-        """
-    )
+        """)
 
-    by_model = rows(
-        """
+    by_model = rows("""
         SELECT COALESCE(processed_by, 'tesseract') AS model,
                COUNT(*) AS count
         FROM receipts
         GROUP BY model
         ORDER BY count DESC
-        """
-    )
+        """)
 
-    recent = rows(
-        """
+    recent = rows("""
         SELECT scan_date, merchant, category, total, filename,
                purchaser, card_last4, processed_by, processed_at
         FROM receipts
         ORDER BY scan_date DESC, processed_at DESC
         LIMIT 20
-        """
-    )
+        """)
 
     return {
         "total_receipts": total_receipts,
@@ -220,8 +210,7 @@ def query_flagged(
     *include_suppressed* is True.
     """
     suppressed_clause = "" if include_suppressed else "AND reviewed_at IS NULL"
-    cursor = conn.execute(
-        f"""
+    cursor = conn.execute(f"""
         SELECT
             id,
             filename,
@@ -246,8 +235,7 @@ def query_flagged(
         )
         {suppressed_clause}
         ORDER BY category, filename
-        """
-    )
+        """)
     cols = [d[0] for d in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 

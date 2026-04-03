@@ -18,7 +18,6 @@ from pathlib import Path
 
 from intake.db import is_email_processed, record_email_receipt
 
-
 # ── HTML → plain text ─────────────────────────────────────────────────────────
 
 
@@ -351,9 +350,11 @@ def _upsert_html_receipt(
             "category": category,
             "receipt_dir": f"email/{category}",
             "raw_text": plain_text[:4000],
-            "processed_by": settings.get("openai_model_high", "gpt-4o")
-            if api_key
-            else "email-parse",
+            "processed_by": (
+                settings.get("openai_model_high", "gpt-4o")
+                if api_key
+                else "email-parse"
+            ),
             "purchaser": receipt.purchaser,
             "card_last4": receipt.card_last4,
         },

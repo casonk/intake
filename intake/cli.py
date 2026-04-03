@@ -504,16 +504,14 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
         "",
         "## Notes",
         "",
-        textwrap.dedent(
-            """\
+        textwrap.dedent("""\
             - To force re-extraction with GPT: delete the `.intake.json` sidecar
               next to the PDF and run `intake backfill`.
             - To move a non-receipt to exhaust: `intake exhaust` (auto-detects) or
               move manually then re-run `intake backfill`.
             - To correct a merchant name directly:
               `sqlite3 data/intake.db "UPDATE receipts SET merchant='name' WHERE filename='...'"`
-            """
-        ),
+            """),
     ]
 
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

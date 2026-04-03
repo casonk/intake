@@ -9,8 +9,16 @@ repos:
       - id: check-added-large-files
       - id: detect-private-key
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.4
+    rev: v0.11.4
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+        name: ruff-format (preferred formatter)
+
+  # TODO: remove black hook once ruff-format is confirmed stable portfolio-wide
+  - repo: https://github.com/psf/black
+    rev: 26.1.0
+    hooks:
+      - id: black
+        name: black (deprecated — use ruff-format)

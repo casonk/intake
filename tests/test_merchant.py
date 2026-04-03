@@ -2,7 +2,6 @@
 
 from intake.merchant import build_keyword_list, fuzzy_correct
 
-
 _RULES = {
     "grocery": {
         "label": "Grocery",
