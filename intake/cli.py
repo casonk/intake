@@ -929,6 +929,8 @@ def _install_systemd_unit(settings: dict) -> None:
 Description=intake receipt processor daemon
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -937,8 +939,6 @@ ExecStart={intake_bin} daemon
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=30
-StartLimitIntervalSec=300
-StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 
