@@ -104,7 +104,9 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
     total = ai.get("total")
     if total is not None:
         try:
-            kwargs["total"] = float(total)
+            val = float(total)
+            if val > 0:
+                kwargs["total"] = val
         except (TypeError, ValueError):
             pass
 

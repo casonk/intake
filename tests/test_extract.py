@@ -131,7 +131,7 @@ def test_extract_receipt_uses_ai_when_quality_low(
 ):
     mock_ocr.return_value = "bad"
     base_receipt = _receipt(merchant="unknown", total=None, raw_text="bad")
-    improved = _receipt(merchant="Real Store", total=12.50, raw_text="bad")
+    improved = _receipt(merchant="real store", total=12.50, raw_text="bad")
     mock_parse.return_value = base_receipt
     mock_ai.return_value = {"merchant": "Real Store", "total": 12.50}
     mock_merge.return_value = improved
@@ -143,7 +143,7 @@ def test_extract_receipt_uses_ai_when_quality_low(
         pdf, openai_api_key="sk-test", openai_model_low="gpt-4o-mini"
     )
     assert model == "gpt-4o-mini"
-    assert receipt.merchant == "Real Store"
+    assert receipt.merchant == "real store"  # merge_ai_result normalises to lowercase
 
 
 @patch("intake.extract.extract_text")
