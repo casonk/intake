@@ -1,0 +1,13 @@
+# Known downstream repositories for intake.
+# Paths are relative to the portfolio root.
+# Track explicit code/config/operational integrations here, not generic
+# shared-utility mentions from AGENTS.md alone.
+
+[utility_repo]
+path = "./util-repos/intake"
+
+[downstream_repos]
+tracking_basis = "explicit downstream data-consumer integrations"
+paths = [
+  "./personal-finance",  # intake/AGENTS.md documents it as the downstream consumer of aggregated spend data
+]
