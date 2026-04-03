@@ -152,6 +152,17 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
     return replace(receipt, **kwargs) if kwargs else receipt
 
 
+def purchaser_was_blacklisted(ai_dict: dict) -> bool:
+    """Return True if the AI returned a purchaser value that was rejected by the blacklist.
+
+    Used by extract_receipt to decide whether to upgrade to the mid-fidelity model.
+    """
+    raw = ai_dict.get("purchaser")
+    if not raw or not isinstance(raw, str) or not raw.strip():
+        return False
+    return raw.strip().lower() in _PURCHASER_BLACKLIST
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 

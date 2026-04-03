@@ -77,7 +77,8 @@ def _get_extract_kwargs(settings: dict) -> dict:
         "openai_model_low": (
             settings.get("openai_model_low") or settings.get("openai_model") or "gpt-4o-mini"
         ),
-        "openai_model_high": settings.get("openai_model_high") or "gpt-4o",
+        "openai_model_mid": settings.get("openai_model_mid") or "gpt-4o",
+        "openai_model_high": settings.get("openai_model_high") or "gpt-4.1",
         "escalation_patterns": settings.get("escalation_patterns") or None,
         "fuzzy_threshold": float(settings.get("fuzzy_threshold", 0.82)),
     }
@@ -91,12 +92,20 @@ def _low_model(settings: dict) -> str:
     return settings.get("openai_model_low") or settings.get("openai_model") or "gpt-4o-mini"
 
 
+def _mid_model(settings: dict) -> str:
+    if not settings.get("openai_api_key"):
+        from intake.extract import OCR_MODEL
+
+        return OCR_MODEL
+    return settings.get("openai_model_mid") or "gpt-4o"
+
+
 def _high_model(settings: dict) -> str:
     if not settings.get("openai_api_key"):
         from intake.extract import OCR_MODEL
 
         return OCR_MODEL
-    return settings.get("openai_model_high") or "gpt-4o"
+    return settings.get("openai_model_high") or "gpt-4.1"
 
 
 def _skip_sidecar(sc: dict, settings: dict, pdf_path: Path | None = None) -> bool:
@@ -129,6 +138,8 @@ def _skip_sidecar(sc: dict, settings: dict, pdf_path: Path | None = None) -> boo
         return True
     if tier == "low":
         return model_rank(sidecar_model) >= model_rank(_low_model(settings))
+    if tier == "mid":
+        return model_rank(sidecar_model) >= model_rank(_mid_model(settings))
     if tier == "high":
         return model_rank(sidecar_model) >= model_rank(_high_model(settings))
     return False

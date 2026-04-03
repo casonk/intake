@@ -10,9 +10,12 @@ Extraction tiers
 ok    → Tesseract output is reliable; no AI call needed.
 low   → Quality heuristics failed (short text, missing fields, high noise);
         use the low-fidelity model (default: gpt-4o-mini).
+mid   → Low-tier AI ran but returned a blacklisted purchaser value, suggesting
+        there is cardholder text the cheaper model mis-read; retry with the
+        mid-fidelity model (default: gpt-4o).
 high  → Merchant name matches an escalation pattern (date fragment, page
         number, etc.) indicating OCR produced junk for the first line;
-        use the high-fidelity model (default: gpt-4o).
+        use the high-fidelity model (default: gpt-4.1).
 """
 
 from __future__ import annotations
@@ -139,7 +142,8 @@ def extract_receipt(
     pdf_path: Path,
     openai_api_key: str | None = None,
     openai_model_low: str = "gpt-4o-mini",
-    openai_model_high: str = "gpt-4o",
+    openai_model_mid: str = "gpt-4o",
+    openai_model_high: str = "gpt-4.1",
     escalation_patterns: list[str] | None = None,
     fuzzy_rules: dict | None = None,
     fuzzy_threshold: float = 0.82,
@@ -147,13 +151,14 @@ def extract_receipt(
     """Extract a Receipt from *pdf_path*, with optional tiered AI fallback.
 
     Returns ``(receipt, model_name, tier)`` where:
-    - *model_name* — ``"tesseract"``, ``openai_model_low``, or ``openai_model_high``
-    - *tier* — ``"ok"`` / ``"low"`` / ``"high"`` (preserved even on AI failure so
-      the next backfill run knows to retry with the appropriate model)
+    - *model_name* — the model that produced the final receipt
+    - *tier* — ``"ok"`` / ``"low"`` / ``"mid"`` / ``"high"``
 
-    Storing the tier in sidecars enables precise model-aware skip decisions:
-    an ``"ok"`` receipt is never re-queued; a ``"low"`` receipt is re-queued
-    only when a better *low* model becomes available, and similarly for ``"high"``.
+    Tiers enable precise model-aware skip decisions in backfill:
+    - ``ok``   — never re-queued (tesseract was sufficient)
+    - ``low``  — re-queued only when a better low model is configured
+    - ``mid``  — re-queued when a better mid model is configured (blacklisted purchaser)
+    - ``high`` — re-queued when a better high model is configured
     """
     raw_text = extract_text(pdf_path)
     receipt = parse_receipt(pdf_path.name, raw_text, pdf_path=pdf_path)
@@ -181,10 +186,23 @@ def extract_receipt(
     model = openai_model_high if tier == "high" else openai_model_low
 
     try:
-        from intake.ai import extract_with_openai, merge_ai_result
+        from intake.ai import extract_with_openai, merge_ai_result, purchaser_was_blacklisted
 
         ai_data = extract_with_openai(pdf_path, raw_text, openai_api_key, model)
         receipt = merge_ai_result(receipt, ai_data)
+
+        # Mid-tier upgrade: low model returned a blacklisted purchaser value,
+        # indicating cardholder text exists but was misread. Retry with mid model.
+        if (
+            tier == "low"
+            and purchaser_was_blacklisted(ai_data)
+            and model_rank(openai_model_mid) > model_rank(model)
+        ):
+            tier = "mid"
+            model = openai_model_mid
+            ai_data = extract_with_openai(pdf_path, raw_text, openai_api_key, model)
+            receipt = merge_ai_result(receipt, ai_data)
+
         return receipt, model, tier
     except Exception:  # noqa: BLE001
         return receipt, OCR_MODEL, tier  # preserve tier so next run retries

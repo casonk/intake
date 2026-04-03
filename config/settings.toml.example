@@ -18,7 +18,8 @@ reports_dir = "reports"
 #   openai_api_key = "sk-..."
 #
 # openai_model_low  = "gpt-4o-mini"   # borderline OCR quality
-# openai_model_high = "gpt-4o"        # confirmed bad extraction / escalation
+# openai_model_mid  = "gpt-4o"        # blacklisted purchaser detected by low model
+# openai_model_high = "gpt-4.1"       # confirmed bad extraction / escalation
 
 # ── Escalation patterns ───────────────────────────────────────────────────────
 # Regex patterns matched against the extracted merchant name.  Any match forces
