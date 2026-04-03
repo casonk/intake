@@ -754,6 +754,194 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
     conn.close()
 
 
+def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
+    """Process all PDFs currently in the intake inbox folder.
+
+    Returns (ok_count, error_count).  Mirrors _cmd_process but is callable
+    from the daemon loop without requiring argparse Namespace objects.
+    """
+    from intake.classify import classify, load_rules
+    from intake.db import init_db, upsert_receipt
+    from intake.extract import extract_receipt
+    from intake.sidecar import write_sidecar
+
+    receipt_dir = Path(settings.get("receipt_dir", ""))
+    if not receipt_dir:
+        return 0, 0
+    intake_dir = receipt_dir / "intake"
+    pdfs = sorted(intake_dir.glob("*.pdf")) if intake_dir.exists() else []
+    if not pdfs:
+        return 0, 0
+
+    rules = load_rules()
+    conn = init_db(db_path)
+    ok = errors = 0
+    for pdf in pdfs:
+        try:
+            receipt, model, tier = extract_receipt(
+                pdf,
+                **_get_extract_kwargs(settings),
+                fuzzy_rules=rules,
+            )
+            category = classify(receipt.merchant, rules, receipt.raw_text)
+            dest_dir = receipt_dir / category
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            new_name = receipt.suggested_filename()
+            dest = dest_dir / new_name
+            if dest.exists() and dest != pdf:
+                stem, counter = dest.stem, 1
+                while dest.exists():
+                    dest = dest_dir / f"{stem}-{counter}.pdf"
+                    counter += 1
+            shutil.move(str(pdf), dest)
+            row = {
+                "filename": dest.name,
+                "scan_date": receipt.scan_date.isoformat(),
+                "merchant": receipt.merchant,
+                "total": receipt.total,
+                "category": category,
+                "receipt_dir": str(dest.relative_to(receipt_dir)),
+                "raw_text": receipt.raw_text,
+                "processed_by": model,
+                "purchaser": receipt.purchaser,
+                "card_last4": receipt.card_last4,
+                "tier": tier,
+            }
+            upsert_receipt(conn, row)
+            write_sidecar(dest, {k: v for k, v in row.items() if k != "raw_text"})
+            print(
+                f"  [inbox] {dest.relative_to(receipt_dir)} "
+                f"merchant={receipt.merchant!r} total={receipt.total} model={model}"
+            )
+            ok += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [inbox] ERROR {pdf.name}: {exc}", file=sys.stderr)
+            errors += 1
+    conn.close()
+    return ok, errors
+
+
+def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
+    """Run the unified intake daemon (file inbox + email polling)."""
+    import signal
+    import time
+
+    # ── systemd unit install ──────────────────────────────────────────────────
+    if getattr(args, "install", False):
+        _install_systemd_unit(settings)
+        return
+
+    interval: int = getattr(args, "interval", None) or int(
+        settings.get("email", {}).get("poll_interval_seconds", 300)
+    )
+    db_path = Path(getattr(args, "db", None) or settings.get("db_path") or _DEFAULT_DB)
+
+    from intake.db import init_db
+    from intake.email import fetch_receipts
+
+    db_conn = init_db(db_path)
+
+    stop = False
+
+    def _handle_signal(signum, frame):  # noqa: ANN001
+        nonlocal stop
+        print(f"\nintake daemon: received signal {signum}, shutting down…")
+        stop = True
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    print(
+        f"intake daemon started — polling every {interval}s  "
+        f"(Ctrl-C or SIGTERM to stop)"
+    )
+
+    while not stop:
+        # 1. Process file inbox
+        receipt_dir = Path(settings.get("receipt_dir", ""))
+        inbox_pdfs = (
+            len(list((receipt_dir / "intake").glob("*.pdf")))
+            if receipt_dir and (receipt_dir / "intake").exists()
+            else 0
+        )
+        if inbox_pdfs:
+            print(f"[inbox] {inbox_pdfs} PDF(s) found — processing…")
+            ok, err = _process_inbox(settings, db_path)
+            print(f"[inbox] done: {ok} processed, {err} error(s)")
+        else:
+            print("[inbox] nothing new")
+
+        # 2. Fetch email receipts
+        email_cfg = settings.get("email", {})
+        if email_cfg.get("shock_relay_config"):
+            try:
+                result = fetch_receipts(settings, db_conn, verbose=True)
+                print(
+                    f"[email] done: {result.attachments_saved} attachment(s), "
+                    f"{result.html_processed} inline, {result.errors} error(s)"
+                )
+                # Process any PDFs saved from email attachments
+                if result.attachments_saved:
+                    ok, err = _process_inbox(settings, db_path)
+                    print(f"[inbox] post-email: {ok} processed, {err} error(s)")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[email] ERROR: {exc}", file=sys.stderr)
+        else:
+            print("[email] skipped (no shock_relay_config configured)")
+
+        if not stop:
+            print(f"sleeping {interval}s…\n")
+            # Sleep in small increments so SIGTERM is handled promptly
+            for _ in range(interval):
+                if stop:
+                    break
+                time.sleep(1)
+
+    db_conn.close()
+    print("intake daemon stopped.")
+
+
+def _install_systemd_unit(settings: dict) -> None:
+    """Write a systemd user unit file and print activation instructions."""
+    import shutil as _shutil
+
+    python = sys.executable
+    intake_bin = _shutil.which("intake") or f"{Path(python).parent}/intake"
+    cwd = Path.cwd().resolve()
+    unit_dir = Path.home() / ".config" / "systemd" / "user"
+    unit_path = unit_dir / "intake-daemon.service"
+
+    unit = f"""[Unit]
+Description=intake receipt processor daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={cwd}
+ExecStart={intake_bin} daemon
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+"""
+
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    unit_path.write_text(unit)
+    print(f"Wrote systemd unit → {unit_path}")
+    print()
+    print("To enable and start:")
+    print("  systemctl --user daemon-reload")
+    print("  systemctl --user enable --now intake-daemon")
+    print()
+    print("To check status / logs:")
+    print("  systemctl --user status intake-daemon")
+    print("  journalctl --user -u intake-daemon -f")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="intake",
@@ -864,6 +1052,24 @@ def main() -> None:
     p_aud = sub.add_parser("audit", help="List intake PDFs without processing them")
     p_aud.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
 
+    # daemon
+    p_dmn = sub.add_parser(
+        "daemon",
+        help="Poll file inbox + email for new receipts continuously (systemd-compatible)",
+    )
+    p_dmn.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_dmn.add_argument(
+        "--interval",
+        metavar="SECONDS",
+        type=int,
+        help="Poll interval in seconds (default: poll_interval_seconds from settings, or 300)",
+    )
+    p_dmn.add_argument(
+        "--install",
+        action="store_true",
+        help="Write a systemd user unit file and print activation instructions",
+    )
+
     # email
     p_em = sub.add_parser(
         "email",
@@ -917,6 +1123,8 @@ def main() -> None:
         _cmd_audit(args, settings)
     elif args.command == "email":
         _cmd_email(args, settings)
+    elif args.command == "daemon":
+        _cmd_daemon(args, settings)
 
 
 if __name__ == "__main__":
