@@ -1,8 +1,18 @@
 @startuml classes_intake
 set namespaceSeparator none
+class "FetchResult" as intake.email.FetchResult {
+  attachments_saved : int
+  errors : int
+  found : int
+  html_processed : int
+  saved_files : list[Path]
+  skipped : int
+}
 class "Receipt" as intake.parse.Receipt {
+  card_last4 : str | None
   filename : str
   merchant : str
+  purchaser : str | None
   raw_text : str
   receipt_date : date | None
   receipt_time : time | None
@@ -10,9 +20,10 @@ class "Receipt" as intake.parse.Receipt {
   total : float | None
   suggested_filename() -> str
 }
-note as archilityPythonSurfaceNote
-Minimal class surface detected.
-Scanned 7 Python modules.
-See python-import-deps-intake.svg for module-level imports.
-end note
+class "_StripHTML" as intake.email._StripHTML {
+  handle_data(data: str) -> None
+  handle_endtag(tag: str) -> None
+  handle_starttag(tag: str, attrs: list) -> None
+  text() -> str
+}
 @enduml
