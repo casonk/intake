@@ -851,9 +851,14 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
+    # Ensure output is unbuffered when running as a systemd service (no TTY)
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+
     print(
         f"intake daemon started — polling every {interval}s  "
-        f"(Ctrl-C or SIGTERM to stop)"
+        f"(Ctrl-C or SIGTERM to stop)",
+        flush=True,
     )
 
     while not stop:
@@ -865,11 +870,11 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
             else 0
         )
         if inbox_pdfs:
-            print(f"[inbox] {inbox_pdfs} PDF(s) found — processing…")
+            print(f"[inbox] {inbox_pdfs} PDF(s) found — processing…", flush=True)
             ok, err = _process_inbox(settings, db_path)
-            print(f"[inbox] done: {ok} processed, {err} error(s)")
+            print(f"[inbox] done: {ok} processed, {err} error(s)", flush=True)
         else:
-            print("[inbox] nothing new")
+            print("[inbox] nothing new", flush=True)
 
         # 2. Fetch email receipts
         email_cfg = settings.get("email", {})
@@ -878,19 +883,20 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
                 result = fetch_receipts(settings, db_conn, verbose=True)
                 print(
                     f"[email] done: {result.attachments_saved} attachment(s), "
-                    f"{result.html_processed} inline, {result.errors} error(s)"
+                    f"{result.html_processed} inline, {result.errors} error(s)",
+                    flush=True,
                 )
                 # Process any PDFs saved from email attachments
                 if result.attachments_saved:
                     ok, err = _process_inbox(settings, db_path)
-                    print(f"[inbox] post-email: {ok} processed, {err} error(s)")
+                    print(f"[inbox] post-email: {ok} processed, {err} error(s)", flush=True)
             except Exception as exc:  # noqa: BLE001
-                print(f"[email] ERROR: {exc}", file=sys.stderr)
+                print(f"[email] ERROR: {exc}", file=sys.stderr, flush=True)
         else:
-            print("[email] skipped (no shock_relay_config configured)")
+            print("[email] skipped (no shock_relay_config configured)", flush=True)
 
         if not stop:
-            print(f"sleeping {interval}s…\n")
+            print(f"sleeping {interval}s…\n", flush=True)
             # Sleep in small increments so SIGTERM is handled promptly
             for _ in range(interval):
                 if stop:
@@ -898,7 +904,7 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
                 time.sleep(1)
 
     db_conn.close()
-    print("intake daemon stopped.")
+    print("intake daemon stopped.", flush=True)
 
 
 def _install_systemd_unit(settings: dict) -> None:
@@ -920,6 +926,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory={cwd}
 ExecStart={intake_bin} daemon
+Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal
