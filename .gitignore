@@ -1,5 +1,6 @@
 # Local config (contains machine-specific paths)
 config/settings.toml
+config/auto-pass.ini
 
 # Runtime outputs
 data/
@@ -32,3 +33,5 @@ Thumbs.db
 
 # User-specific receipt categories (use categories.toml.example as template)
 config/categories.toml
+
+CLAUDE.md

@@ -12,7 +12,9 @@ reports_dir = "reports"
 # Backfill re-processes any receipt whose sidecar model rank < current high model.
 #
 # Preferred: resolve the API key from KeePassXC via auto-pass:
-#   openai_api_key_entry = "api/openai"   # KeePass entry path; Password field used
+#   Copy config/auto-pass.example.ini to config/auto-pass.ini for repo-level defaults, OR
+#   auto_pass_profile = "master"                  # optional auto-pass profile override
+#   openai_api_key_entry = "vendor/openai/api-key"        # Password field used
 #
 # Fallback: set the key directly (not recommended — keep secrets out of config):
 #   openai_api_key = "sk-..."
@@ -71,3 +73,53 @@ reports_dir = "reports"
 #
 # # Max emails to process per run
 # limit = 500
+
+# ── Signal notifications (optional) ──────────────────────────────────────────
+# Sends a Signal message after a receipt is successfully processed.
+#
+# [signal]
+# shock_relay_config = "/path/to/shock-relay/services/signal-cli/config.local.yaml"
+# recipient = "+15551234567"
+#
+# # Or send to your own Signal "note to self" thread via signal-cli.
+# # note_to_self = true
+#
+# # Optional explicit disable switch
+# # enabled = true
+
+# ── Gmail notifications (optional) ───────────────────────────────────────────
+# Sends an email after a receipt is successfully processed.
+#
+# [gmail]
+# recipient = "you@example.com"
+#
+# # Optional explicit relay config. When omitted, intake reuses
+# # [email].shock_relay_config if that section is configured.
+# # shock_relay_config = "/path/to/shock-relay/services/gmail-imap/config.local.yaml"
+#
+# # Optional subject prefix
+# # subject_prefix = "[intake] "
+#
+# # Optional explicit disable switch
+# # enabled = true
+
+# ── personal-finance downstream trigger (optional) ───────────────────────────
+# Writes a receipts JSON batch and runs a local personal-finance command after
+# successful receipt ingestion.
+#
+# [personal_finance]
+# repo_root = "/mnt/4tb-m2/git/personal-finance"
+# command = ["python3", "scripts/all/monthly_controller.py"]
+#
+# # Optional custom event spool dir (defaults to data/personal-finance)
+# # event_dir = "data/personal-finance"
+#
+# # Available placeholders inside command array strings:
+# #   {receipts_json}  absolute path to the generated batch JSON
+# #   {receipt_count}  number of receipts in this trigger
+# #   {trigger}        process | backfill | daemon | email
+#
+# # The command also receives:
+# #   INTAKE_RECEIPTS_JSON
+# #   INTAKE_RECEIPT_COUNT
+# #   INTAKE_TRIGGER
