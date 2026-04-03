@@ -118,6 +118,73 @@ def test_extract_receipt_no_ai_fallback_without_key(mock_parse, mock_ocr, tmp_pa
     assert model == OCR_MODEL
 
 
+# ── mid-tier upgrade ──────────────────────────────────────────────────────────
+
+
+@patch("intake.extract.extract_text")
+@patch("intake.extract.parse_receipt")
+@patch("intake.ai.merge_ai_result")
+@patch("intake.ai.extract_with_openai")
+def test_mid_tier_upgrade_when_low_model_returns_blacklisted_purchaser(
+    mock_ai, mock_merge, mock_parse, mock_ocr, tmp_path
+):
+    """When low-tier AI returns a blacklisted purchaser, extract_receipt upgrades to mid."""
+    mock_ocr.return_value = "bad"
+    base = _receipt(merchant="unknown", total=None, raw_text="bad")
+    after_low = _receipt(merchant="some shop", total=10.0, raw_text="bad")
+    after_mid = _receipt(merchant="some shop", total=10.0, raw_text="bad")
+    mock_parse.return_value = base
+    # First call (low model) returns blacklisted purchaser in raw dict
+    # Second call (mid model) returns a real name
+    mock_ai.side_effect = [
+        {"merchant": "some shop", "total": 10.0, "purchaser": "account"},
+        {"merchant": "some shop", "total": 10.0, "purchaser": "Jane Doe"},
+    ]
+    mock_merge.side_effect = [after_low, after_mid]
+
+    pdf = tmp_path / "20260401_1000.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    receipt, model, tier = extract_receipt(
+        pdf,
+        openai_api_key="sk-test",
+        openai_model_low="gpt-4o-mini",
+        openai_model_mid="gpt-4o",
+        openai_model_high="gpt-4.1",
+    )
+
+    assert tier == "mid"
+    assert model == "gpt-4o"
+    assert mock_ai.call_count == 2  # low then mid
+
+
+@patch("intake.extract.extract_text")
+@patch("intake.extract.parse_receipt")
+@patch("intake.ai.merge_ai_result")
+@patch("intake.ai.extract_with_openai")
+def test_no_mid_tier_when_low_model_returns_null_purchaser(
+    mock_ai, mock_merge, mock_parse, mock_ocr, tmp_path
+):
+    """When low-tier AI returns null purchaser (not blacklisted), stay at low tier."""
+    mock_ocr.return_value = "bad"
+    base = _receipt(merchant="unknown", total=None, raw_text="bad")
+    after_low = _receipt(merchant="some shop", total=10.0, raw_text="bad")
+    mock_parse.return_value = base
+    mock_ai.return_value = {"merchant": "some shop", "total": 10.0, "purchaser": None}
+    mock_merge.return_value = after_low
+
+    pdf = tmp_path / "20260401_1000.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    receipt, model, tier = extract_receipt(
+        pdf, openai_api_key="sk-test", openai_model_low="gpt-4o-mini", openai_model_mid="gpt-4o"
+    )
+
+    assert tier == "low"
+    assert model == "gpt-4o-mini"
+    assert mock_ai.call_count == 1  # no upgrade
+
+
 @patch("intake.extract.extract_text")
 @patch("intake.extract.parse_receipt")
 @patch("intake.ai.merge_ai_result")
