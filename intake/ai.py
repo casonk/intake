@@ -15,6 +15,25 @@ from pathlib import Path
 
 from intake.parse import Receipt
 
+# Purchaser values that are clearly OCR/AI artifacts rather than real names.
+# When matched (case-insensitive, exact token), the field is set to None so
+# the receipt is eligible for re-processing at a higher fidelity model.
+_PURCHASER_BLACKLIST: frozenset[str] = frozenset(
+    {
+        "account",
+        "cardholder",
+        "customer",
+        "member",
+        "guest",
+        "user",
+        "name",
+        "n/a",
+        "na",
+        "none",
+        "unknown",
+    }
+)
+
 
 def extract_with_openai(
     pdf_path: Path,
@@ -127,7 +146,9 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
 
     purchaser = ai.get("purchaser")
     if purchaser and isinstance(purchaser, str) and purchaser.strip():
-        kwargs["purchaser"] = purchaser.strip()[:60].lower()
+        cleaned = purchaser.strip()[:60].lower()
+        if cleaned not in _PURCHASER_BLACKLIST:
+            kwargs["purchaser"] = cleaned
 
     card_last4 = ai.get("card_last4")
     if card_last4 and isinstance(card_last4, str):
