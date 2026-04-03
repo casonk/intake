@@ -126,6 +126,8 @@ def unsuppress_receipts(conn: sqlite3.Connection, filenames: list[str]) -> int:
     conn.commit()
     return conn.total_changes
 
+
+def query_summary(conn: sqlite3.Connection) -> dict:
     """Return aggregated summary data for report generation."""
     rows = lambda sql, *a: [dict(r) for r in conn.execute(sql, *a).fetchall()]  # noqa: E731  # fmt: skip
 
