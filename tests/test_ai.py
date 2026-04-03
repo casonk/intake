@@ -109,6 +109,21 @@ def test_merge_ai_result_skips_empty_purchaser():
     assert r.purchaser is None
 
 
+@pytest.mark.parametrize(
+    "bad_value",
+    ["account", "Account", "ACCOUNT", "cardholder", "customer",
+     "member", "guest", "user", "name", "n/a", "na", "none", "unknown"],
+)
+def test_merge_ai_result_rejects_blacklisted_purchaser(bad_value):
+    r = merge_ai_result(_receipt(), {"purchaser": bad_value})
+    assert r.purchaser is None
+
+
+def test_merge_ai_result_accepts_real_purchaser_name():
+    r = merge_ai_result(_receipt(), {"purchaser": "Jane Doe"})
+    assert r.purchaser == "jane doe"
+
+
 # ── no-op when AI returns nothing useful ─────────────────────────────────────
 
 

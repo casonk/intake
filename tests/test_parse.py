@@ -102,3 +102,14 @@ def test_purchaser_extracted():
 def test_purchaser_absent_when_not_present():
     r = parse_receipt("20260401_0900.pdf", "Store\nTotal $5.00")
     assert r.purchaser is None
+
+
+def test_purchaser_blacklist_rejected_by_ocr_parser():
+    """Blacklisted tokens like 'account' must not be stored as purchaser."""
+    r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: account\nTotal $5.00")
+    assert r.purchaser is None
+
+
+def test_purchaser_blacklist_case_insensitive_ocr():
+    r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: ACCOUNT\nTotal $5.00")
+    assert r.purchaser is None
