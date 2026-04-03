@@ -293,6 +293,8 @@ def _upsert_html_receipt(
     """Try to extract fields from an inline HTML receipt and upsert into DB."""
     from intake.classify import classify, load_rules  # noqa: PLC0415
     from intake.db import upsert_receipt  # noqa: PLC0415
+    from intake.notify import send_processed_receipt_notifications  # noqa: PLC0415
+    from intake.personal_finance import build_receipt_event, trigger_personal_finance  # noqa: PLC0415
     from intake.parse import parse_receipt  # noqa: PLC0415
 
     rules = load_rules()
@@ -351,6 +353,35 @@ def _upsert_html_receipt(
             "card_last4": receipt.card_last4,
         },
     )
+    _, errors = send_processed_receipt_notifications(
+        settings,
+        receipt,
+        category=category,
+        receipt_dir=f"email/{category}",
+        filename=synthetic_name,
+        processed_by=(settings.get("openai_model_high", "gpt-4o") if api_key else "email-parse"),
+    )
+    for channel, error in errors.items():
+        print(f"    [{channel}] WARNING: {error}", file=sys.stderr)
+    try:
+        trigger_personal_finance(
+            settings,
+            [
+                build_receipt_event(
+                    receipt,
+                    category=category,
+                    receipt_dir=f"email/{category}",
+                    filename=synthetic_name,
+                    processed_by=(
+                        settings.get("openai_model_high", "gpt-4o") if api_key else "email-parse"
+                    ),
+                    tier="email",
+                )
+            ],
+            trigger="email",
+        )
+    except Exception as exc:
+        print(f"    [finance-pipeline] WARNING: {exc}", file=sys.stderr)
 
 
 # ── daemon ─────────────────────────────────────────────────────────────────────

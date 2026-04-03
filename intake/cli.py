@@ -3,28 +3,152 @@
 from __future__ import annotations
 
 import argparse
+import configparser
+import shlex
 import shutil
 import sys
 from pathlib import Path
 
-_DEFAULT_DB = "data/intake.db"
-_DEFAULT_REPORTS_DIR = "reports"
-_SETTINGS_EXAMPLE = "config/settings.toml.example"
-_SETTINGS_PATH = "config/settings.toml"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_DB = _REPO_ROOT / "data" / "intake.db"
+_DEFAULT_REPORTS_DIR = _REPO_ROOT / "reports"
+_SETTINGS_EXAMPLE = _REPO_ROOT / "config" / "settings.toml.example"
+_SETTINGS_PATH = _REPO_ROOT / "config" / "settings.toml"
+_AUTO_PASS_CONFIG_PATH = _REPO_ROOT / "config" / "auto-pass.ini"
+_SETTINGS_EXAMPLE_LABEL = "config/settings.toml.example"
+_SETTINGS_PATH_LABEL = "config/settings.toml"
+_AUTO_PASS_CONFIG_LABEL = "config/auto-pass.ini"
+
+
+def _repo_relative_path(value: str | Path) -> Path:
+    """Resolve a configured path relative to the repository root."""
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return (_REPO_ROOT / path).resolve()
+
+
+def _normalise_settings_paths(settings: dict) -> None:
+    """Convert repo-relative settings to absolute paths.
+
+    The daemon is launched by systemd and should not depend on its cwd to find
+    repo-local config, database, or reports paths.
+    """
+    for key in ("receipt_dir", "db_path", "reports_dir"):
+        if settings.get(key):
+            settings[key] = str(_repo_relative_path(settings[key]))
+
+    email_cfg = settings.get("email")
+    if isinstance(email_cfg, dict) and email_cfg.get("shock_relay_config"):
+        email_cfg["shock_relay_config"] = str(_repo_relative_path(email_cfg["shock_relay_config"]))
+
+    signal_cfg = settings.get("signal")
+    if isinstance(signal_cfg, dict) and signal_cfg.get("shock_relay_config"):
+        signal_cfg["shock_relay_config"] = str(
+            _repo_relative_path(signal_cfg["shock_relay_config"])
+        )
+
+    gmail_cfg = settings.get("gmail")
+    if isinstance(gmail_cfg, dict) and gmail_cfg.get("shock_relay_config"):
+        gmail_cfg["shock_relay_config"] = str(_repo_relative_path(gmail_cfg["shock_relay_config"]))
+
+    pf_cfg = settings.get("personal_finance")
+    if isinstance(pf_cfg, dict):
+        for key in ("repo_root", "event_dir"):
+            if pf_cfg.get(key):
+                pf_cfg[key] = str(_repo_relative_path(pf_cfg[key]))
+
+
+def _notify_processed_receipt(
+    settings: dict,
+    receipt,
+    *,
+    category: str,
+    receipt_dir: str,
+    filename: str,
+    processed_by: str,
+    prefix: str = "    ",
+) -> None:
+    """Send best-effort notifications for a newly processed receipt."""
+    from intake.notify import send_processed_receipt_notifications
+
+    sent, errors = send_processed_receipt_notifications(
+        settings,
+        receipt,
+        category=category,
+        receipt_dir=receipt_dir,
+        filename=filename,
+        processed_by=processed_by,
+    )
+    for channel, error in errors.items():
+        print(f"{prefix}[{channel}] WARNING: {error}", file=sys.stderr)
+    for channel, count in sent.items():
+        print(f"{prefix}[{channel}] notified {count} recipient(s)")
+
+
+def _trigger_personal_finance(
+    settings: dict,
+    receipt_events: list[dict],
+    *,
+    trigger: str,
+    prefix: str = "",
+) -> None:
+    """Run the configured downstream finance-pipeline trigger."""
+    from intake.personal_finance import trigger_personal_finance
+
+    try:
+        json_path = trigger_personal_finance(settings, receipt_events, trigger=trigger)
+    except Exception as exc:  # noqa: BLE001
+        print(f"{prefix}[finance-pipeline] WARNING: {exc}", file=sys.stderr)
+        return
+
+    if json_path is not None:
+        print(f"{prefix}[finance-pipeline] triggered via {json_path}")
+
+
+def _load_repo_auto_pass_config() -> dict[str, str]:
+    if not _AUTO_PASS_CONFIG_PATH.exists():
+        return {}
+
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    try:
+        with _AUTO_PASS_CONFIG_PATH.open(encoding="utf-8") as handle:
+            parser.read_file(handle)
+    except (OSError, configparser.Error) as exc:
+        raise RuntimeError(f"invalid {_AUTO_PASS_CONFIG_LABEL}: {exc}") from exc
+
+    defaults: dict[str, str] = {}
+    if parser.has_section("auto_pass"):
+        profile = parser.get("auto_pass", "profile", fallback="").strip()
+        if profile:
+            defaults["auto_pass_profile"] = profile
+    if parser.has_section("intake"):
+        entry = parser.get("intake", "openai_api_key_entry", fallback="").strip()
+        if entry:
+            defaults["openai_api_key_entry"] = entry
+    return defaults
 
 
 def _load_settings() -> dict:
-    settings_path = Path(_SETTINGS_PATH)
+    settings_path = _SETTINGS_PATH
     if not settings_path.exists():
         return {}
     import toml
 
     settings = toml.load(settings_path)
+    _normalise_settings_paths(settings)
+    try:
+        auto_pass_defaults = _load_repo_auto_pass_config()
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+    for key, value in auto_pass_defaults.items():
+        settings.setdefault(key, value)
 
     # Resolve OpenAI API key from KeePassXC via auto-pass if not set directly
     if not settings.get("openai_api_key") and settings.get("openai_api_key_entry"):
         try:
-            import os as _os
             from pathlib import Path as _Path
 
             from auto_pass.envfile import load_config_environment
@@ -32,14 +156,10 @@ def _load_settings() -> dict:
 
             # auto-pass.env.local lives in the auto-pass sibling repo
             _ap_env = _Path(__file__).parent.parent.parent / "auto-pass/config/auto-pass.env.local"
-            load_config_environment(path=_ap_env)
-
-            # Allow settings.toml to specify which profile to activate
-            if settings.get("auto_pass_profile"):
-                _os.environ["AUTO_PASS_PROFILE"] = settings["auto_pass_profile"]
-                from auto_pass.envfile import apply_keepass_profile_environment
-
-                apply_keepass_profile_environment(_os.environ)
+            load_config_environment(
+                path=_ap_env,
+                profile=settings.get("auto_pass_profile") or None,
+            )
 
             result = resolve_keepassxc_entry(
                 settings["openai_api_key_entry"],
@@ -59,7 +179,7 @@ def _require_receipt_dir(settings: dict, args_value: str | None) -> Path:
     if not val:
         print(
             "ERROR: receipt_dir is not set.\n"
-            f"  Copy {_SETTINGS_EXAMPLE} to {_SETTINGS_PATH} and set receipt_dir.",
+            f"  Copy {_SETTINGS_EXAMPLE_LABEL} to {_SETTINGS_PATH_LABEL} and set receipt_dir.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -149,10 +269,11 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
     from intake.classify import classify, load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
+    from intake.personal_finance import build_receipt_event
     from intake.sidecar import write_sidecar
 
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
-    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
     intake_dir = receipt_dir / "intake"
 
     if not intake_dir.exists():
@@ -166,6 +287,7 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
 
     rules = load_rules()
     conn = init_db(db_path)
+    pf_events: list[dict] = []
 
     for pdf in pdfs:
         print(f"  Processing: {pdf.name}")
@@ -212,6 +334,24 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
             }
             upsert_receipt(conn, row)
             write_sidecar(dest, {k: v for k, v in row.items() if k != "raw_text"})
+            _notify_processed_receipt(
+                settings,
+                receipt,
+                category=category,
+                receipt_dir=str(dest.relative_to(receipt_dir)),
+                filename=dest.name,
+                processed_by=model,
+            )
+            pf_events.append(
+                build_receipt_event(
+                    receipt,
+                    category=category,
+                    receipt_dir=str(dest.relative_to(receipt_dir)),
+                    filename=dest.name,
+                    processed_by=model,
+                    tier=tier,
+                )
+            )
             print(
                 f"    -> {category}/{dest.name} (merchant={receipt.merchant!r}, total={receipt.total}, model={model}){renamed}"
             )
@@ -219,14 +359,15 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
             print(f"    ERROR processing {pdf.name}: {exc}", file=sys.stderr)
 
     conn.close()
+    _trigger_personal_finance(settings, pf_events, trigger="process")
 
 
 def _cmd_report(args: argparse.Namespace, settings: dict) -> None:
     from intake.db import init_db
     from intake.report import generate_reports
 
-    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
-    output_dir = Path(args.output_dir or settings.get("reports_dir", _DEFAULT_REPORTS_DIR))
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
+    output_dir = Path(args.output_dir or settings.get("reports_dir") or _DEFAULT_REPORTS_DIR)
     fmt = args.format or "both"
 
     conn = init_db(db_path)
@@ -241,10 +382,11 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     from intake.classify import load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
+    from intake.personal_finance import build_receipt_event
     from intake.sidecar import read_sidecar, write_sidecar
 
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
-    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
     rules = load_rules()
     extract_kwargs = _get_extract_kwargs(settings)
 
@@ -285,6 +427,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
 
     conn = init_db(db_path)
     ok = failed = 0
+    pf_events: list[dict] = []
 
     for pdf in pending:
         rel = pdf.relative_to(receipt_dir)
@@ -307,6 +450,24 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
             }
             upsert_receipt(conn, row)
             write_sidecar(pdf, {k: v for k, v in row.items() if k != "raw_text"})
+            _notify_processed_receipt(
+                settings,
+                receipt,
+                category=category,
+                receipt_dir=str(rel),
+                filename=pdf.name,
+                processed_by=model,
+            )
+            pf_events.append(
+                build_receipt_event(
+                    receipt,
+                    category=category,
+                    receipt_dir=str(rel),
+                    filename=pdf.name,
+                    processed_by=model,
+                    tier=tier,
+                )
+            )
             print(
                 f"    -> [{tier}] category={category!r}, merchant={receipt.merchant!r}, "
                 f"total={receipt.total}, model={model}"
@@ -317,6 +478,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
             failed += 1
 
     conn.close()
+    _trigger_personal_finance(settings, pf_events, trigger="backfill")
     print(f"\nBackfill complete: {ok} ingested, {failed} error(s).")
 
 
@@ -359,7 +521,7 @@ def _cmd_exhaust(args: argparse.Namespace, settings: dict) -> None:
     from intake.sidecar import read_sidecar
 
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
-    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
     exhaust_dir = receipt_dir / "exhaust"
 
     all_pdfs = [
@@ -414,7 +576,7 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
 
     from intake.db import init_db, query_flagged
 
-    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
     include_suppressed = getattr(args, "show_suppressed", False)
     conn = init_db(db_path)
     flagged = query_flagged(conn, include_suppressed=include_suppressed)
@@ -466,7 +628,7 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
     print("\nFlag reasons: null/unknown/short merchant · zero/null total · email in merchant")
 
     # ── Markdown export ───────────────────────────────────────────────────────
-    output_dir = Path(args.output_dir or settings.get("reports_dir", "reports"))
+    output_dir = Path(args.output_dir or settings.get("reports_dir") or _DEFAULT_REPORTS_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
     md_path = output_dir / "review.md"
 
@@ -511,7 +673,7 @@ def _cmd_suppress(args: argparse.Namespace, settings: dict) -> None:
     """Mark flagged receipts as reviewed so they no longer appear in 'intake review'."""
     from intake.db import init_db, query_flagged, suppress_receipts, unsuppress_receipts
 
-    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
     conn = init_db(db_path)
 
     if args.unsuppress:
@@ -621,7 +783,7 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
     from intake.sidecar import write_sidecar
 
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
-    db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
     window = int(args.window)
 
     groups = _detect_merge_groups(receipt_dir, window)
@@ -745,6 +907,7 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
     from intake.classify import classify, load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
+    from intake.personal_finance import build_receipt_event
     from intake.sidecar import write_sidecar
 
     receipt_dir = Path(settings.get("receipt_dir", ""))
@@ -758,6 +921,7 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
     rules = load_rules()
     conn = init_db(db_path)
     ok = errors = 0
+    pf_events: list[dict] = []
     for pdf in pdfs:
         try:
             receipt, model, tier = extract_receipt(
@@ -791,6 +955,25 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
             }
             upsert_receipt(conn, row)
             write_sidecar(dest, {k: v for k, v in row.items() if k != "raw_text"})
+            _notify_processed_receipt(
+                settings,
+                receipt,
+                category=category,
+                receipt_dir=str(dest.relative_to(receipt_dir)),
+                filename=dest.name,
+                processed_by=model,
+                prefix="  ",
+            )
+            pf_events.append(
+                build_receipt_event(
+                    receipt,
+                    category=category,
+                    receipt_dir=str(dest.relative_to(receipt_dir)),
+                    filename=dest.name,
+                    processed_by=model,
+                    tier=tier,
+                )
+            )
             print(
                 f"  [inbox] {dest.relative_to(receipt_dir)} "
                 f"merchant={receipt.merchant!r} total={receipt.total} model={model}"
@@ -800,6 +983,7 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
             print(f"  [inbox] ERROR {pdf.name}: {exc}", file=sys.stderr)
             errors += 1
     conn.close()
+    _trigger_personal_finance(settings, pf_events, trigger="daemon")
     return ok, errors
 
 
@@ -901,25 +1085,28 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
 
 def _install_systemd_unit(settings: dict) -> None:
     """Write a systemd user unit file and print activation instructions."""
-    import shutil as _shutil
-
     python = sys.executable
-    intake_bin = _shutil.which("intake") or f"{Path(python).parent}/intake"
-    cwd = Path.cwd().resolve()
     unit_dir = Path.home() / ".config" / "systemd" / "user"
     unit_path = unit_dir / "intake-daemon.service"
+    python_q = shlex.quote(python)
+    wait_script = (
+        f'until {python_q} -c "import intake.cli" >/dev/null 2>&1; do '
+        'echo "intake daemon: waiting for intake module path to become available"; '
+        "sleep 30; "
+        "done; "
+        f"exec {python_q} -m intake.cli daemon"
+    )
 
     unit = f"""[Unit]
 Description=intake receipt processor daemon
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory={cwd}
-ExecStart={intake_bin} daemon
+WorkingDirectory=%h
+ExecStart=/bin/bash -lc '{wait_script}'
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=30

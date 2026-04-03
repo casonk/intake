@@ -54,6 +54,51 @@ intake report --format html --output-dir reports/
 intake audit
 ```
 
+**Run continuously** with a user-level systemd service:
+
+```bash
+intake daemon --install
+systemctl --user daemon-reload
+systemctl --user enable --now intake-daemon
+journalctl --user -u intake-daemon -f
+```
+
+**Send a Signal message** after each successfully processed receipt:
+
+```toml
+[signal]
+shock_relay_config = "/path/to/shock-relay/services/signal-cli/config.local.yaml"
+recipient = "+15551234567"
+
+# Or use your Signal "note to self" thread instead of a separate recipient:
+# note_to_self = true
+```
+
+**Send a Gmail notification** after each successfully processed receipt:
+
+```toml
+[gmail]
+recipient = "you@example.com"
+
+# Optional when [email].shock_relay_config is already configured for receipt
+# email ingestion; otherwise point it at shock-relay's gmail-imap config:
+# shock_relay_config = "/path/to/shock-relay/services/gmail-imap/config.local.yaml"
+```
+
+**Trigger finance-pipeline** after receipt ingestion by writing a batch JSON and
+running a downstream command:
+
+```toml
+[personal_finance]
+repo_root = "/mnt/4tb-m2/git/finance-pipeline"
+command = ["python3", "scripts/all/monthly_controller.py"]
+```
+
+`intake` writes the generated batch JSON under `data/finance-pipeline/` by
+default and exposes its path to the downstream command via both
+`{receipts_json}` command placeholders and the `INTAKE_RECEIPTS_JSON`
+environment variable.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Open an issue before starting significant work.
