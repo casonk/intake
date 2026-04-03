@@ -897,7 +897,10 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
                     # Process any PDFs saved from email attachments
                     if result.attachments_saved:
                         ok, err = _process_inbox(settings, db_path)
-                        print(f"[inbox] post-email: {ok} processed, {err} error(s)", flush=True)
+                        print(
+                            f"[inbox] post-email: {ok} processed, {err} error(s)",
+                            flush=True,
+                        )
                 except Exception as exc:  # noqa: BLE001
                     print(f"[email] ERROR: {exc}", file=sys.stderr, flush=True)
             else:
