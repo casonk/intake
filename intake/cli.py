@@ -862,38 +862,46 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
     )
 
     while not stop:
-        # 1. Process file inbox
         receipt_dir = Path(settings.get("receipt_dir", ""))
-        inbox_pdfs = (
-            len(list((receipt_dir / "intake").glob("*.pdf")))
-            if receipt_dir and (receipt_dir / "intake").exists()
-            else 0
-        )
-        if inbox_pdfs:
-            print(f"[inbox] {inbox_pdfs} PDF(s) found — processing…", flush=True)
-            ok, err = _process_inbox(settings, db_path)
-            print(f"[inbox] done: {ok} processed, {err} error(s)", flush=True)
-        else:
-            print("[inbox] nothing new", flush=True)
+        volume_ok = bool(receipt_dir) and receipt_dir.exists()
 
-        # 2. Fetch email receipts
-        email_cfg = settings.get("email", {})
-        if email_cfg.get("shock_relay_config"):
-            try:
-                result = fetch_receipts(settings, db_conn, verbose=True)
-                print(
-                    f"[email] done: {result.attachments_saved} attachment(s), "
-                    f"{result.html_processed} inline, {result.errors} error(s)",
-                    flush=True,
-                )
-                # Process any PDFs saved from email attachments
-                if result.attachments_saved:
-                    ok, err = _process_inbox(settings, db_path)
-                    print(f"[inbox] post-email: {ok} processed, {err} error(s)", flush=True)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[email] ERROR: {exc}", file=sys.stderr, flush=True)
+        if not volume_ok:
+            print(
+                f"[volume] {receipt_dir} not accessible (LUKS/SMB not mounted?) — skipping cycle",
+                flush=True,
+            )
         else:
-            print("[email] skipped (no shock_relay_config configured)", flush=True)
+            # 1. Process file inbox
+            inbox_pdfs = (
+                len(list((receipt_dir / "intake").glob("*.pdf")))
+                if (receipt_dir / "intake").exists()
+                else 0
+            )
+            if inbox_pdfs:
+                print(f"[inbox] {inbox_pdfs} PDF(s) found — processing…", flush=True)
+                ok, err = _process_inbox(settings, db_path)
+                print(f"[inbox] done: {ok} processed, {err} error(s)", flush=True)
+            else:
+                print("[inbox] nothing new", flush=True)
+
+            # 2. Fetch email receipts (PDFs land in receipt_dir/intake, needs volume)
+            email_cfg = settings.get("email", {})
+            if email_cfg.get("shock_relay_config"):
+                try:
+                    result = fetch_receipts(settings, db_conn, verbose=True)
+                    print(
+                        f"[email] done: {result.attachments_saved} attachment(s), "
+                        f"{result.html_processed} inline, {result.errors} error(s)",
+                        flush=True,
+                    )
+                    # Process any PDFs saved from email attachments
+                    if result.attachments_saved:
+                        ok, err = _process_inbox(settings, db_path)
+                        print(f"[inbox] post-email: {ok} processed, {err} error(s)", flush=True)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[email] ERROR: {exc}", file=sys.stderr, flush=True)
+            else:
+                print("[email] skipped (no shock_relay_config configured)", flush=True)
 
         if not stop:
             print(f"sleeping {interval}s…\n", flush=True)
@@ -927,8 +935,10 @@ Type=simple
 WorkingDirectory={cwd}
 ExecStart={intake_bin} daemon
 Environment=PYTHONUNBUFFERED=1
-Restart=on-failure
+Restart=always
 RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 
