@@ -213,9 +213,11 @@ _PURCHASER_RE = re.compile(
 
 def _parse_purchaser(raw_text: str) -> str | None:
     """Extract the cardholder / customer name from OCR text if present."""
+    from intake.ai import _PURCHASER_BLACKLIST  # noqa: PLC0415
+
     m = _PURCHASER_RE.search(raw_text)
     if m:
         name = m.group(1).strip().lower()
-        if name and not name.isdigit():
+        if name and not name.isdigit() and name not in _PURCHASER_BLACKLIST:
             return name[:60]
     return None
