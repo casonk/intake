@@ -2,17 +2,43 @@
 set namespaceSeparator none
 top to bottom direction
 skinparam componentStyle rectangle
-rectangle "intake\n0 child pkg, 6 modules\n7 python files\nexamples: classify, cli, db" as intake
+rectangle "conftest\n1 python file" as conftest
+rectangle "intake\n0 child pkg, 13 modules\n14 python files\nexamples: ai, classify, cli" as intake
+rectangle "intake.ai\n1 python file" as intake.ai
 rectangle "intake.classify\n1 python file" as intake.classify
 rectangle "intake.cli\n1 python file" as intake.cli
 rectangle "intake.db\n1 python file" as intake.db
+rectangle "intake.email\n1 python file" as intake.email
+rectangle "intake.extract\n1 python file" as intake.extract
+rectangle "intake.merchant\n1 python file" as intake.merchant
+rectangle "intake.notify\n1 python file" as intake.notify
 rectangle "intake.ocr\n1 python file" as intake.ocr
 rectangle "intake.parse\n1 python file" as intake.parse
+rectangle "intake.personal_finance\n1 python file" as intake.personal_finance
 rectangle "intake.report\n1 python file" as intake.report
+rectangle "intake.sidecar\n1 python file" as intake.sidecar
+intake.ai --> intake.parse
 intake.cli --> intake.classify
 intake.cli --> intake.db
-intake.cli --> intake.ocr
-intake.cli --> intake.parse
+intake.cli --> intake.email
+intake.cli --> intake.extract
+intake.cli --> intake.notify
+intake.cli --> intake.personal_finance
 intake.cli --> intake.report
+intake.cli --> intake.sidecar
+intake.email --> intake.ai
+intake.email --> intake.classify
+intake.email --> intake.db
+intake.email --> intake.email
+intake.email --> intake.notify
+intake.email --> intake.parse
+intake.email --> intake.personal_finance
+intake.extract --> intake.ai
+intake.extract --> intake.merchant
+intake.extract --> intake.ocr
+intake.extract --> intake.parse
+intake.notify --> intake.parse
+intake.parse --> intake.ai
+intake.personal_finance --> intake.parse
 intake.report --> intake.db
 @enduml
