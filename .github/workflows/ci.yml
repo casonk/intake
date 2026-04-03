@@ -25,7 +25,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: |
+          pip install -e ".[dev]"
           pip install git+https://github.com/casonk/dyno-lab.git
       - name: Run tests
         run: pytest --tb=short
