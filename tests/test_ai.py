@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from intake.ai import merge_ai_result
+from intake.ai import merge_ai_result, purchaser_was_blacklisted
 from intake.parse import Receipt
 
 
@@ -142,3 +142,26 @@ def test_merge_ai_result_returns_unchanged_on_empty_dict():
     original = _receipt(merchant="shop", total=5.0)
     result = merge_ai_result(original, {})
     assert result is original
+
+
+# ── purchaser_was_blacklisted ─────────────────────────────────────────────────
+
+
+def test_purchaser_was_blacklisted_true_for_account():
+    assert purchaser_was_blacklisted({"purchaser": "account"}) is True
+
+
+def test_purchaser_was_blacklisted_true_case_insensitive():
+    assert purchaser_was_blacklisted({"purchaser": "ACCOUNT"}) is True
+
+
+def test_purchaser_was_blacklisted_false_for_null():
+    assert purchaser_was_blacklisted({"purchaser": None}) is False
+
+
+def test_purchaser_was_blacklisted_false_for_missing_key():
+    assert purchaser_was_blacklisted({}) is False
+
+
+def test_purchaser_was_blacklisted_false_for_real_name():
+    assert purchaser_was_blacklisted({"purchaser": "John Smith"}) is False
