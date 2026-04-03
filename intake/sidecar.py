@@ -9,7 +9,7 @@ filesystem signal that a PDF has already been ingested — letting
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 SIDECAR_SUFFIX = ".intake.json"
@@ -31,7 +31,7 @@ def write_sidecar(pdf: Path, data: dict) -> Path:
     *data* should contain the fields stored in the DB row (excluding raw_text).
     ``processed_at`` is set automatically to now (UTC).
     """
-    payload = {**data, "processed_at": datetime.now(timezone.utc).isoformat()}
+    payload = {**data, "processed_at": datetime.now(UTC).isoformat()}
     path = sidecar_path(pdf)
     path.write_text(json.dumps(payload, indent=2))
     return path

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email import message_from_bytes
 from email.policy import default as default_policy
 from html.parser import HTMLParser
@@ -270,7 +270,7 @@ def _safe_save(dest_dir: Path, filename: str, data: bytes) -> Path:
     dest = dest_dir / safe
     if dest.exists():
         stem, suffix = dest.stem, dest.suffix
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
         dest = dest_dir / f"{stem}_{ts}{suffix}"
     dest.write_bytes(data)
     return dest
@@ -291,9 +291,9 @@ def _upsert_html_receipt(
     db_conn, uid, mailbox, subject, sender, date_str, plain_text, settings
 ) -> None:
     """Try to extract fields from an inline HTML receipt and upsert into DB."""
-    from intake.parse import parse_receipt  # noqa: PLC0415
-    from intake.db import upsert_receipt  # noqa: PLC0415
     from intake.classify import classify, load_rules  # noqa: PLC0415
+    from intake.db import upsert_receipt  # noqa: PLC0415
+    from intake.parse import parse_receipt  # noqa: PLC0415
 
     rules = load_rules()
     # Build a synthetic filename for the receipt (uid-based)
@@ -303,8 +303,9 @@ def _upsert_html_receipt(
     # Try AI extraction if API key available
     api_key = settings.get("openai_api_key")
     if api_key:
-        from intake.ai import merge_ai_result  # noqa: PLC0415
         import openai  # noqa: PLC0415
+
+        from intake.ai import merge_ai_result  # noqa: PLC0415
 
         try:
             client = openai.OpenAI(api_key=api_key)
@@ -326,12 +327,7 @@ def _upsert_html_receipt(
             import json
 
             raw = (response.choices[0].message.content or "{}").strip()
-            raw = (
-                raw.removeprefix("```json")
-                .removeprefix("```")
-                .removesuffix("```")
-                .strip()
-            )
+            raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
             ai_data = json.loads(raw)
             receipt = merge_ai_result(receipt, ai_data)
         except Exception:
@@ -342,18 +338,14 @@ def _upsert_html_receipt(
         db_conn,
         {
             "filename": synthetic_name,
-            "scan_date": (
-                receipt.receipt_date or datetime.now(timezone.utc).date()
-            ).isoformat(),
+            "scan_date": (receipt.receipt_date or datetime.now(UTC).date()).isoformat(),
             "merchant": receipt.merchant,
             "total": receipt.total,
             "category": category,
             "receipt_dir": f"email/{category}",
             "raw_text": plain_text[:4000],
             "processed_by": (
-                settings.get("openai_model_high", "gpt-4o")
-                if api_key
-                else "email-parse"
+                settings.get("openai_model_high", "gpt-4o") if api_key else "email-parse"
             ),
             "purchaser": receipt.purchaser,
             "card_last4": receipt.card_last4,

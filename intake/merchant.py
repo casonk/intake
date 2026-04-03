@@ -25,14 +25,10 @@ def build_keyword_list(rules: dict) -> list[str]:
     for cat_cfg in rules.values():
         if not isinstance(cat_cfg, dict):
             continue
-        keywords.extend(
-            kw for kw in cat_cfg.get("keywords", []) if len(kw) >= _MIN_KEYWORD_LEN
-        )
+        keywords.extend(kw for kw in cat_cfg.get("keywords", []) if len(kw) >= _MIN_KEYWORD_LEN)
         for val in cat_cfg.values():
             if isinstance(val, dict) and "keywords" in val:
-                keywords.extend(
-                    kw for kw in val["keywords"] if len(kw) >= _MIN_KEYWORD_LEN
-                )
+                keywords.extend(kw for kw in val["keywords"] if len(kw) >= _MIN_KEYWORD_LEN)
     return keywords
 
 

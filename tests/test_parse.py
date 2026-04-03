@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from intake.parse import parse_receipt, _parse_scan_date
+from intake.parse import _parse_scan_date, parse_receipt
 
 
 def test_scan_date_from_filename():
@@ -50,9 +50,7 @@ def test_total_none_when_missing():
 
 
 def test_merchant_from_first_line():
-    r = parse_receipt(
-        "20260401_0900.pdf", "Acme Supply Co\nSome item  9.99\nTOTAL $9.99"
-    )
+    r = parse_receipt("20260401_0900.pdf", "Acme Supply Co\nSome item  9.99\nTOTAL $9.99")
     assert r.merchant == "acme supply co"
 
 
@@ -75,16 +73,12 @@ def test_balance_due_parsed():
 
 
 def test_card_last4_from_visa():
-    r = parse_receipt(
-        "20260401_0900.pdf", "Store\nVISA xxxx xxxx xxxx 4321\nTotal $5.00"
-    )
+    r = parse_receipt("20260401_0900.pdf", "Store\nVISA xxxx xxxx xxxx 4321\nTotal $5.00")
     assert r.card_last4 == "4321"
 
 
 def test_card_last4_from_masked_pattern():
-    r = parse_receipt(
-        "20260401_0900.pdf", "Store\nCard: XXXX-XXXX-XXXX-7890\nTotal $5.00"
-    )
+    r = parse_receipt("20260401_0900.pdf", "Store\nCard: XXXX-XXXX-XXXX-7890\nTotal $5.00")
     assert r.card_last4 == "7890"
 
 

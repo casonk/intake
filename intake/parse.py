@@ -28,9 +28,7 @@ class Receipt:
         return f"{d.strftime('%Y%m%d')}.pdf"
 
 
-def parse_receipt(
-    filename: str, raw_text: str, pdf_path: Path | None = None
-) -> Receipt:
+def parse_receipt(filename: str, raw_text: str, pdf_path: Path | None = None) -> Receipt:
     """Parse filename and raw OCR text into a Receipt."""
     scan_date = _parse_scan_date(filename, pdf_path)
     merchant = _parse_merchant(raw_text)

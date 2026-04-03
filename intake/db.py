@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _SCHEMA = """
@@ -74,7 +74,7 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
                  purchaser (optional), card_last4 (optional).
     processed_at is set automatically to now (UTC).
     """
-    processed_at = datetime.now(timezone.utc).isoformat()
+    processed_at = datetime.now(UTC).isoformat()
     conn.execute(
         """
         INSERT INTO receipts
@@ -108,7 +108,7 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
 
 def suppress_receipts(conn: sqlite3.Connection, filenames: list[str]) -> int:
     """Mark *filenames* as manually reviewed; they are excluded from future review output."""
-    reviewed_at = datetime.now(timezone.utc).isoformat()
+    reviewed_at = datetime.now(UTC).isoformat()
     conn.executemany(
         "UPDATE receipts SET reviewed_at = ? WHERE filename = ?",
         [(reviewed_at, f) for f in filenames],
@@ -136,9 +136,7 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         "SELECT COALESCE(SUM(total), 0) FROM receipts WHERE total IS NOT NULL"
     ).fetchone()[0]
 
-    date_range = conn.execute(
-        "SELECT MIN(scan_date), MAX(scan_date) FROM receipts"
-    ).fetchone()
+    date_range = conn.execute("SELECT MIN(scan_date), MAX(scan_date) FROM receipts").fetchone()
 
     by_category = rows("""
         SELECT category,
@@ -197,9 +195,7 @@ def query_summary(conn: sqlite3.Connection) -> dict:
     }
 
 
-def query_flagged(
-    conn: sqlite3.Connection, include_suppressed: bool = False
-) -> list[dict]:
+def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) -> list[dict]:
     """Return rows that look suspicious for manual review.
 
     Flags any receipt where:
@@ -239,7 +235,7 @@ def query_flagged(
         ORDER BY category, filename
         """)
     cols = [d[0] for d in cursor.description]
-    return [dict(zip(cols, row)) for row in cursor.fetchall()]
+    return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
 
 
 # ── email receipt helpers ──────────────────────────────────────────────────────
@@ -266,7 +262,7 @@ def record_email_receipt(
     status: str = "processed",
 ) -> None:
     """Insert or replace a processed email record."""
-    processed_at = datetime.now(timezone.utc).isoformat()
+    processed_at = datetime.now(UTC).isoformat()
     conn.execute(
         """
         INSERT OR REPLACE INTO email_receipts
@@ -291,9 +287,7 @@ def record_email_receipt(
 
 def query_email_stats(conn: sqlite3.Connection) -> dict:
     """Return summary stats for email ingestion."""
-    row = conn.execute(
-        "SELECT COUNT(*), MAX(processed_at) FROM email_receipts"
-    ).fetchone()
+    row = conn.execute("SELECT COUNT(*), MAX(processed_at) FROM email_receipts").fetchone()
     total, last_run = (row[0], row[1]) if row else (0, None)
     by_status = conn.execute(
         "SELECT status, COUNT(*) FROM email_receipts GROUP BY status"
