@@ -31,10 +31,7 @@ def _load_settings() -> dict:
             from auto_pass.keepassxc import resolve_keepassxc_entry
 
             # auto-pass.env.local lives in the auto-pass sibling repo
-            _ap_env = (
-                _Path(__file__).parent.parent.parent
-                / "auto-pass/config/auto-pass.env.local"
-            )
+            _ap_env = _Path(__file__).parent.parent.parent / "auto-pass/config/auto-pass.env.local"
             load_config_environment(path=_ap_env)
 
             # Allow settings.toml to specify which profile to activate
@@ -78,9 +75,7 @@ def _get_extract_kwargs(settings: dict) -> dict:
     return {
         "openai_api_key": settings.get("openai_api_key") or None,
         "openai_model_low": (
-            settings.get("openai_model_low")
-            or settings.get("openai_model")
-            or "gpt-4o-mini"
+            settings.get("openai_model_low") or settings.get("openai_model") or "gpt-4o-mini"
         ),
         "openai_model_high": settings.get("openai_model_high") or "gpt-4o",
         "escalation_patterns": settings.get("escalation_patterns") or None,
@@ -93,11 +88,7 @@ def _low_model(settings: dict) -> str:
         from intake.extract import OCR_MODEL
 
         return OCR_MODEL
-    return (
-        settings.get("openai_model_low")
-        or settings.get("openai_model")
-        or "gpt-4o-mini"
-    )
+    return settings.get("openai_model_low") or settings.get("openai_model") or "gpt-4o-mini"
 
 
 def _high_model(settings: dict) -> str:
@@ -193,9 +184,7 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
                     counter += 1
 
             shutil.move(str(pdf), dest)
-            renamed = (
-                f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
-            )
+            renamed = f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
 
             row = {
                 "filename": dest.name,
@@ -226,9 +215,7 @@ def _cmd_report(args: argparse.Namespace, settings: dict) -> None:
     from intake.report import generate_reports
 
     db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
-    output_dir = Path(
-        args.output_dir or settings.get("reports_dir", _DEFAULT_REPORTS_DIR)
-    )
+    output_dir = Path(args.output_dir or settings.get("reports_dir", _DEFAULT_REPORTS_DIR))
     fmt = args.format or "both"
 
     conn = init_db(db_path)
@@ -270,9 +257,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
             continue
         pending.append(pdf)
 
-    print(
-        f"Found {len(all_pdfs)} receipt(s); {skipped} up-to-date, {len(pending)} pending."
-    )
+    print(f"Found {len(all_pdfs)} receipt(s); {skipped} up-to-date, {len(pending)} pending.")
 
     if not pending:
         print("Nothing to backfill.")
@@ -295,9 +280,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         category = "/".join(rel.parts[:-1])
         print(f"  Backfilling: {rel}")
         try:
-            receipt, model, tier = extract_receipt(
-                pdf, **extract_kwargs, fuzzy_rules=rules
-            )
+            receipt, model, tier = extract_receipt(pdf, **extract_kwargs, fuzzy_rules=rules)
             row = {
                 "filename": pdf.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -339,9 +322,7 @@ _EXHAUST_MERCHANT_KEYWORDS = frozenset(
     ]
 )
 # Filename stem substrings that indicate product docs
-_EXHAUST_FILENAME_KEYWORDS = frozenset(
-    ["manual", "datasheet", "spec", "guide", "brief", "readme"]
-)
+_EXHAUST_FILENAME_KEYWORDS = frozenset(["manual", "datasheet", "spec", "guide", "brief", "readme"])
 
 
 def _is_exhaust_candidate(pdf: Path, sidecar: dict | None) -> bool:
@@ -391,16 +372,14 @@ def _cmd_exhaust(args: argparse.Namespace, settings: dict) -> None:
     for pdf, sc in candidates:
         merchant = sc.get("merchant", "?") if sc else "?"
         total = sc.get("total", "?") if sc else "?"
-        print(
-            f"  {pdf.relative_to(receipt_dir)}  (merchant={merchant!r}, total={total})"
-        )
+        print(f"  {pdf.relative_to(receipt_dir)}  (merchant={merchant!r}, total={total})")
 
     if args.dry_run:
         return
 
     conn = init_db(db_path)
     moved = 0
-    for pdf, sc in candidates:
+    for pdf, _sc in candidates:
         rel = pdf.relative_to(receipt_dir)
         dest = exhaust_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -421,6 +400,7 @@ def _cmd_exhaust(args: argparse.Namespace, settings: dict) -> None:
 def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
     """Print flagged receipts to the terminal and optionally write a Markdown file."""
     import textwrap
+
     from intake.db import init_db, query_flagged
 
     db_path = Path(args.db or settings.get("db_path", _DEFAULT_DB))
@@ -472,9 +452,7 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
         )
 
     print(sep)
-    print(
-        "\nFlag reasons: null/unknown/short merchant · zero/null total · email in merchant"
-    )
+    print("\nFlag reasons: null/unknown/short merchant · zero/null total · email in merchant")
 
     # ── Markdown export ───────────────────────────────────────────────────────
     output_dir = Path(args.output_dir or settings.get("reports_dir", "reports"))
@@ -530,9 +508,7 @@ def _cmd_suppress(args: argparse.Namespace, settings: dict) -> None:
             n = unsuppress_receipts(conn, args.filenames)
             print(f"Unsuppressed {n} record(s).")
         else:
-            print(
-                "ERROR: --unsuppress requires at least one filename.", file=sys.stderr
-            )
+            print("ERROR: --unsuppress requires at least one filename.", file=sys.stderr)
             sys.exit(1)
         conn.close()
         return
@@ -627,6 +603,7 @@ def _detect_merge_groups(receipt_dir: Path, window_minutes: int) -> list[list[Pa
 
 def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
     from pypdf import PdfReader, PdfWriter
+
     from intake.classify import load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
@@ -679,9 +656,7 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
                 print(f"    removed {sec.name}")
 
             # Re-extract merged PDF
-            receipt, model, tier = extract_receipt(
-                primary, **extract_kwargs, fuzzy_rules=rules
-            )
+            receipt, model, tier = extract_receipt(primary, **extract_kwargs, fuzzy_rules=rules)
             row = {
                 "filename": primary.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -697,9 +672,7 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
             }
             upsert_receipt(conn, row)
             write_sidecar(primary, {k: v for k, v in row.items() if k != "raw_text"})
-            print(
-                f"    -> merchant={receipt.merchant!r}, total={receipt.total}, model={model}"
-            )
+            print(f"    -> merchant={receipt.merchant!r}, total={receipt.total}, model={model}")
             ok += 1
         except Exception as exc:  # noqa: BLE001
             print(f"    ERROR: {exc}", file=sys.stderr)
@@ -854,8 +827,7 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
     sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
     print(
-        f"intake daemon started — polling every {interval}s  "
-        f"(Ctrl-C or SIGTERM to stop)",
+        f"intake daemon started — polling every {interval}s  (Ctrl-C or SIGTERM to stop)",
         flush=True,
     )
 
@@ -968,23 +940,15 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     # process
-    p_proc = sub.add_parser(
-        "process", help="Run the full OCR → classify → move → DB pipeline"
-    )
+    p_proc = sub.add_parser("process", help="Run the full OCR → classify → move → DB pipeline")
     p_proc.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
     p_proc.add_argument("--db", metavar="PATH", help="SQLite database path")
-    p_proc.add_argument(
-        "--dry-run", action="store_true", help="Print actions without moving files"
-    )
+    p_proc.add_argument("--dry-run", action="store_true", help="Print actions without moving files")
 
     # report
-    p_rep = sub.add_parser(
-        "report", help="Generate Markdown and/or HTML summary reports"
-    )
+    p_rep = sub.add_parser("report", help="Generate Markdown and/or HTML summary reports")
     p_rep.add_argument("--db", metavar="PATH", help="SQLite database path")
-    p_rep.add_argument(
-        "--output-dir", metavar="PATH", help="Directory to write reports into"
-    )
+    p_rep.add_argument("--output-dir", metavar="PATH", help="Directory to write reports into")
     p_rep.add_argument(
         "--format", choices=["md", "html", "both"], default="both", help="Report format"
     )
@@ -996,9 +960,7 @@ def main() -> None:
     )
     p_bf.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
     p_bf.add_argument("--db", metavar="PATH", help="SQLite database path")
-    p_bf.add_argument(
-        "--dry-run", action="store_true", help="Print actions without writing to DB"
-    )
+    p_bf.add_argument("--dry-run", action="store_true", help="Print actions without writing to DB")
 
     # merge
     p_mrg = sub.add_parser(
@@ -1013,9 +975,7 @@ def main() -> None:
         default=5,
         help="Group PDFs whose scan times are within this many minutes (default: 5)",
     )
-    p_mrg.add_argument(
-        "--dry-run", action="store_true", help="Show groups without merging"
-    )
+    p_mrg.add_argument("--dry-run", action="store_true", help="Show groups without merging")
 
     # exhaust
     p_exh = sub.add_parser(
@@ -1024,9 +984,7 @@ def main() -> None:
     )
     p_exh.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
     p_exh.add_argument("--db", metavar="PATH", help="SQLite database path")
-    p_exh.add_argument(
-        "--dry-run", action="store_true", help="Show candidates without moving"
-    )
+    p_exh.add_argument("--dry-run", action="store_true", help="Show candidates without moving")
 
     # review
     p_rev = sub.add_parser(
@@ -1034,9 +992,7 @@ def main() -> None:
         help="Print flagged receipts to terminal and write reports/review.md",
     )
     p_rev.add_argument("--db", metavar="PATH", help="SQLite database path")
-    p_rev.add_argument(
-        "--output-dir", metavar="PATH", help="Directory to write review.md into"
-    )
+    p_rev.add_argument("--output-dir", metavar="PATH", help="Directory to write review.md into")
     p_rev.add_argument(
         "--show-suppressed",
         action="store_true",
@@ -1095,13 +1051,9 @@ def main() -> None:
     )
     p_em_sub = p_em.add_subparsers(dest="email_command", required=True)
 
-    p_em_fetch = p_em_sub.add_parser(
-        "fetch", help="One-shot: fetch and process new receipt emails"
-    )
+    p_em_fetch = p_em_sub.add_parser("fetch", help="One-shot: fetch and process new receipt emails")
     p_em_fetch.add_argument("--db", metavar="PATH", help="SQLite database path")
-    p_em_fetch.add_argument(
-        "--dry-run", action="store_true", help="Show what would be fetched"
-    )
+    p_em_fetch.add_argument("--dry-run", action="store_true", help="Show what would be fetched")
     p_em_fetch.add_argument(
         "--since-days", metavar="N", type=int, help="Override since_days from settings"
     )

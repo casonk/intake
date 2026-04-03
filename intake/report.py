@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 _MD_TEMPLATE = """\
 # Intake Receipt Report
@@ -152,9 +152,7 @@ _HTML_TEMPLATE = """\
 """
 
 
-def generate_reports(
-    conn: sqlite3.Connection, output_dir: Path, fmt: str = "both"
-) -> list[Path]:
+def generate_reports(conn: sqlite3.Connection, output_dir: Path, fmt: str = "both") -> list[Path]:
     """Write Markdown and/or HTML reports to *output_dir*.
 
     *fmt* is one of ``"md"``, ``"html"``, or ``"both"``.
@@ -170,16 +168,12 @@ def generate_reports(
 
     if fmt in ("md", "both"):
         md_path = output_dir / "intake-report.md"
-        md_path.write_text(
-            env.from_string(_MD_TEMPLATE).render(data=data), encoding="utf-8"
-        )
+        md_path.write_text(env.from_string(_MD_TEMPLATE).render(data=data), encoding="utf-8")
         written.append(md_path)
 
     if fmt in ("html", "both"):
         html_path = output_dir / "intake-report.html"
-        html_path.write_text(
-            env.from_string(_HTML_TEMPLATE).render(data=data), encoding="utf-8"
-        )
+        html_path.write_text(env.from_string(_HTML_TEMPLATE).render(data=data), encoding="utf-8")
         written.append(html_path)
 
     return written

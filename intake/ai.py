@@ -7,6 +7,7 @@ the merchant name, total, or receipt date.
 from __future__ import annotations
 
 import base64
+import contextlib
 import io
 import json
 import re
@@ -93,13 +94,7 @@ def extract_with_openai(
 
     raw = response.choices[0].message.content or "{}"
     # Strip accidental markdown fences
-    raw = (
-        raw.strip()
-        .removeprefix("```json")
-        .removeprefix("```")
-        .removesuffix("```")
-        .strip()
-    )
+    raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -131,10 +126,8 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
 
     receipt_date_str = ai.get("receipt_date")
     if receipt_date_str and isinstance(receipt_date_str, str):
-        try:
+        with contextlib.suppress(ValueError):
             kwargs["receipt_date"] = date.fromisoformat(receipt_date_str)
-        except ValueError:
-            pass
 
     receipt_time_str = ai.get("receipt_time")
     if receipt_time_str and isinstance(receipt_time_str, str):

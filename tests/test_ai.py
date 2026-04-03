@@ -90,9 +90,7 @@ def test_merge_ai_result_parses_receipt_date():
 
 
 def test_merge_ai_result_ignores_invalid_date():
-    r = merge_ai_result(
-        _receipt(receipt_date=date(2026, 4, 1)), {"receipt_date": "not-a-date"}
-    )
+    r = merge_ai_result(_receipt(receipt_date=date(2026, 4, 1)), {"receipt_date": "not-a-date"})
     assert r.receipt_date == date(2026, 4, 1)
 
 
@@ -111,8 +109,21 @@ def test_merge_ai_result_skips_empty_purchaser():
 
 @pytest.mark.parametrize(
     "bad_value",
-    ["account", "Account", "ACCOUNT", "cardholder", "customer",
-     "member", "guest", "user", "name", "n/a", "na", "none", "unknown"],
+    [
+        "account",
+        "Account",
+        "ACCOUNT",
+        "cardholder",
+        "customer",
+        "member",
+        "guest",
+        "user",
+        "name",
+        "n/a",
+        "na",
+        "none",
+        "unknown",
+    ],
 )
 def test_merge_ai_result_rejects_blacklisted_purchaser(bad_value):
     r = merge_ai_result(_receipt(), {"purchaser": bad_value})

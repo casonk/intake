@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import patch
 
-
 from intake.extract import (
     DEFAULT_ESCALATION_PATTERNS,
     OCR_MODEL,
@@ -94,9 +93,7 @@ def _fake_good_text():
 
 @patch("intake.extract.extract_text")
 @patch("intake.extract.parse_receipt")
-def test_extract_receipt_returns_tesseract_when_quality_ok(
-    mock_parse, mock_ocr, tmp_path
-):
+def test_extract_receipt_returns_tesseract_when_quality_ok(mock_parse, mock_ocr, tmp_path):
     good_text = _fake_good_text()
     mock_ocr.return_value = good_text
     mock_parse.return_value = _receipt(raw_text=good_text)
@@ -148,9 +145,7 @@ def test_extract_receipt_uses_ai_when_quality_low(
 @patch("intake.extract.extract_text")
 @patch("intake.extract.parse_receipt")
 @patch("intake.ai.extract_with_openai", side_effect=Exception("API error"))
-def test_extract_receipt_degrades_gracefully_on_ai_failure(
-    mock_ai, mock_parse, mock_ocr, tmp_path
-):
+def test_extract_receipt_degrades_gracefully_on_ai_failure(mock_ai, mock_parse, mock_ocr, tmp_path):
     mock_ocr.return_value = "bad"
     mock_parse.return_value = _receipt(merchant="unknown", total=None, raw_text="bad")
 

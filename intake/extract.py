@@ -17,6 +17,7 @@ high  → Merchant name matches an escalation pattern (date fragment, page
 
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 
@@ -89,12 +90,8 @@ def _ocr_quality_ok(text: str, receipt: Receipt) -> bool:
         return False
     if receipt.total is None:
         return False
-    noise = sum(
-        1 for c in text if ord(c) > 127 or (not c.isprintable() and c not in "\n\t ")
-    )
-    if noise / max(len(text), 1) > 0.10:
-        return False
-    return True
+    noise = sum(1 for c in text if ord(c) > 127 or (not c.isprintable() and c not in "\n\t "))
+    return not noise / max(len(text), 1) > 0.1
 
 
 def _merchant_escalates(merchant: str, patterns: list[re.Pattern]) -> bool:
@@ -106,10 +103,8 @@ def _merchant_escalates(merchant: str, patterns: list[re.Pattern]) -> bool:
 def _compile_patterns(raw: list[str]) -> list[re.Pattern]:
     compiled = []
     for p in raw:
-        try:
+        with contextlib.suppress(re.error):
             compiled.append(re.compile(p, re.IGNORECASE))
-        except re.error:
-            pass
     return compiled
 
 
@@ -175,9 +170,7 @@ def extract_receipt(
             receipt = replace(receipt, merchant=corrected)
 
     patterns = _compile_patterns(
-        escalation_patterns
-        if escalation_patterns is not None
-        else DEFAULT_ESCALATION_PATTERNS
+        escalation_patterns if escalation_patterns is not None else DEFAULT_ESCALATION_PATTERNS
     )
     filename_patterns = _compile_patterns(DEFAULT_FILENAME_ESCALATION_PATTERNS)
     tier = _extraction_tier(raw_text, receipt, patterns, filename_patterns)

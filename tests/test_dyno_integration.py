@@ -6,7 +6,6 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-
 from dyno_lab.env import EnvPatch
 from dyno_lab.fs import TempWorkdir
 
@@ -86,9 +85,7 @@ def test_parse_receipt_falls_back_to_file_mtime_when_no_date_in_name():
     with TempWorkdir() as tmp:
         pdf = tmp.path / "RECEIPT.pdf"
         pdf.write_bytes(b"%PDF fake")
-        receipt = parse_receipt(
-            pdf.name, "Unknown Store\nAmount Due: 9.99", pdf_path=pdf
-        )
+        receipt = parse_receipt(pdf.name, "Unknown Store\nAmount Due: 9.99", pdf_path=pdf)
 
     assert isinstance(receipt.scan_date, date)
     assert receipt.total == pytest.approx(9.99)

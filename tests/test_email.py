@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-
 import pytest
 
+from intake.db import init_db, is_email_processed, record_email_receipt
 from intake.email import (
     FetchResult,
     _looks_like_receipt,
     _safe_save,
     html_to_text,
 )
-from intake.db import init_db, is_email_processed, record_email_receipt
 
 # ── html_to_text ──────────────────────────────────────────────────────────────
 
