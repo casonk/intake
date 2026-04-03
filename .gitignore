@@ -8,6 +8,7 @@ reports/
 
 # Local session memory
 CHATHISTORY.md
+.codex
 
 # Python
 __pycache__/
