@@ -48,6 +48,18 @@ intake report
 intake report --format html --output-dir reports/
 ```
 
+**Regenerate reports every day at noon** with a user-level systemd timer:
+
+```bash
+intake report --install-timer
+systemctl --user daemon-reload
+systemctl --user enable --now intake-report.timer
+systemctl --user list-timers intake-report.timer
+```
+
+The install path now renders the tracked unit definition through the sibling
+`clockwork` repo instead of keeping the unit text inline in `intake`.
+
 **Audit intake** — list pending PDFs without processing them:
 
 ```bash
