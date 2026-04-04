@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from datetime import date, time
-from pathlib import Path
 
 import pytest
 
@@ -254,7 +253,9 @@ def test_send_processed_receipt_notifications_keeps_other_channels_running(monke
         raise RuntimeError("signal boom")
 
     monkeypatch.setattr("intake.notify.send_processed_receipt_notification", fail_signal)
-    monkeypatch.setattr("intake.notify.send_processed_receipt_gmail_notification", lambda *a, **k: 1)
+    monkeypatch.setattr(
+        "intake.notify.send_processed_receipt_gmail_notification", lambda *a, **k: 1
+    )
 
     sent, errors = send_processed_receipt_notifications(
         {"gmail": {"recipient": "me@example.com"}},

@@ -69,8 +69,10 @@ def _signal_cli_fields(config_path: Path) -> tuple[str, str]:
 
         if line.strip():
             indent = len(line) - len(line.lstrip())
-            if base_indent is not None and indent <= base_indent and not re.match(
-                r"^\s*signal_cli:\s*$", line
+            if (
+                base_indent is not None
+                and indent <= base_indent
+                and not re.match(r"^\s*signal_cli:\s*$", line)
             ):
                 break
 
