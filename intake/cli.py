@@ -1397,10 +1397,15 @@ def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
         print(f"  Group {i} — {merchant!r}  ${total_amt:.2f}  ({len(group)} copies)")
         for row in group:
             tag = " [KEEP]" if row["filename"] == keeper["filename"] else ""
-            purchaser = f"  purchaser={row['purchaser']!r}" if row.get("purchaser") else ""
+            extras = []
+            if row.get("purchaser"):
+                extras.append(f"purchaser={row['purchaser']!r}")
+            if row.get("card_last4"):
+                extras.append(f"card=*{row['card_last4']}")
+            extra_str = ("  " + "  ".join(extras)) if extras else ""
             print(
                 f"    {'*' if tag else ' '} {row['filename']:<36} "
-                f"{row['scan_date']}  {row['processed_by'] or 'tesseract':<12}{tag}{purchaser}"
+                f"{row['scan_date']}  {row['processed_by'] or 'tesseract':<12}{tag}{extra_str}"
             )
 
         if remove:
