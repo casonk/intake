@@ -1354,20 +1354,23 @@ def _best_row(rows: list) -> dict:
 
 
 def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
-    """Detect and optionally remove duplicate receipt rows from the database.
+    """Detect and optionally merge duplicate receipt rows in the database.
 
     Two rows are treated as duplicates when they share the same merchant and
     total amount, and their scan dates fall within --window days of each other.
 
-    Without --remove, the command lists duplicate groups only.
-    With --remove, it deletes all but the best row in each group (highest-
-    quality model, most complete fields, earliest processed timestamp).
+    Without --merge, the command lists duplicate groups only (dry-run).
+    With --merge, it:
+      1. Selects the best keeper row (highest model rank, most complete fields).
+      2. Promotes any purchaser/card_last4 from other group members into the
+         keeper if the keeper is missing them.
+      3. Deletes all non-keeper rows from the DB (PDF files are untouched).
     """
     from intake.db import init_db
 
     db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
     window = int(args.window)
-    remove = getattr(args, "remove", False)
+    merge = getattr(args, "merge", False)
 
     conn = init_db(db_path)
     rows = [
@@ -1408,7 +1411,27 @@ def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
                 f"{row['scan_date']}  {row['processed_by'] or 'tesseract':<12}{tag}{extra_str}"
             )
 
-        if remove:
+        if merge:
+            # Promote any missing fields from duplicates into the keeper.
+            merged_purchaser = keeper.get("purchaser") or next(
+                (r["purchaser"] for r in group if r.get("purchaser")), None
+            )
+            merged_card = keeper.get("card_last4") or next(
+                (r["card_last4"] for r in group if r.get("card_last4")), None
+            )
+            if merged_purchaser != keeper.get("purchaser") or merged_card != keeper.get("card_last4"):
+                conn.execute(
+                    "UPDATE receipts SET purchaser=?, card_last4=? WHERE filename=?",
+                    (merged_purchaser, merged_card, keeper["filename"]),
+                )
+                promoted = []
+                if merged_purchaser and merged_purchaser != keeper.get("purchaser"):
+                    promoted.append(f"purchaser={merged_purchaser!r}")
+                if merged_card and merged_card != keeper.get("card_last4"):
+                    promoted.append(f"card=*{merged_card}")
+                if promoted:
+                    print(f"    ^ promoted into keeper: {', '.join(promoted)}")
+
             for row in group:
                 if row["filename"] != keeper["filename"]:
                     conn.execute("DELETE FROM receipts WHERE filename = ?", (row["filename"],))
@@ -1417,10 +1440,10 @@ def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
 
     conn.close()
 
-    if remove:
-        print(f"\nRemoved {removed} duplicate row(s) from DB (PDF files untouched).")
+    if merge:
+        print(f"\nMerged {removed} duplicate row(s) into keepers (PDF files untouched).")
     else:
-        print(f"\nRun with --remove to delete {total_dupes} duplicate row(s) from the DB.")
+        print(f"\nRun with --merge to consolidate {total_dupes} duplicate row(s).")
 
 
 def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
@@ -1625,7 +1648,7 @@ def main() -> None:
     # dedup
     p_ded = sub.add_parser(
         "dedup",
-        help="Detect (and optionally remove) duplicate receipt rows from the database",
+        help="Detect (and optionally merge) duplicate receipt rows in the database",
     )
     p_ded.add_argument("--db", metavar="PATH", help="SQLite database path")
     p_ded.add_argument(
@@ -1635,9 +1658,9 @@ def main() -> None:
         help="Max days between scan dates to consider rows duplicates (default: 3)",
     )
     p_ded.add_argument(
-        "--remove",
+        "--merge",
         action="store_true",
-        help="Delete all but the best row per duplicate group (PDF files are untouched)",
+        help="Merge fields into the best row and delete the rest (PDF files untouched)",
     )
 
     # consolidate
