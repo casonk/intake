@@ -170,6 +170,21 @@ _LINE_AMOUNT_RE = re.compile(
 )
 
 _TOTAL_LABEL_TERMS = ("grand total", "order total", "amount due", "balance due", "balance", "total")
+# Higher-priority labels that represent what was charged, not what remains owed.
+# "Balance Due: $0.00" on a fully-paid receipt should not beat "Invoice Total: $65.00".
+_TOTAL_PRIORITY_TERMS = (
+    "invoice total",
+    "grand total",
+    "order total",
+    "amount due",
+    "amount charged",
+    "amount paid",
+    "total due",
+    "total amount",
+    "total charge",
+)
+# Fallback terms — used only when no priority term yields a positive value.
+_TOTAL_FALLBACK_TERMS = ("balance due", "balance", "total")
 _TOTAL_EXCLUDE_TERMS = (
     "subtotal",
     "sub total",
@@ -269,13 +284,26 @@ def _parse_total(raw_text: str) -> float | None:
     if not entries:
         return None
 
-    explicit_total = _last_amount_with_terms(
+    # Pass 1: high-priority labels (invoice total, amount due, etc.)
+    # These represent the charged amount, not the remaining balance.
+    priority_total = _last_amount_with_terms(
         entries,
-        _TOTAL_LABEL_TERMS,
+        _TOTAL_PRIORITY_TERMS,
         exclude_terms=_TOTAL_EXCLUDE_TERMS,
     )
-    if explicit_total is not None and explicit_total > 0:
-        return explicit_total
+    if priority_total is not None and priority_total > 0:
+        return priority_total
+
+    # Pass 2: fallback labels (balance due, balance, total)
+    # "Balance Due: $0.00" on a fully-paid invoice must not override a positive
+    # invoice total found above; only use these when pass 1 found nothing.
+    fallback_total = _last_amount_with_terms(
+        entries,
+        _TOTAL_FALLBACK_TERMS,
+        exclude_terms=_TOTAL_EXCLUDE_TERMS,
+    )
+    if fallback_total is not None and fallback_total > 0:
+        return fallback_total
 
     subtotal = _last_amount_with_terms(entries, _SUBTOTAL_TERMS)
     if subtotal is None or subtotal <= 0:
