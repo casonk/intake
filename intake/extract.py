@@ -147,6 +147,7 @@ def extract_receipt(
     escalation_patterns: list[str] | None = None,
     fuzzy_rules: dict | None = None,
     fuzzy_threshold: float = 0.82,
+    merchant_aliases: dict[str, list[str]] | None = None,
 ) -> tuple[Receipt, str, str]:
     """Extract a Receipt from *pdf_path*, with optional tiered AI fallback.
 
@@ -175,6 +176,16 @@ def extract_receipt(
         )
         if corrected != receipt.merchant:
             receipt = replace(receipt, merchant=corrected)
+
+    # Consolidate clean-text merchant variants to their canonical name
+    if merchant_aliases:
+        from dataclasses import replace
+
+        from intake.merchant import consolidate_merchant
+
+        consolidated = consolidate_merchant(receipt.merchant, merchant_aliases)
+        if consolidated != receipt.merchant:
+            receipt = replace(receipt, merchant=consolidated)
 
     patterns = _compile_patterns(
         escalation_patterns if escalation_patterns is not None else DEFAULT_ESCALATION_PATTERNS

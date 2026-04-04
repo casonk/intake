@@ -131,6 +131,33 @@ def keyword_hint(text: str, keywords: list[str]) -> str | None:
     return None
 
 
+def consolidate_merchant(merchant: str, aliases: dict[str, list[str]]) -> str:
+    """Return the canonical merchant name if *merchant* matches a known alias.
+
+    Compares the normalised form of *merchant* against each alias list entry
+    in *aliases* (``{canonical: [alias, ...]}``) using non-alpha-stripped
+    lowercase matching.  Also accepts merchants that already match a canonical
+    name (handles capitalisation variants like ``"O'Reilly"`` → ``"o'reilly"``).
+
+    Returns *merchant* unchanged when no match is found.
+    """
+    if not merchant or not aliases:
+        return merchant
+
+    norm_merchant = _normalise(merchant)
+    if not norm_merchant:
+        return merchant
+
+    for canonical, alias_list in aliases.items():
+        if norm_merchant == _normalise(canonical):
+            return canonical
+        for alias in alias_list:
+            if norm_merchant == _normalise(alias):
+                return canonical
+
+    return merchant
+
+
 def fuzzy_correct(
     merchant: str,
     keywords: list[str],

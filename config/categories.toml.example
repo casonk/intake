@@ -19,6 +19,19 @@
 #   "category"             – matched at the top level
 #   "category/subcategory" – matched at a subcategory level
 
+# ── Merchant consolidation ──────────────────────────────────────────────────
+# Maps canonical merchant names to lists of known aliases.
+# Aliases are matched case-insensitively after stripping punctuation.
+# Any merchant that normalises to an alias is replaced with the canonical name.
+#
+# Use this to collapse OCR-clean variants that the fuzzy corrector misses, e.g.
+#   "o'reilly auto parts" and "O'Reilly Auto Parts" both → "o'reilly"
+
+[merchants]
+"o'reilly" = ["o'reilly auto parts", "oreilly auto parts"]
+walmart    = ["walmart supercenter", "walmart neighborhood market", "walmart.com"]
+kroger     = ["kroger plus", "kroger marketplace", "kroger fuel center"]
+
 [categories.grocery]
 label    = "Grocery & Supermarkets"
 keywords = []

@@ -371,7 +371,7 @@ def _skip_sidecar(sc: dict, settings: dict, pdf_path: Path | None = None) -> boo
 
 
 def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
-    from intake.classify import classify, load_rules
+    from intake.classify import classify, load_merchant_aliases, load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
     from intake.personal_finance import build_receipt_event
@@ -391,6 +391,7 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
         return
 
     rules = load_rules()
+    merchant_aliases = load_merchant_aliases()
     conn = init_db(db_path)
     pf_events: list[dict] = []
 
@@ -405,6 +406,7 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
                 pdf,
                 **_get_extract_kwargs(settings),
                 fuzzy_rules=rules,
+                merchant_aliases=merchant_aliases,
             )
             category = classify(receipt.merchant, rules, receipt.raw_text)
             dest_dir = receipt_dir / category
@@ -489,7 +491,7 @@ def _cmd_report(args: argparse.Namespace, settings: dict) -> None:
 
 
 def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
-    from intake.classify import load_rules
+    from intake.classify import load_merchant_aliases, load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
     from intake.personal_finance import build_receipt_event
@@ -498,6 +500,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     receipt_dir = _require_receipt_dir(settings, args.receipt_dir)
     db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
     rules = load_rules()
+    merchant_aliases = load_merchant_aliases()
     extract_kwargs = _get_extract_kwargs(settings)
 
     all_pdfs = [
@@ -544,7 +547,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         category = "/".join(rel.parts[:-1])
         print(f"  Backfilling: {rel}")
         try:
-            receipt, model, tier = extract_receipt(pdf, **extract_kwargs, fuzzy_rules=rules)
+            receipt, model, tier = extract_receipt(pdf, **extract_kwargs, fuzzy_rules=rules, merchant_aliases=merchant_aliases)
             row = {
                 "filename": pdf.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -887,7 +890,7 @@ def _detect_merge_groups(receipt_dir: Path, window_minutes: int) -> list[list[Pa
 def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
     from pypdf import PdfReader, PdfWriter
 
-    from intake.classify import load_rules
+    from intake.classify import load_merchant_aliases, load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
     from intake.sidecar import write_sidecar
@@ -911,6 +914,7 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
         return
 
     rules = load_rules()
+    merchant_aliases = load_merchant_aliases()
     extract_kwargs = _get_extract_kwargs(settings)
     conn = init_db(db_path)
     ok = failed = 0
@@ -939,7 +943,7 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
                 print(f"    removed {sec.name}")
 
             # Re-extract merged PDF
-            receipt, model, tier = extract_receipt(primary, **extract_kwargs, fuzzy_rules=rules)
+            receipt, model, tier = extract_receipt(primary, **extract_kwargs, fuzzy_rules=rules, merchant_aliases=merchant_aliases)
             row = {
                 "filename": primary.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -1014,7 +1018,7 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
     Returns (ok_count, error_count).  Mirrors _cmd_process but is callable
     from the daemon loop without requiring argparse Namespace objects.
     """
-    from intake.classify import classify, load_rules
+    from intake.classify import classify, load_merchant_aliases, load_rules
     from intake.db import init_db, upsert_receipt
     from intake.extract import extract_receipt
     from intake.personal_finance import build_receipt_event
@@ -1029,6 +1033,7 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
         return 0, 0
 
     rules = load_rules()
+    merchant_aliases = load_merchant_aliases()
     conn = init_db(db_path)
     ok = errors = 0
     pf_events: list[dict] = []
@@ -1038,6 +1043,7 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
                 pdf,
                 **_get_extract_kwargs(settings),
                 fuzzy_rules=rules,
+                merchant_aliases=merchant_aliases,
             )
             category = classify(receipt.merchant, rules, receipt.raw_text)
             dest_dir = receipt_dir / category
@@ -1212,6 +1218,70 @@ def _install_report_timer_units(*, on_calendar: str) -> None:
     )
 
 
+def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
+    """Apply the merchant alias map to existing DB rows and sidecars.
+
+    Does NOT re-OCR.  Reads every receipt from the database, applies
+    ``consolidate_merchant`` using the current ``[merchants]`` config, and
+    patches any row whose merchant name changes.  The companion sidecar JSON
+    is updated in-place if one exists alongside the PDF.
+    """
+    from intake.classify import load_merchant_aliases
+    from intake.db import init_db
+    from intake.merchant import consolidate_merchant
+    from intake.sidecar import read_sidecar, sidecar_path, write_sidecar
+
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
+    receipt_dir = _require_receipt_dir(settings, getattr(args, "receipt_dir", None))
+
+    merchant_aliases = load_merchant_aliases()
+    if not merchant_aliases:
+        print("No merchant aliases configured in categories.toml — nothing to do.")
+        return
+
+    conn = init_db(db_path)
+    rows = conn.execute("SELECT filename, merchant, receipt_dir FROM receipts").fetchall()
+
+    changed = skipped = 0
+    for row in rows:
+        filename = row["filename"]
+        old_merchant = row["merchant"] or ""
+        new_merchant = consolidate_merchant(old_merchant, merchant_aliases)
+
+        if new_merchant == old_merchant:
+            skipped += 1
+            continue
+
+        if args.dry_run:
+            print(f"  {filename}: {old_merchant!r} → {new_merchant!r}  [dry-run]")
+            changed += 1
+            continue
+
+        conn.execute(
+            "UPDATE receipts SET merchant = ? WHERE filename = ?",
+            (new_merchant, filename),
+        )
+        conn.commit()
+
+        # Patch sidecar if it exists alongside the PDF
+        receipt_dir_rel = row["receipt_dir"] or ""
+        if receipt_dir_rel:
+            pdf = receipt_dir / receipt_dir_rel
+            sc_path = sidecar_path(pdf)
+            if sc_path.exists():
+                sc = read_sidecar(pdf)
+                if sc is not None:
+                    sc["merchant"] = new_merchant
+                    sc_path.write_text(__import__("json").dumps(sc, indent=2))
+
+        print(f"  {filename}: {old_merchant!r} → {new_merchant!r}")
+        changed += 1
+
+    noun = "receipt" if changed == 1 else "receipts"
+    suffix = "  (dry-run)" if args.dry_run else ""
+    print(f"\nConsolidated {changed} {noun}; {skipped} already canonical.{suffix}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="intake",
@@ -1312,6 +1382,15 @@ def main() -> None:
         help="Clear the reviewed flag (requires filename argument)",
     )
 
+    # consolidate
+    p_con = sub.add_parser(
+        "consolidate",
+        help="Apply merchant aliases to existing DB rows and sidecars (no re-OCR)",
+    )
+    p_con.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_con.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_con.add_argument("--dry-run", action="store_true", help="Print changes without writing")
+
     # audit
     p_aud = sub.add_parser("audit", help="List intake PDFs without processing them")
     p_aud.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
@@ -1379,6 +1458,8 @@ def main() -> None:
         _cmd_review(args, settings)
     elif args.command == "suppress":
         _cmd_suppress(args, settings)
+    elif args.command == "consolidate":
+        _cmd_consolidate(args, settings)
     elif args.command == "audit":
         _cmd_audit(args, settings)
     elif args.command == "email":
