@@ -480,7 +480,8 @@ def _cmd_report(args: argparse.Namespace, settings: dict) -> None:
     fmt = args.format or "both"
 
     conn = init_db(db_path)
-    written = generate_reports(conn, output_dir, fmt=fmt)
+    receipt_root = Path(settings["receipt_dir"]) if settings.get("receipt_dir") else None
+    written = generate_reports(conn, output_dir, fmt=fmt, receipt_root=receipt_root)
     conn.close()
 
     for p in written:

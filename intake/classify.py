@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from pathlib import Path
 
 _CONFIG_LOCAL = Path(__file__).parent.parent / "config" / "categories.toml"
@@ -17,6 +19,25 @@ def _config_path(override: Path | None) -> Path:
 def _is_subcategory(value: object) -> bool:
     """Return True if *value* is a dict representing a subcategory entry."""
     return isinstance(value, dict) and "keywords" in value
+
+
+def _normalise_phrase(text: str) -> str:
+    """Return a lowercase, punctuation-light phrase for boundary-aware matching."""
+    folded = unicodedata.normalize("NFKD", text)
+    ascii_text = folded.encode("ascii", "ignore").decode("ascii")
+    ascii_text = ascii_text.replace("'", "").replace("’", "")
+    return " ".join(re.findall(r"[a-z0-9]+", ascii_text.lower()))
+
+
+def _keyword_matches(search_target: str, keyword: str) -> bool:
+    """Return True when *keyword* matches *search_target* as a token/phrase."""
+    norm_keyword = _normalise_phrase(keyword)
+    if not norm_keyword:
+        return False
+    norm_target = _normalise_phrase(search_target)
+    if not norm_target:
+        return False
+    return f" {norm_keyword} " in f" {norm_target} "
 
 
 def load_rules(config_path: Path | None = None) -> dict:
@@ -62,7 +83,6 @@ def classify(merchant: str, rules: dict, full_text: str = "") -> str:
     for search_target in (merchant, full_text):
         if not search_target:
             continue
-        lower = search_target.lower()
         for cat, cat_cfg in rules.items():
             if cat == "general":
                 continue
@@ -71,10 +91,10 @@ def classify(merchant: str, rules: dict, full_text: str = "") -> str:
                 if not _is_subcategory(val):
                     continue
                 for kw in val.get("keywords", []):
-                    if kw.lower() in lower:
+                    if _keyword_matches(search_target, kw):
                         return f"{cat}/{key}"
             # Fall back to top-level category keywords
             for kw in cat_cfg.get("keywords", []):
-                if kw.lower() in lower:
+                if _keyword_matches(search_target, kw):
                     return cat
     return "general"

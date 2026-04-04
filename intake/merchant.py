@@ -12,29 +12,120 @@ import difflib
 import re
 
 # Keywords shorter than this are skipped for fuzzy matching to avoid
-# false positives (e.g. "bp" matching "bp" in "apple")
-_MIN_KEYWORD_LEN = 4
+# false positives (e.g. "bp" matching "bp" in "apple"). Exact token matching
+# can still safely use 3-character merchants like "cvs".
+_MIN_KEYWORD_LEN = 3
+_FUZZY_MIN_KEYWORD_LEN = 4
+
+_KNOWN_MERCHANT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bautozone\b|orders@em\.autozone\.com", re.IGNORECASE), "autozone"),
+    (
+        re.compile(
+            r"\b(?:bass\s*pro|basspro|bassepro|outdoor\s+world)\b|basspro\.(?:com|con)",
+            re.IGNORECASE,
+        ),
+        "bass pro",
+    ),
+    (re.compile(r"\bvodafone\b", re.IGNORECASE), "vodafone"),
+    (re.compile(r"\b(?:kroger|kreager)(?:\.com)?\b|\bpoger\b(?:\s+plus\b)?", re.IGNORECASE), "kroger"),
+    (
+        re.compile(
+            r"(?:o['`]?r[ei1l][ei1l]+y|orei[il1y]+|reiliy).{0,12}(?:auto|auro).{0,12}parts?",
+            re.IGNORECASE,
+        ),
+        "o'reilly",
+    ),
+    (re.compile(r"\bwalmart(?:\.com)?\b", re.IGNORECASE), "walmart"),
+    (re.compile(r"\bcvs\b(?:\s+pharmacy)?\b", re.IGNORECASE), "cvs"),
+)
 
 
 def build_keyword_list(rules: dict) -> list[str]:
     """Return a flat list of all keywords from a nested category rules dict.
 
-    Only includes keywords with at least ``_MIN_KEYWORD_LEN`` characters.
+    Only includes keywords with at least ``_MIN_KEYWORD_LEN`` normalized characters.
     """
     keywords: list[str] = []
     for cat_cfg in rules.values():
         if not isinstance(cat_cfg, dict):
             continue
-        keywords.extend(kw for kw in cat_cfg.get("keywords", []) if len(kw) >= _MIN_KEYWORD_LEN)
+        keywords.extend(
+            kw for kw in cat_cfg.get("keywords", []) if len(_normalise(kw)) >= _MIN_KEYWORD_LEN
+        )
         for val in cat_cfg.values():
             if isinstance(val, dict) and "keywords" in val:
-                keywords.extend(kw for kw in val["keywords"] if len(kw) >= _MIN_KEYWORD_LEN)
+                keywords.extend(
+                    kw for kw in val["keywords"] if len(_normalise(kw)) >= _MIN_KEYWORD_LEN
+                )
     return keywords
 
 
 def _normalise(text: str) -> str:
     """Lowercase and strip non-alpha characters for comparison."""
     return re.sub(r"[^a-z]", "", text.lower())
+
+
+def clean_merchant_text(text: str) -> str:
+    """Strip surrounding OCR noise while preserving the merchant words."""
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    cleaned = re.sub(r"^[^A-Za-z0-9]+", "", cleaned)
+    cleaned = re.sub(r"[^A-Za-z0-9]+$", "", cleaned)
+    return cleaned
+
+
+def _tokens(text: str) -> list[str]:
+    return [
+        _normalise(part)
+        for part in re.split(r"[^A-Za-z0-9']+", text.lower())
+        if len(_normalise(part)) >= _MIN_KEYWORD_LEN
+    ]
+
+
+def _candidate_chunks(text: str) -> set[str]:
+    tokens = _tokens(text)
+    candidates = set(tokens)
+    for start in range(len(tokens)):
+        for end in range(start + 2, min(len(tokens), start + 4) + 1):
+            candidates.add("".join(tokens[start:end]))
+    full = _normalise(text)
+    if full:
+        candidates.add(full)
+    return {candidate for candidate in candidates if candidate}
+
+
+def keyword_hint(text: str, keywords: list[str]) -> str | None:
+    """Return a merchant keyword found exactly in *text* when possible."""
+    if not text or not keywords:
+        return None
+
+    for pattern, canonical in _KNOWN_MERCHANT_PATTERNS:
+        if pattern.search(text):
+            return canonical
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    prepared = sorted(
+        (
+            (_normalise(keyword), keyword.lower(), _tokens(keyword))
+            for keyword in keywords
+            if _normalise(keyword)
+        ),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+
+    for line in lines[:30]:
+        line_tokens = _tokens(line)
+        if not line_tokens:
+            continue
+        line_norm = _normalise(line)
+        for norm_kw, keyword, keyword_tokens in prepared:
+            if len(keyword_tokens) == 1:
+                if norm_kw in line_tokens:
+                    return keyword
+            elif len(norm_kw) >= _FUZZY_MIN_KEYWORD_LEN and norm_kw in line_norm:
+                return keyword
+
+    return None
 
 
 def fuzzy_correct(
@@ -55,30 +146,34 @@ def fuzzy_correct(
     if not merchant or not keywords:
         return merchant
 
-    # Use the first "word" that is at least 3 chars and not all digits
-    first_word = ""
-    for part in re.split(r"[\s#,\.]+", merchant):
-        cleaned = re.sub(r"[^a-zA-Z]", "", part)
-        if len(cleaned) >= 3:
-            first_word = cleaned
-            break
-
-    if not first_word:
+    merchant_clean = clean_merchant_text(merchant)
+    if not merchant_clean:
         return merchant
 
-    norm_merchant = _normalise(first_word)
+    for pattern, canonical in _KNOWN_MERCHANT_PATTERNS:
+        if pattern.search(merchant_clean):
+            return canonical
+
+    candidates = _candidate_chunks(merchant_clean)
+    if not candidates:
+        return merchant_clean or merchant
+
+    full_norm = _normalise(merchant_clean)
     best_ratio = 0.0
     best_kw: str | None = None
 
     for kw in keywords:
         norm_kw = _normalise(kw)
-        if not norm_kw:
+        if len(norm_kw) < _FUZZY_MIN_KEYWORD_LEN:
             continue
-        ratio = difflib.SequenceMatcher(None, norm_merchant, norm_kw).ratio()
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best_kw = kw
+        if norm_kw in full_norm:
+            return kw.lower()
+        for candidate in candidates:
+            ratio = difflib.SequenceMatcher(None, candidate, norm_kw).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_kw = kw
 
     if best_ratio >= threshold and best_kw:
         return best_kw.lower()
-    return merchant
+    return merchant_clean
