@@ -87,7 +87,9 @@ def _write_receipts_json(settings: dict, receipts: list[dict], *, trigger: str) 
     return json_path
 
 
-def _render_command(settings: dict, json_path: Path, *, trigger: str, receipt_count: int) -> list[str]:
+def _render_command(
+    settings: dict, json_path: Path, *, trigger: str, receipt_count: int
+) -> list[str]:
     cfg = _pf_config(settings)
     template = cfg.get("command")
     if template is None:
