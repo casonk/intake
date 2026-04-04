@@ -193,7 +193,15 @@ _TOTAL_EXCLUDE_TERMS = (
 _SUBTOTAL_TERMS = ("subtotal", "sub total")
 _TAX_TOTAL_TERMS = ("total tax", "tax total")
 _DISCOUNT_TOTAL_TERMS = ("total discount", "discount total", "total savings", "savings total")
-_ADDITION_TOTAL_TERMS = ("tip", "gratuity", "service charge", "delivery", "fee", "fees", "surcharge")
+_ADDITION_TOTAL_TERMS = (
+    "tip",
+    "gratuity",
+    "service charge",
+    "delivery",
+    "fee",
+    "fees",
+    "surcharge",
+)
 _DISCOUNT_TERMS = ("discount", "savings", "coupon", "promo", "promotion", "rebate")
 
 

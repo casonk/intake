@@ -645,7 +645,9 @@ def _receipt_file_path(
         return search_cache[filename]
 
     matches = sorted(
-        path for path in receipt_root.rglob(filename) if path.is_file() and path.suffix.lower() == ".pdf"
+        path
+        for path in receipt_root.rglob(filename)
+        if path.is_file() and path.suffix.lower() == ".pdf"
     )
     resolved = matches[0] if len(matches) == 1 else None
     if search_cache is not None:
@@ -749,7 +751,9 @@ def _prepare_recent(rows: list[dict], *, receipt_root: Path | None) -> list[dict
         item["file_markdown"] = (
             _markdown_link(item["filename"], file_link_uri) if file_link_uri else item["filename"]
         )
-        item["folder_markdown"] = _markdown_link(item["folder_name"], folder_uri) if folder_uri else "—"
+        item["folder_markdown"] = (
+            _markdown_link(item["folder_name"], folder_uri) if folder_uri else "—"
+        )
         prepared.append(item)
     return prepared
 
@@ -993,7 +997,9 @@ def generate_reports(
 
     if fmt in ("html", "both"):
         html_path = output_dir / "intake-report.html"
-        html_path.write_text(html_env.from_string(_HTML_TEMPLATE).render(data=data), encoding="utf-8")
+        html_path.write_text(
+            html_env.from_string(_HTML_TEMPLATE).render(data=data), encoding="utf-8"
+        )
         written.append(html_path)
 
     return written

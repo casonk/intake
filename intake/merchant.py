@@ -27,7 +27,10 @@ _KNOWN_MERCHANT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "bass pro",
     ),
     (re.compile(r"\bvodafone\b", re.IGNORECASE), "vodafone"),
-    (re.compile(r"\b(?:kroger|kreager)(?:\.com)?\b|\bpoger\b(?:\s+plus\b)?", re.IGNORECASE), "kroger"),
+    (
+        re.compile(r"\b(?:kroger|kreager)(?:\.com)?\b|\bpoger\b(?:\s+plus\b)?", re.IGNORECASE),
+        "kroger",
+    ),
     (
         re.compile(
             r"(?:o['`]?r[ei1l][ei1l]+y|orei[il1y]+|reiliy).{0,12}(?:auto|auro).{0,12}parts?",
