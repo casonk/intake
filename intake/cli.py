@@ -514,22 +514,41 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         print("No receipts found in category folders.")
         return
 
+    # Open DB early so we can detect sidecared receipts that are absent from the DB.
+    conn = init_db(db_path)
+    db_receipt_dirs: set[str] = {
+        row[0]
+        for row in conn.execute("SELECT receipt_dir FROM receipts WHERE receipt_dir IS NOT NULL")
+    }
+
     pending: list[Path] = []
+    sidecar_only: list[Path] = []  # sidecar present + up-to-date, but not in DB
     skipped = 0
     for pdf in all_pdfs:
         sc = read_sidecar(pdf)
+        rel = str(pdf.relative_to(receipt_dir))
         if sc is not None and _skip_sidecar(sc, settings, pdf_path=pdf):
-            skipped += 1
+            if rel not in db_receipt_dirs:
+                sidecar_only.append(pdf)
+            else:
+                skipped += 1
             continue
         pending.append(pdf)
 
-    print(f"Found {len(all_pdfs)} receipt(s); {skipped} up-to-date, {len(pending)} pending.")
+    print(
+        f"Found {len(all_pdfs)} receipt(s); {skipped} up-to-date, "
+        f"{len(sidecar_only)} sidecar-only (not in DB), {len(pending)} pending."
+    )
 
-    if not pending:
+    if not pending and not sidecar_only:
         print("Nothing to backfill.")
         return
 
     if args.dry_run:
+        for pdf in sidecar_only:
+            rel = pdf.relative_to(receipt_dir)
+            sc = read_sidecar(pdf)
+            print(f"  [dry-run] {rel}  (sidecar-only, would upsert from sidecar)")
         for pdf in pending:
             rel = pdf.relative_to(receipt_dir)
             sc = read_sidecar(pdf)
@@ -538,9 +557,44 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
             print(f"  [dry-run] {rel}  (prior: {prior_model}/{prior_tier})")
         return
 
-    conn = init_db(db_path)
+    from intake.merchant import consolidate_merchant
+
     ok = failed = 0
     pf_events: list[dict] = []
+
+    # ── Sidecar-only: upsert from existing sidecar without re-OCR ────────────
+    for pdf in sidecar_only:
+        rel = pdf.relative_to(receipt_dir)
+        sc = read_sidecar(pdf)
+        if sc is None:
+            continue
+        print(f"  Upserting (sidecar-only): {rel}")
+        merchant = consolidate_merchant(sc.get("merchant") or "", merchant_aliases)
+        row = {
+            "filename": pdf.name,
+            "scan_date": sc.get("scan_date", ""),
+            "merchant": merchant,
+            "total": sc.get("total"),
+            "category": sc.get("category", "/".join(rel.parts[:-1])),
+            "receipt_dir": str(rel),
+            "raw_text": None,
+            "processed_by": sc.get("processed_by", "tesseract"),
+            "purchaser": sc.get("purchaser"),
+            "card_last4": sc.get("card_last4"),
+            "tier": sc.get("tier", "ok"),
+        }
+        try:
+            upsert_receipt(conn, row)
+            if merchant != (sc.get("merchant") or ""):
+                sc["merchant"] = merchant
+                write_sidecar(pdf, {k: v for k, v in row.items() if k != "raw_text"})
+            print(f"    -> merchant={merchant!r}, total={row['total']}")
+            ok += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"    ERROR: {exc}", file=sys.stderr)
+            failed += 1
+
+    # ── Full re-extract pending receipts ─────────────────────────────────────
 
     for pdf in pending:
         rel = pdf.relative_to(receipt_dir)
@@ -1221,15 +1275,19 @@ def _install_report_timer_units(*, on_calendar: str) -> None:
 def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
     """Apply the merchant alias map to existing DB rows and sidecars.
 
-    Does NOT re-OCR.  Reads every receipt from the database, applies
-    ``consolidate_merchant`` using the current ``[merchants]`` config, and
-    patches any row whose merchant name changes.  The companion sidecar JSON
-    is updated in-place if one exists alongside the PDF.
+    Does NOT re-OCR.  Two-pass approach:
+
+    Pass 1 — DB rows: update every receipt whose merchant matches an alias,
+    and patch the companion sidecar alongside the PDF.
+
+    Pass 2 — filesystem sweep: walk all ``.intake.json`` files in the receipt
+    directory and patch any whose merchant matches an alias, even if the file
+    is not tracked in the DB (orphaned sidecars from earlier processing runs).
     """
     from intake.classify import load_merchant_aliases
     from intake.db import init_db
     from intake.merchant import consolidate_merchant
-    from intake.sidecar import read_sidecar, sidecar_path, write_sidecar
+    from intake.sidecar import read_sidecar, sidecar_path
 
     db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
     receipt_dir = _require_receipt_dir(settings, getattr(args, "receipt_dir", None))
@@ -1239,22 +1297,23 @@ def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
         print("No merchant aliases configured in categories.toml — nothing to do.")
         return
 
+    # ── Pass 1: DB rows ───────────────────────────────────────────────────────
     conn = init_db(db_path)
     rows = conn.execute("SELECT filename, merchant, receipt_dir FROM receipts").fetchall()
 
-    changed = skipped = 0
+    db_changed = db_skipped = 0
     for row in rows:
         filename = row["filename"]
         old_merchant = row["merchant"] or ""
         new_merchant = consolidate_merchant(old_merchant, merchant_aliases)
 
         if new_merchant == old_merchant:
-            skipped += 1
+            db_skipped += 1
             continue
 
         if args.dry_run:
-            print(f"  {filename}: {old_merchant!r} → {new_merchant!r}  [dry-run]")
-            changed += 1
+            print(f"  [db]  {filename}: {old_merchant!r} → {new_merchant!r}  [dry-run]")
+            db_changed += 1
             continue
 
         conn.execute(
@@ -1263,7 +1322,6 @@ def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
         )
         conn.commit()
 
-        # Patch sidecar if it exists alongside the PDF
         receipt_dir_rel = row["receipt_dir"] or ""
         if receipt_dir_rel:
             pdf = receipt_dir / receipt_dir_rel
@@ -1272,14 +1330,45 @@ def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
                 sc = read_sidecar(pdf)
                 if sc is not None:
                     sc["merchant"] = new_merchant
-                    sc_path.write_text(__import__("json").dumps(sc, indent=2))
+                    sc_path.write_text(json.dumps(sc, indent=2))
 
-        print(f"  {filename}: {old_merchant!r} → {new_merchant!r}")
-        changed += 1
+        print(f"  [db]  {filename}: {old_merchant!r} → {new_merchant!r}")
+        db_changed += 1
 
-    noun = "receipt" if changed == 1 else "receipts"
+    # ── Pass 2: filesystem sweep (catches orphaned sidecars) ─────────────────
+    # Track which sidecar paths were already handled in pass 1.
+    db_sc_paths: set[Path] = set()
+    for row in rows:
+        rel = row["receipt_dir"] or ""
+        if rel:
+            db_sc_paths.add(sidecar_path(receipt_dir / rel))
+
+    fs_changed = fs_skipped = 0
+    for sc_path in sorted(receipt_dir.rglob("*.intake.json")):
+        if sc_path in db_sc_paths:
+            continue  # already handled in pass 1
+        try:
+            sc = json.loads(sc_path.read_text())
+            old_merchant = sc.get("merchant") or ""
+            new_merchant = consolidate_merchant(old_merchant, merchant_aliases)
+            if new_merchant == old_merchant:
+                fs_skipped += 1
+                continue
+            if args.dry_run:
+                print(f"  [fs]  {sc_path.relative_to(receipt_dir)}: {old_merchant!r} → {new_merchant!r}  [dry-run]")
+            else:
+                sc["merchant"] = new_merchant
+                sc_path.write_text(json.dumps(sc, indent=2))
+                print(f"  [fs]  {sc_path.relative_to(receipt_dir)}: {old_merchant!r} → {new_merchant!r}")
+            fs_changed += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"  WARNING: could not patch {sc_path.name}: {exc}", file=sys.stderr)
+
     suffix = "  (dry-run)" if args.dry_run else ""
-    print(f"\nConsolidated {changed} {noun}; {skipped} already canonical.{suffix}")
+    print(
+        f"\nDB:  {db_changed} updated, {db_skipped} already canonical.{suffix}"
+        f"\nFS:  {fs_changed} sidecar(s) patched, {fs_skipped} skipped.{suffix}"
+    )
 
 
 def main() -> None:
