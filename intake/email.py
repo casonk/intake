@@ -294,8 +294,11 @@ def _upsert_html_receipt(
     from intake.classify import classify, load_rules  # noqa: PLC0415
     from intake.db import upsert_receipt  # noqa: PLC0415
     from intake.notify import send_processed_receipt_notifications  # noqa: PLC0415
-    from intake.personal_finance import build_receipt_event, trigger_personal_finance  # noqa: PLC0415
     from intake.parse import parse_receipt  # noqa: PLC0415
+    from intake.personal_finance import (  # noqa: PLC0415
+        build_receipt_event,
+        trigger_personal_finance,
+    )
 
     rules = load_rules()
     # Build a synthetic filename for the receipt (uid-based)
