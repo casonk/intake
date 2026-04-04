@@ -175,11 +175,11 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         """)
 
     recent = rows("""
-        SELECT scan_date, merchant, category, total, filename,
+        SELECT scan_date, merchant, category, total, filename, receipt_dir,
                purchaser, card_last4, processed_by, processed_at
         FROM receipts
         ORDER BY scan_date DESC, processed_at DESC
-        LIMIT 20
+        LIMIT 50
         """)
 
     return {

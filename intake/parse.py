@@ -153,8 +153,10 @@ def _parse_receipt_datetime(raw_text: str) -> tuple[date | None, time | None]:
 
 
 def _parse_merchant(raw_text: str) -> str:
+    from intake.merchant import clean_merchant_text  # noqa: PLC0415
+
     for line in raw_text.splitlines():
-        stripped = line.strip()
+        stripped = clean_merchant_text(line)
         if stripped:
             return stripped[:60].lower()
     return "unknown"
@@ -162,21 +164,139 @@ def _parse_merchant(raw_text: str) -> str:
 
 # ── total ─────────────────────────────────────────────────────────────────────
 
-_TOTAL_RE = re.compile(
-    r"(?:total\s*(?:due)?|amount\s+due|balance(?:\s+due)?)\s*[:\$]?\s*\$?\s*(\d{1,6}[.,]\d{2})",
+_LINE_AMOUNT_RE = re.compile(
+    r"^\s*(?P<label>[^0-9$][^\n$]{0,120}?)\s*[:\-]?\s*\$?\s*(?P<amount>-?\d{1,6}(?:[.,]\d{1,2})?)\s*(?:[A-Z]{3})?\s*$",
     re.IGNORECASE,
 )
 
+_TOTAL_LABEL_TERMS = ("grand total", "order total", "amount due", "balance due", "balance", "total")
+_TOTAL_EXCLUDE_TERMS = (
+    "subtotal",
+    "sub total",
+    "loyalty",
+    "points",
+    "reward",
+    "rewards",
+    "item",
+    "items",
+    "tax",
+    "discount",
+    "savings",
+    "coupon",
+    "promo",
+    "promotion",
+    "change",
+    "customer",
+    "payment",
+    "cash",
+)
+_SUBTOTAL_TERMS = ("subtotal", "sub total")
+_TAX_TOTAL_TERMS = ("total tax", "tax total")
+_DISCOUNT_TOTAL_TERMS = ("total discount", "discount total", "total savings", "savings total")
+_ADDITION_TOTAL_TERMS = ("tip", "gratuity", "service charge", "delivery", "fee", "fees", "surcharge")
+_DISCOUNT_TERMS = ("discount", "savings", "coupon", "promo", "promotion", "rebate")
 
-def _parse_total(raw_text: str) -> float | None:
-    matches = _TOTAL_RE.findall(raw_text)
-    if not matches:
-        return None
-    raw = matches[-1].replace(",", "")
+
+def _parse_amount(raw: str) -> float | None:
+    cleaned = raw.strip()
+    if "," in cleaned and "." not in cleaned:
+        cleaned = cleaned.replace(",", ".")
+    else:
+        cleaned = cleaned.replace(",", "")
     try:
-        return float(raw)
+        return float(cleaned)
     except ValueError:
         return None
+
+
+def _iter_labeled_amounts(raw_text: str) -> list[tuple[str, float]]:
+    entries: list[tuple[str, float]] = []
+    for line in raw_text.splitlines():
+        match = _LINE_AMOUNT_RE.match(line)
+        if not match:
+            continue
+        amount = _parse_amount(match.group("amount"))
+        if amount is None:
+            continue
+        label = " ".join(match.group("label").strip().lower().split())
+        if label:
+            entries.append((label, amount))
+    return entries
+
+
+def _last_amount_with_terms(
+    entries: list[tuple[str, float]],
+    include_terms: tuple[str, ...],
+    *,
+    exclude_terms: tuple[str, ...] = (),
+) -> float | None:
+    match_value: float | None = None
+    for label, amount in entries:
+        if any(term in label for term in include_terms) and not any(
+            term in label for term in exclude_terms
+        ):
+            match_value = amount
+    return match_value
+
+
+def _sum_amounts_with_terms(
+    entries: list[tuple[str, float]],
+    include_terms: tuple[str, ...],
+    *,
+    exclude_terms: tuple[str, ...] = (),
+) -> float | None:
+    matches = [
+        amount
+        for label, amount in entries
+        if any(term in label for term in include_terms)
+        and not any(term in label for term in exclude_terms)
+    ]
+    if not matches:
+        return None
+    return round(sum(matches), 2)
+
+
+def _parse_total(raw_text: str) -> float | None:
+    entries = _iter_labeled_amounts(raw_text)
+    if not entries:
+        return None
+
+    explicit_total = _last_amount_with_terms(
+        entries,
+        _TOTAL_LABEL_TERMS,
+        exclude_terms=_TOTAL_EXCLUDE_TERMS,
+    )
+    if explicit_total is not None and explicit_total > 0:
+        return explicit_total
+
+    subtotal = _last_amount_with_terms(entries, _SUBTOTAL_TERMS)
+    if subtotal is None or subtotal <= 0:
+        return None
+
+    tax_total = _last_amount_with_terms(entries, _TAX_TOTAL_TERMS)
+    if tax_total is None:
+        tax_total = _sum_amounts_with_terms(
+            entries,
+            ("tax",),
+            exclude_terms=("total tax", "tax total"),
+        )
+
+    discount_total = _last_amount_with_terms(entries, _DISCOUNT_TOTAL_TERMS)
+    if discount_total is None:
+        discount_total = _sum_amounts_with_terms(
+            entries,
+            _DISCOUNT_TERMS,
+            exclude_terms=_DISCOUNT_TOTAL_TERMS,
+        )
+
+    additions = _sum_amounts_with_terms(entries, _ADDITION_TOTAL_TERMS) or 0.0
+    tax_total = tax_total or 0.0
+    discount_total = abs(discount_total or 0.0)
+
+    if not any((tax_total, discount_total, additions)):
+        return None
+
+    return round(subtotal + tax_total + additions - discount_total, 2)
 
 
 # ── purchaser / card ──────────────────────────────────────────────────────────
@@ -203,7 +323,7 @@ def _parse_card_last4(raw_text: str) -> str | None:
 
 # Cardholder name often follows "cardholder:", "member:", "approved for:", etc.
 _PURCHASER_RE = re.compile(
-    r"(?:card\s*holder|cardholder|member(?:\s*name)?|customer(?:\s*name)?|approved\s*for|name)"
+    r"(?:card\s*holder|cardholder|member(?:\s*name)?|customer\s*name|customer(?=\s*:)|approved\s*for|name(?=\s*:))"
     r"[:\s]+([A-Z][A-Za-z\s'\-]{2,40}?)(?:\s{2,}|\n|$)",
     re.IGNORECASE,
 )

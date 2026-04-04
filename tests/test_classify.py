@@ -78,3 +78,31 @@ def test_load_labels_includes_subcategories():
     assert labels["grocery"] == "Grocery & Supermarkets"
     assert labels["grocery/supermarket"] == "Supermarket Chains"
     assert labels["fuel/station"] == "Gas Stations"
+
+
+def test_mobile_text_does_not_match_mobil_keyword():
+    rules = {
+        "gas-station": {"label": "Gas Stations", "keywords": ["mobil"]},
+        "general": {"label": "General", "keywords": []},
+    }
+    assert classify("Unknown Shop", rules, "mobile data plan") == "general"
+
+
+def test_vodafone_classifies_as_phone_carrier():
+    rules = {
+        "gas-station": {"label": "Gas Stations", "keywords": ["mobil"]},
+        "phone": {
+            "label": "Telecommunications",
+            "keywords": [],
+            "carrier": {"label": "Telecom Carriers", "keywords": ["vodafone"]},
+        },
+        "general": {"label": "General", "keywords": []},
+    }
+    assert (
+        classify(
+            "vodafone global connect s.à r.l.",
+            rules,
+            "mobile data plan and roaming service",
+        )
+        == "phone/carrier"
+    )

@@ -165,13 +165,15 @@ def extract_receipt(
 
     # Fuzzy-correct garbled merchant name before quality/escalation checks
     if fuzzy_rules:
-        from intake.merchant import build_keyword_list, fuzzy_correct
+        from dataclasses import replace
+
+        from intake.merchant import build_keyword_list, fuzzy_correct, keyword_hint
 
         keywords = build_keyword_list(fuzzy_rules)
-        corrected = fuzzy_correct(receipt.merchant, keywords, fuzzy_threshold)
+        corrected = keyword_hint(raw_text, keywords) or fuzzy_correct(
+            receipt.merchant, keywords, fuzzy_threshold
+        )
         if corrected != receipt.merchant:
-            from dataclasses import replace
-
             receipt = replace(receipt, merchant=corrected)
 
     patterns = _compile_patterns(

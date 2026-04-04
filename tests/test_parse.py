@@ -44,6 +44,11 @@ def test_total_from_amount_due():
     assert r.total == pytest.approx(12.50)
 
 
+def test_total_from_usd_line_with_single_decimal():
+    r = parse_receipt("20260401_0900.pdf", "Vodafone\nTotal 13.2 USD")
+    assert r.total == pytest.approx(13.2)
+
+
 def test_total_none_when_missing():
     r = parse_receipt("20260401_0900.pdf", "Mystery Shop\nItem 1   5.00\nItem 2   3.00")
     assert r.total is None
@@ -70,6 +75,38 @@ def test_total_last_match_wins():
 def test_balance_due_parsed():
     r = parse_receipt("20260315_1400.pdf", "Dentist Office\nBalance Due $350.00")
     assert r.total == pytest.approx(350.00)
+
+
+def test_loyalty_points_total_ignored():
+    text = "\n".join(
+        [
+            "Shop",
+            "Subtotal: $10.00",
+            "Tax: $0.60",
+            "Loyalty Points Earned: 55.00",
+            "Loyalty Points Total: 800.69",
+        ]
+    )
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert r.total == pytest.approx(10.60)
+
+
+def test_total_computed_from_subtotal_tax_and_discount():
+    text = "\n".join(
+        [
+            "Moses Roses - Waterford REC",
+            "Subtotal: $195.00",
+            "Michigan Cannabis Excise Tax: $15.50",
+            "Michigan State Tax: $10.23",
+            "Total Tax: $25.73",
+            "Total Discount: $39.99",
+            "Payment (Cash): $200.00",
+            "Due Customer: $19.00",
+            "Loyalty Points Total: 800.69",
+        ]
+    )
+    r = parse_receipt("20260307.pdf", text)
+    assert r.total == pytest.approx(180.74)
 
 
 def test_card_last4_from_visa():
@@ -106,4 +143,16 @@ def test_purchaser_blacklist_rejected_by_ocr_parser():
 
 def test_purchaser_blacklist_case_insensitive_ocr():
     r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: ACCOUNT\nTotal $5.00")
+    assert r.purchaser is None
+
+
+def test_customer_satisfaction_not_treated_as_purchaser():
+    text = "Store\n~-customer satisfaction per randa S\nSubtotal: $10.00\nTax: $0.60"
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert r.purchaser is None
+
+
+def test_cardholder_signature_verified_not_treated_as_purchaser():
+    text = "Store\nCardholder Signature Verified\nTotal $5.00"
+    r = parse_receipt("20260401_0900.pdf", text)
     assert r.purchaser is None
