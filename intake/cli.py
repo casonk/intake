@@ -568,6 +568,20 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         sc = read_sidecar(pdf)
         if sc is None:
             continue
+
+        # Guard: if this filename already maps to a *different* receipt_dir in the
+        # DB, the file is a same-name copy of a different receipt.  Upserting would
+        # silently overwrite the existing row — skip and warn instead.
+        existing = conn.execute(
+            "SELECT receipt_dir FROM receipts WHERE filename = ?", (pdf.name,)
+        ).fetchone()
+        if existing and existing["receipt_dir"] != str(rel):
+            print(
+                f"  SKIP (sidecar-only): {rel}  "
+                f"— filename already tracked as {existing['receipt_dir']!r}"
+            )
+            continue
+
         print(f"  Upserting (sidecar-only): {rel}")
         merchant = consolidate_merchant(sc.get("merchant") or "", merchant_aliases)
         row = {
@@ -1272,6 +1286,138 @@ def _install_report_timer_units(*, on_calendar: str) -> None:
     )
 
 
+def _find_duplicate_groups(
+    rows: list, window_days: int
+) -> list[list]:
+    """Return clusters of rows that likely represent the same transaction.
+
+    Two rows are considered duplicates when they share the same merchant and
+    total, and their scan dates fall within *window_days* of each other.
+    """
+    from datetime import date, timedelta
+
+    def parse_date(s: str | None) -> date | None:
+        try:
+            return date.fromisoformat((s or "")[:10])
+        except ValueError:
+            return None
+
+    # Group by (merchant, rounded total).
+    buckets: dict[tuple, list] = {}
+    for row in rows:
+        merchant = (row["merchant"] or "").strip().lower()
+        total = round(row["total"] or 0.0, 2)
+        if not merchant or total == 0.0:
+            continue
+        buckets.setdefault((merchant, total), []).append(row)
+
+    groups = []
+    for bucket_rows in buckets.values():
+        if len(bucket_rows) < 2:
+            continue
+        # Sort by scan_date so window logic is monotone.
+        bucket_rows.sort(key=lambda r: r["scan_date"] or "")
+        # Sliding-window cluster: start a new cluster when the gap between
+        # successive dates exceeds window_days.
+        cluster: list = [bucket_rows[0]]
+        for row in bucket_rows[1:]:
+            prev_d = parse_date(cluster[-1]["scan_date"])
+            curr_d = parse_date(row["scan_date"])
+            if prev_d and curr_d and abs((curr_d - prev_d).days) <= window_days:
+                cluster.append(row)
+            else:
+                if len(cluster) > 1:
+                    groups.append(cluster)
+                cluster = [row]
+        if len(cluster) > 1:
+            groups.append(cluster)
+
+    return groups
+
+
+def _best_row(rows: list) -> dict:
+    """Return the row that best represents the transaction.
+
+    Priority: most extra fields filled (purchaser, card_last4) → highest model
+    rank → earliest processed_at.
+    """
+    from intake.extract import model_rank
+
+    def score(row: dict) -> tuple:
+        extra = sum(1 for f in ("purchaser", "card_last4") if row.get(f))
+        rank = model_rank(row.get("processed_by") or "tesseract")
+        # Negate processed_at so earlier timestamps sort higher.
+        ts = row.get("processed_at") or ""
+        return (extra, rank, ts)
+
+    return max(rows, key=score)
+
+
+def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
+    """Detect and optionally remove duplicate receipt rows from the database.
+
+    Two rows are treated as duplicates when they share the same merchant and
+    total amount, and their scan dates fall within --window days of each other.
+
+    Without --remove, the command lists duplicate groups only.
+    With --remove, it deletes all but the best row in each group (highest-
+    quality model, most complete fields, earliest processed timestamp).
+    """
+    from intake.db import init_db
+
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
+    window = int(args.window)
+    remove = getattr(args, "remove", False)
+
+    conn = init_db(db_path)
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT filename, merchant, total, scan_date, receipt_dir, "
+            "processed_by, purchaser, card_last4, processed_at "
+            "FROM receipts"
+        ).fetchall()
+    ]
+
+    groups = _find_duplicate_groups(rows, window)
+
+    if not groups:
+        print(f"No duplicates found (merchant+total, within {window}-day window).")
+        conn.close()
+        return
+
+    total_dupes = sum(len(g) - 1 for g in groups)
+    print(f"Found {len(groups)} duplicate group(s), {total_dupes} row(s) to remove:\n")
+
+    removed = 0
+    for i, group in enumerate(groups, 1):
+        keeper = _best_row(group)
+        merchant = keeper["merchant"] or "?"
+        total_amt = keeper["total"]
+        print(f"  Group {i} — {merchant!r}  ${total_amt:.2f}  ({len(group)} copies)")
+        for row in group:
+            tag = " [KEEP]" if row["filename"] == keeper["filename"] else ""
+            purchaser = f"  purchaser={row['purchaser']!r}" if row.get("purchaser") else ""
+            print(
+                f"    {'*' if tag else ' '} {row['filename']:<36} "
+                f"{row['scan_date']}  {row['processed_by'] or 'tesseract':<12}{tag}{purchaser}"
+            )
+
+        if remove:
+            for row in group:
+                if row["filename"] != keeper["filename"]:
+                    conn.execute("DELETE FROM receipts WHERE filename = ?", (row["filename"],))
+                    removed += 1
+            conn.commit()
+
+    conn.close()
+
+    if remove:
+        print(f"\nRemoved {removed} duplicate row(s) from DB (PDF files untouched).")
+    else:
+        print(f"\nRun with --remove to delete {total_dupes} duplicate row(s) from the DB.")
+
+
 def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
     """Apply the merchant alias map to existing DB rows and sidecars.
 
@@ -1471,6 +1617,24 @@ def main() -> None:
         help="Clear the reviewed flag (requires filename argument)",
     )
 
+    # dedup
+    p_ded = sub.add_parser(
+        "dedup",
+        help="Detect (and optionally remove) duplicate receipt rows from the database",
+    )
+    p_ded.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_ded.add_argument(
+        "--window",
+        metavar="DAYS",
+        default=3,
+        help="Max days between scan dates to consider rows duplicates (default: 3)",
+    )
+    p_ded.add_argument(
+        "--remove",
+        action="store_true",
+        help="Delete all but the best row per duplicate group (PDF files are untouched)",
+    )
+
     # consolidate
     p_con = sub.add_parser(
         "consolidate",
@@ -1547,6 +1711,8 @@ def main() -> None:
         _cmd_review(args, settings)
     elif args.command == "suppress":
         _cmd_suppress(args, settings)
+    elif args.command == "dedup":
+        _cmd_dedup(args, settings)
     elif args.command == "consolidate":
         _cmd_consolidate(args, settings)
     elif args.command == "audit":
