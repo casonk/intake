@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
 DYNO_LAB_SRC = Path(__file__).resolve().parents[2] / "dyno-lab" / "src"
 if str(DYNO_LAB_SRC) not in sys.path:
     sys.path.insert(0, str(DYNO_LAB_SRC))
-for module_name in [name for name in sys.modules if name == "dyno_lab" or name.startswith("dyno_lab.")]:
+for module_name in [
+    name for name in sys.modules if name == "dyno_lab" or name.startswith("dyno_lab.")
+]:
     del sys.modules[module_name]
 
-from dyno_lab.auto_pass import AutoPassPatch, AutoPassRecorder
-from intake import cli
+auto_pass = importlib.import_module("dyno_lab.auto_pass")
+cli = importlib.import_module("intake.cli")
+
+AutoPassPatch = auto_pass.AutoPassPatch
+AutoPassRecorder = auto_pass.AutoPassRecorder
 
 
 def test_load_settings_resolves_openai_key_via_auto_pass(tmp_path, monkeypatch):
