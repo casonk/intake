@@ -55,6 +55,21 @@ def load_rules(config_path: Path | None = None) -> dict:
     return data.get("categories", {})
 
 
+def load_merchant_aliases(config_path: Path | None = None) -> dict[str, list[str]]:
+    """Load the merchant alias map from the TOML config.
+
+    Returns a dict mapping each canonical merchant name to a list of alias
+    strings: ``{ "o'reilly": ["o'reilly auto parts", ...], ... }``.
+
+    Defined under ``[merchants]`` in ``categories.toml``.
+    """
+    import toml
+
+    data = toml.load(_config_path(config_path))
+    raw = data.get("merchants", {})
+    return {canonical: list(aliases) for canonical, aliases in raw.items()}
+
+
 def load_labels(config_path: Path | None = None) -> dict[str, str]:
     """Return a flat mapping of category (and category/subcategory) to display label.
 

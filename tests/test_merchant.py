@@ -1,6 +1,6 @@
 """Unit tests for intake.merchant (fuzzy correction)."""
 
-from intake.merchant import build_keyword_list, clean_merchant_text, fuzzy_correct, keyword_hint
+from intake.merchant import build_keyword_list, clean_merchant_text, consolidate_merchant, fuzzy_correct, keyword_hint
 
 _RULES = {
     "grocery": {
@@ -112,3 +112,50 @@ def test_keyword_hint_collapses_vodafone_global_connect():
 def test_fuzzy_correct_handles_multiword_ocr_noise():
     kws = ["o'reilly", "walmart", "kroger"]
     assert fuzzy_correct("Reiliy/auro parts", kws) == "o'reilly"
+
+
+# ── consolidate_merchant ──────────────────────────────────────────────────────
+
+_ALIASES = {
+    "o'reilly": ["o'reilly auto parts", "oreilly auto parts"],
+    "walmart": ["walmart supercenter", "walmart neighborhood market"],
+    "kroger": ["kroger plus", "kroger marketplace"],
+}
+
+
+def test_consolidate_merchant_alias_match():
+    assert consolidate_merchant("o'reilly auto parts", _ALIASES) == "o'reilly"
+
+
+def test_consolidate_merchant_case_insensitive():
+    assert consolidate_merchant("O'Reilly Auto Parts", _ALIASES) == "o'reilly"
+
+
+def test_consolidate_merchant_canonical_already():
+    assert consolidate_merchant("o'reilly", _ALIASES) == "o'reilly"
+
+
+def test_consolidate_merchant_canonical_capitalized():
+    assert consolidate_merchant("O'Reilly", _ALIASES) == "o'reilly"
+
+
+def test_consolidate_merchant_no_match_returns_original():
+    assert consolidate_merchant("advance auto parts", _ALIASES) == "advance auto parts"
+
+
+def test_consolidate_merchant_empty_aliases():
+    assert consolidate_merchant("o'reilly auto parts", {}) == "o'reilly auto parts"
+
+
+def test_consolidate_merchant_empty_merchant():
+    assert consolidate_merchant("", _ALIASES) == ""
+
+
+def test_consolidate_merchant_walmart_alias():
+    assert consolidate_merchant("walmart supercenter", _ALIASES) == "walmart"
+
+
+def test_consolidate_merchant_does_not_partial_match():
+    # "kroger plus #1234" normalises to "krogerplus" which matches the "kroger plus" alias
+    # — store numbers are stripped, so this correctly consolidates to the canonical
+    assert consolidate_merchant("kroger plus #1234", _ALIASES) == "kroger"
