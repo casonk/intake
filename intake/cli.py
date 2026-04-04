@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import importlib
+import json
 import shlex
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -18,6 +21,8 @@ _AUTO_PASS_CONFIG_PATH = _REPO_ROOT / "config" / "auto-pass.ini"
 _SETTINGS_EXAMPLE_LABEL = "config/settings.toml.example"
 _SETTINGS_PATH_LABEL = "config/settings.toml"
 _AUTO_PASS_CONFIG_LABEL = "config/auto-pass.ini"
+_CLOCKWORK_CONFIG_DIR = _REPO_ROOT / "config" / "clockwork"
+_CLOCKWORK_SRC_DIR = _REPO_ROOT.parent / "clockwork" / "src"
 
 
 def _repo_relative_path(value: str | Path) -> Path:
@@ -104,6 +109,106 @@ def _trigger_personal_finance(
 
     if json_path is not None:
         print(f"{prefix}[finance-pipeline] triggered via {json_path}")
+
+
+def _toml_string(value: str) -> str:
+    """Render a string as a TOML-compatible basic string literal."""
+    return json.dumps(value)
+
+
+def _render_clockwork_template(template_name: str, replacements: dict[str, str]) -> str:
+    """Render a tracked clockwork template with TOML-safe replacements."""
+    template_path = _CLOCKWORK_CONFIG_DIR / template_name
+    rendered = template_path.read_text(encoding="utf-8")
+    for token, replacement in replacements.items():
+        rendered = rendered.replace(token, replacement)
+    return rendered
+
+
+def _load_clockwork_main():
+    """Return the clockwork CLI entry point from install or sibling repo."""
+    try:
+        return importlib.import_module("clockwork.cli").main
+    except ModuleNotFoundError as exc:
+        if exc.name != "clockwork":
+            raise
+
+    if not _CLOCKWORK_SRC_DIR.exists():
+        raise RuntimeError(
+            "clockwork is not installed and sibling repo was not found at "
+            f"{_CLOCKWORK_SRC_DIR}. Install clockwork or clone ./util-repos/clockwork."
+        )
+
+    clockwork_src = str(_CLOCKWORK_SRC_DIR)
+    if clockwork_src not in sys.path:
+        sys.path.insert(0, clockwork_src)
+    return importlib.import_module("clockwork.cli").main
+
+
+def _install_clockwork_manifest(manifest_text: str, *, target: str) -> None:
+    """Write scheduler units through the shared clockwork renderer."""
+    clockwork_main = _load_clockwork_main()
+    unit_dir = Path.home() / ".config" / "systemd" / "user"
+    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False, encoding="utf-8") as handle:
+        handle.write(manifest_text)
+        manifest_path = Path(handle.name)
+    try:
+        exit_code = clockwork_main(
+            [
+                "install",
+                "--manifest",
+                str(manifest_path),
+                "--target",
+                target,
+                "--unit-dir",
+                str(unit_dir),
+            ]
+        )
+    finally:
+        manifest_path.unlink(missing_ok=True)
+
+    if exit_code != 0:
+        raise RuntimeError(f"clockwork install failed with exit code {exit_code}")
+
+
+def _build_wait_exec_start(*, python_executable: str, ready_message: str, command: str) -> str:
+    """Build the guarded shell wrapper used by intake's scheduled units."""
+    python_q = shlex.quote(python_executable)
+    return (
+        f'/bin/bash -lc \'until {python_q} -c "import intake.cli" >/dev/null 2>&1; do '
+        f'echo "{ready_message}"; '
+        "sleep 30; "
+        f"done; exec {python_q} -m intake.cli {command}'"
+    )
+
+
+def _build_daemon_manifest_text(python_executable: str) -> str:
+    """Render the tracked clockwork manifest for intake-daemon.service."""
+    exec_start = _build_wait_exec_start(
+        python_executable=python_executable,
+        ready_message="intake daemon: waiting for intake module path to become available",
+        command="daemon",
+    )
+    return _render_clockwork_template(
+        "intake-daemon.toml.template",
+        {"__EXEC_START__": _toml_string(exec_start)},
+    )
+
+
+def _build_report_manifest_text(*, python_executable: str, on_calendar: str) -> str:
+    """Render the tracked clockwork manifest for intake-report.{service,timer}."""
+    exec_start = _build_wait_exec_start(
+        python_executable=python_executable,
+        ready_message="intake report timer: waiting for intake module path to become available",
+        command="report",
+    )
+    return _render_clockwork_template(
+        "intake-report.toml.template",
+        {
+            "__EXEC_START__": _toml_string(exec_start),
+            "__ON_CALENDAR__": _toml_string(on_calendar),
+        },
+    )
 
 
 def _load_repo_auto_pass_config() -> dict[str, str]:
@@ -363,6 +468,10 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
 
 
 def _cmd_report(args: argparse.Namespace, settings: dict) -> None:
+    if getattr(args, "install_timer", False):
+        _install_report_timer_units(on_calendar=args.on_calendar)
+        return
+
     from intake.db import init_db
     from intake.report import generate_reports
 
@@ -1084,50 +1193,22 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
 
 
 def _install_systemd_unit(settings: dict) -> None:
-    """Write a systemd user unit file and print activation instructions."""
-    python = sys.executable
-    unit_dir = Path.home() / ".config" / "systemd" / "user"
-    unit_path = unit_dir / "intake-daemon.service"
-    python_q = shlex.quote(python)
-    wait_script = (
-        f'until {python_q} -c "import intake.cli" >/dev/null 2>&1; do '
-        'echo "intake daemon: waiting for intake module path to become available"; '
-        "sleep 30; "
-        "done; "
-        f"exec {python_q} -m intake.cli daemon"
+    """Install the daemon unit through the shared clockwork renderer."""
+    _install_clockwork_manifest(
+        _build_daemon_manifest_text(sys.executable),
+        target="systemd-user",
     )
 
-    unit = f"""[Unit]
-Description=intake receipt processor daemon
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=0
 
-[Service]
-Type=simple
-WorkingDirectory=%h
-ExecStart=/bin/bash -lc '{wait_script}'
-Environment=PYTHONUNBUFFERED=1
-Restart=always
-RestartSec=30
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=default.target
-"""
-
-    unit_dir.mkdir(parents=True, exist_ok=True)
-    unit_path.write_text(unit)
-    print(f"Wrote systemd unit → {unit_path}")
-    print()
-    print("To enable and start:")
-    print("  systemctl --user daemon-reload")
-    print("  systemctl --user enable --now intake-daemon")
-    print()
-    print("To check status / logs:")
-    print("  systemctl --user status intake-daemon")
-    print("  journalctl --user -u intake-daemon -f")
+def _install_report_timer_units(*, on_calendar: str) -> None:
+    """Install report service/timer units through the shared clockwork renderer."""
+    _install_clockwork_manifest(
+        _build_report_manifest_text(
+            python_executable=sys.executable,
+            on_calendar=on_calendar,
+        ),
+        target="systemd-user",
+    )
 
 
 def main() -> None:
@@ -1149,6 +1230,16 @@ def main() -> None:
     p_rep.add_argument("--output-dir", metavar="PATH", help="Directory to write reports into")
     p_rep.add_argument(
         "--format", choices=["md", "html", "both"], default="both", help="Report format"
+    )
+    p_rep.add_argument(
+        "--install-timer",
+        action="store_true",
+        help="Write user-level systemd units to regenerate reports on a schedule",
+    )
+    p_rep.add_argument(
+        "--on-calendar",
+        default="*-*-* 12:00:00",
+        help="systemd OnCalendar expression for --install-timer (default: daily at noon)",
     )
 
     # backfill

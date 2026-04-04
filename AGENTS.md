@@ -50,6 +50,7 @@ Shared utility repos available for integration:
 
 - `./util-repos/archility` — architecture toolchain bootstrap and diagram rendering
 - `./util-repos/auto-pass` — KeePassXC-backed password management
+- `./util-repos/clockwork` — shared cron and systemd scheduler rendering
 - `./util-repos/nordility` — NordVPN CLI/API automation
 - `./util-repos/shock-relay` — external messaging (Signal, Telegram, SMS, Gmail)
 - `./util-repos/short-circuit` — WireGuard VPN setup and configuration
