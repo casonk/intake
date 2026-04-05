@@ -22,6 +22,7 @@ intake.cli --> intake.classify
 intake.cli --> intake.db
 intake.cli --> intake.email
 intake.cli --> intake.extract
+intake.cli --> intake.merchant
 intake.cli --> intake.notify
 intake.cli --> intake.personal_finance
 intake.cli --> intake.report
@@ -39,6 +40,7 @@ intake.extract --> intake.ocr
 intake.extract --> intake.parse
 intake.notify --> intake.parse
 intake.parse --> intake.ai
+intake.parse --> intake.merchant
 intake.personal_finance --> intake.parse
 intake.report --> intake.db
 @enduml

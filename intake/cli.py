@@ -615,7 +615,9 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         category = "/".join(rel.parts[:-1])
         print(f"  Backfilling: {rel}")
         try:
-            receipt, model, tier = extract_receipt(pdf, **extract_kwargs, fuzzy_rules=rules, merchant_aliases=merchant_aliases)
+            receipt, model, tier = extract_receipt(
+                pdf, **extract_kwargs, fuzzy_rules=rules, merchant_aliases=merchant_aliases
+            )
             row = {
                 "filename": pdf.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -1011,7 +1013,9 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
                 print(f"    removed {sec.name}")
 
             # Re-extract merged PDF
-            receipt, model, tier = extract_receipt(primary, **extract_kwargs, fuzzy_rules=rules, merchant_aliases=merchant_aliases)
+            receipt, model, tier = extract_receipt(
+                primary, **extract_kwargs, fuzzy_rules=rules, merchant_aliases=merchant_aliases
+            )
             row = {
                 "filename": primary.name,
                 "scan_date": receipt.scan_date.isoformat(),
@@ -1286,15 +1290,13 @@ def _install_report_timer_units(*, on_calendar: str) -> None:
     )
 
 
-def _find_duplicate_groups(
-    rows: list, window_days: int
-) -> list[list]:
+def _find_duplicate_groups(rows: list, window_days: int) -> list[list]:
     """Return clusters of rows that likely represent the same transaction.
 
     Two rows are considered duplicates when they share the same merchant and
     total, and their scan dates fall within *window_days* of each other.
     """
-    from datetime import date, timedelta
+    from datetime import date
 
     def parse_date(s: str | None) -> date | None:
         try:
@@ -1419,7 +1421,9 @@ def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
             merged_card = keeper.get("card_last4") or next(
                 (r["card_last4"] for r in group if r.get("card_last4")), None
             )
-            if merged_purchaser != keeper.get("purchaser") or merged_card != keeper.get("card_last4"):
+            if merged_purchaser != keeper.get("purchaser") or merged_card != keeper.get(
+                "card_last4"
+            ):
                 conn.execute(
                     "UPDATE receipts SET purchaser=?, card_last4=? WHERE filename=?",
                     (merged_purchaser, merged_card, keeper["filename"]),
@@ -1529,11 +1533,15 @@ def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
                 fs_skipped += 1
                 continue
             if args.dry_run:
-                print(f"  [fs]  {sc_path.relative_to(receipt_dir)}: {old_merchant!r} → {new_merchant!r}  [dry-run]")
+                print(
+                    f"  [fs]  {sc_path.relative_to(receipt_dir)}: {old_merchant!r} → {new_merchant!r}  [dry-run]"
+                )
             else:
                 sc["merchant"] = new_merchant
                 sc_path.write_text(json.dumps(sc, indent=2))
-                print(f"  [fs]  {sc_path.relative_to(receipt_dir)}: {old_merchant!r} → {new_merchant!r}")
+                print(
+                    f"  [fs]  {sc_path.relative_to(receipt_dir)}: {old_merchant!r} → {new_merchant!r}"
+                )
             fs_changed += 1
         except Exception as exc:  # noqa: BLE001
             print(f"  WARNING: could not patch {sc_path.name}: {exc}", file=sys.stderr)
