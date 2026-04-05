@@ -1,6 +1,12 @@
 """Unit tests for intake.merchant (fuzzy correction)."""
 
-from intake.merchant import build_keyword_list, clean_merchant_text, consolidate_merchant, fuzzy_correct, keyword_hint
+from intake.merchant import (
+    build_keyword_list,
+    clean_merchant_text,
+    consolidate_merchant,
+    fuzzy_correct,
+    keyword_hint,
+)
 
 _RULES = {
     "grocery": {
