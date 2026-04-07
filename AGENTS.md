@@ -57,3 +57,15 @@ Shared utility repos available for integration:
 - `./util-repos/snowbridge` — SMB-based file sharing — **receipt source for this repo**
 - `./util-repos/dyno-lab` — unified test bench utilities — fixtures, subprocess/HTTP/env mocks, schema validation, smoke scaffolding, and pytest markers/fixtures
 - `./finance-pipeline` — downstream consumer of aggregated spend data from this repo
+
+## Local CI Verification
+
+Run before every push:
+
+```bash
+pre-commit run --all-files
+pytest -q
+```
+
+Do not push changes that have not passed all checks locally.
+
