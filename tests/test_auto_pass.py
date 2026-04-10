@@ -19,23 +19,16 @@ AutoPassPatch = auto_pass.AutoPassPatch
 AutoPassRecorder = auto_pass.AutoPassRecorder
 
 
-def test_load_settings_resolves_openai_key_via_auto_pass(tmp_path, monkeypatch):
+def test_load_settings_resolves_openai_key_via_settings_toml(tmp_path, monkeypatch):
     repo_root = tmp_path / "repo"
     settings_path = repo_root / "config" / "settings.toml"
-    auto_pass_config_path = repo_root / "config" / "auto-pass.ini"
     settings_path.parent.mkdir(parents=True)
     settings_path.write_text(
-        'receipt_dir = "receipts"\n',
-        encoding="utf-8",
-    )
-    auto_pass_config_path.write_text(
         "\n".join(
             [
-                "[auto_pass]",
-                "profile = work",
-                "",
-                "[intake]",
-                "openai_api_key_entry = api/openai",
+                'receipt_dir = "receipts"',
+                'auto_pass_profile = "work"',
+                'openai_api_key_entry = "api/openai"',
                 "",
             ]
         ),
@@ -44,7 +37,6 @@ def test_load_settings_resolves_openai_key_via_auto_pass(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli, "_REPO_ROOT", repo_root)
     monkeypatch.setattr(cli, "_SETTINGS_PATH", settings_path)
-    monkeypatch.setattr(cli, "_AUTO_PASS_CONFIG_PATH", auto_pass_config_path)
 
     recorder = AutoPassRecorder(
         responses={
@@ -62,3 +54,41 @@ def test_load_settings_resolves_openai_key_via_auto_pass(tmp_path, monkeypatch):
     assert str(recorder.load_calls[0].path).endswith("auto-pass/config/auto-pass.env.local")
     assert recorder.resolve_calls[0].entry == "api/openai"
     assert recorder.resolve_calls[0].attrs_map == {"password": "password"}
+
+
+def test_load_settings_promotes_misnested_top_level_keys(tmp_path, monkeypatch):
+    repo_root = tmp_path / "repo"
+    settings_path = repo_root / "config" / "settings.toml"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        "\n".join(
+            [
+                'receipt_dir = "receipts"',
+                "",
+                "[web]",
+                'host = "127.0.0.1"',
+                "port = 5200",
+                'openai_api_key_entry = "api/openai"',
+                'auto_pass_profile = "work"',
+                'openai_model_low = "gpt-4o-mini"',
+                "fuzzy_threshold = 0.91",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(cli, "_REPO_ROOT", repo_root)
+    monkeypatch.setattr(cli, "_SETTINGS_PATH", settings_path)
+
+    recorder = AutoPassRecorder(responses={"api/openai": {"password": "sk-test-456"}})
+
+    with AutoPassPatch(recorder):
+        settings = cli._load_settings()
+
+    assert settings["openai_api_key_entry"] == "api/openai"
+    assert settings["auto_pass_profile"] == "work"
+    assert settings["openai_model_low"] == "gpt-4o-mini"
+    assert settings["fuzzy_threshold"] == 0.91
+    assert settings["openai_api_key"] == "sk-test-456"
+    assert settings["web"] == {"host": "127.0.0.1", "port": 5200}

@@ -5,6 +5,7 @@ from intake.merchant import (
     clean_merchant_text,
     consolidate_merchant,
     fuzzy_correct,
+    is_blacklisted_merchant,
     keyword_hint,
 )
 
@@ -115,6 +116,16 @@ def test_keyword_hint_collapses_vodafone_global_connect():
     assert keyword_hint(raw_text, kws) == "vodafone"
 
 
+def test_keyword_hint_finds_kroger_fuel_before_generic_kroger():
+    kws = ["kroger", "kroger fuel", "shell"]
+    raw_text = "Pump 4\nKROGER FUEL CENTER\nTotal $44.28\n"
+    assert keyword_hint(raw_text, kws) == "kroger fuel"
+
+
+def test_blacklisted_gmail_order_confirmation_header():
+    assert is_blacklisted_merchant("Gmail - Order Confirmation https://mail.google.com/mail/u/0/")
+
+
 def test_fuzzy_correct_handles_multiword_ocr_noise():
     kws = ["o'reilly", "walmart", "kroger"]
     assert fuzzy_correct("Reiliy/auro parts", kws) == "o'reilly"
@@ -126,6 +137,7 @@ _ALIASES = {
     "o'reilly": ["o'reilly auto parts", "oreilly auto parts"],
     "walmart": ["walmart supercenter", "walmart neighborhood market"],
     "kroger": ["kroger plus", "kroger marketplace"],
+    "kalamazoo, mi": ["city of kalamazoo, mi"],
 }
 
 
@@ -146,11 +158,11 @@ def test_consolidate_merchant_canonical_capitalized():
 
 
 def test_consolidate_merchant_no_match_returns_original():
-    assert consolidate_merchant("advance auto parts", _ALIASES) == "advance auto parts"
+    assert consolidate_merchant("Advance Auto Parts", _ALIASES) == "advance auto parts"
 
 
-def test_consolidate_merchant_empty_aliases():
-    assert consolidate_merchant("o'reilly auto parts", {}) == "o'reilly auto parts"
+def test_consolidate_merchant_empty_aliases_still_applies_builtin_cleanup():
+    assert consolidate_merchant("o'reilly auto parts", {}) == "o'reilly"
 
 
 def test_consolidate_merchant_empty_merchant():
@@ -165,3 +177,25 @@ def test_consolidate_merchant_does_not_partial_match():
     # "kroger plus #1234" normalises to "krogerplus" which matches the "kroger plus" alias
     # — store numbers are stripped, so this correctly consolidates to the canonical
     assert consolidate_merchant("kroger plus #1234", _ALIASES) == "kroger"
+
+
+def test_consolidate_merchant_collapses_city_of_kalamazoo():
+    assert consolidate_merchant("City of Kalamazoo, MI", _ALIASES) == "kalamazoo, mi"
+
+
+def test_consolidate_merchant_collapses_mcdonald_restaurant_number():
+    assert consolidate_merchant("McDonald's Restaurant #36549", _ALIASES) == "mcdonald's"
+
+
+def test_consolidate_merchant_blacklisted_header_becomes_unknown():
+    assert (
+        consolidate_merchant(
+            "Gmail - Order Confirmation https://mail.google.com/mail/u/0/",
+            _ALIASES,
+        )
+        == "unknown"
+    )
+
+
+def test_consolidate_merchant_finds_anthropic_credit_note():
+    assert consolidate_merchant("Credit Note Anthropic, PBC", _ALIASES) == "anthropic"

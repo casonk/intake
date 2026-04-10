@@ -15,28 +15,7 @@ from datetime import date, time
 from pathlib import Path
 
 from intake.parse import Receipt
-
-# Purchaser values that are clearly OCR/AI artifacts rather than real names.
-# When matched (case-insensitive, exact token), the field is set to None so
-# the receipt is eligible for re-processing at a higher fidelity model.
-_PURCHASER_BLACKLIST: frozenset[str] = frozenset(
-    {
-        "account",
-        "cardholder",
-        "customer",
-        "member",
-        "guest",
-        "user",
-        "name",
-        "copy",
-        "customer copy",
-        "signature verified",
-        "n/a",
-        "na",
-        "none",
-        "unknown",
-    }
-)
+from intake.purchaser import is_blacklisted_purchaser, is_probable_staff_name, normalize_purchaser
 
 
 def extract_with_openai(
@@ -118,15 +97,6 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
     if merchant and isinstance(merchant, str) and merchant.strip():
         kwargs["merchant"] = merchant.strip()[:60].lower()
 
-    total = ai.get("total")
-    if total is not None:
-        try:
-            val = float(total)
-            if val > 0:
-                kwargs["total"] = val
-        except (TypeError, ValueError):
-            pass
-
     receipt_date_str = ai.get("receipt_date")
     if receipt_date_str and isinstance(receipt_date_str, str):
         with contextlib.suppress(ValueError):
@@ -142,15 +112,30 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
 
     purchaser = ai.get("purchaser")
     if purchaser and isinstance(purchaser, str) and purchaser.strip():
-        cleaned = purchaser.strip()[:60].lower()
-        if cleaned not in _PURCHASER_BLACKLIST:
-            kwargs["purchaser"] = cleaned
+        normalized = normalize_purchaser(purchaser)
+        if normalized is not None and not is_probable_staff_name(normalized, receipt.raw_text):
+            kwargs["purchaser"] = normalized
 
     card_last4 = ai.get("card_last4")
     if card_last4 and isinstance(card_last4, str):
         digits = re.sub(r"\D", "", card_last4)
         if len(digits) == 4:
             kwargs["card_last4"] = digits
+
+    total = ai.get("total")
+    if total is not None:
+        from intake.parse import normalize_transaction_total  # noqa: PLC0415
+
+        try:
+            val = float(total)
+            if val > 0:
+                kwargs["total"] = normalize_transaction_total(receipt.raw_text, val)
+            elif receipt.total is not None:
+                normalized = normalize_transaction_total(receipt.raw_text, val)
+                if normalized is None:
+                    kwargs["total"] = None
+        except (TypeError, ValueError):
+            pass
 
     return replace(receipt, **kwargs) if kwargs else receipt
 
@@ -163,7 +148,7 @@ def purchaser_was_blacklisted(ai_dict: dict) -> bool:
     raw = ai_dict.get("purchaser")
     if not raw or not isinstance(raw, str) or not raw.strip():
         return False
-    return raw.strip().lower() in _PURCHASER_BLACKLIST
+    return normalize_purchaser(raw) is None and is_blacklisted_purchaser(raw)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

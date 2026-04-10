@@ -31,6 +31,7 @@
 "o'reilly" = ["o'reilly auto parts", "oreilly auto parts"]
 walmart    = ["walmart supercenter", "walmart neighborhood market", "walmart.com"]
 kroger     = ["kroger plus", "kroger marketplace", "kroger fuel center"]
+"mcdonald's" = ["mcdonalds", "mcdonald's restaurant"]
 
 [categories.grocery]
 label    = "Grocery & Supermarkets"
@@ -50,7 +51,7 @@ keywords = []
 
 [categories.fuel.station]
 label    = "Gas Stations"
-keywords = ["pump-n-go", "quik-fuel", "speedfuel"]
+keywords = ["pump-n-go", "quik-fuel", "speedfuel", "kroger fuel"]
 
 [categories.fuel.ev]
 label    = "EV Charging"
@@ -94,7 +95,7 @@ keywords = []
 
 [categories.dining.fast-food]
 label    = "Fast Food"
-keywords = ["burger-hut", "taco-town"]
+keywords = ["burger-hut", "taco-town", "mcdonald's", "mcdonalds"]
 
 [categories.dining.sit-down]
 label    = "Sit-Down Restaurants"

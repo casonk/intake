@@ -9,6 +9,7 @@ from intake.email import (
     FetchResult,
     _looks_like_receipt,
     _safe_save,
+    _safe_save_receipt_pdf,
     html_to_text,
 )
 
@@ -112,6 +113,17 @@ def test_safe_save_empty_filename_fallback(tmp_path):
     # Empty string sanitises to "" which is falsy → falls back to "attachment.pdf"
     dest = _safe_save(tmp_path, "", b"data")
     assert dest.name == "attachment.pdf"
+    assert dest.exists()
+
+
+def test_safe_save_receipt_pdf_uses_canonical_name(tmp_path):
+    dest = _safe_save_receipt_pdf(
+        tmp_path,
+        "vendor-receipt.pdf",
+        b"%PDF-1.4",
+        received_at="Thu, 10 Apr 2026 17:07:00 +0000",
+    )
+    assert dest.name == "20260410_1707.pdf"
     assert dest.exists()
 
 

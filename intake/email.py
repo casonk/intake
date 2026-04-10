@@ -13,10 +13,12 @@ import time
 from datetime import UTC, datetime
 from email import message_from_bytes
 from email.policy import default as default_policy
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
-from intake.db import is_email_processed, record_email_receipt
+from intake.db import infer_purchaser_from_card_last4, is_email_processed, record_email_receipt
+from intake.naming import allocate_canonical_path
 
 # ── HTML → plain text ─────────────────────────────────────────────────────────
 
@@ -186,7 +188,12 @@ def fetch_receipts(
                     saved_count = 0
                     if not dry_run:
                         for filename, _ct, data in pdf_attachments:
-                            dest = _safe_save(inbox_dir, filename, data)
+                            dest = _safe_save_receipt_pdf(
+                                inbox_dir,
+                                filename,
+                                data,
+                                received_at=date_str,
+                            )
                             result.saved_files.append(dest)
                             saved_count += 1
                             if verbose:
@@ -276,6 +283,28 @@ def _safe_save(dest_dir: Path, filename: str, data: bytes) -> Path:
     return dest
 
 
+def _safe_save_receipt_pdf(
+    dest_dir: Path,
+    filename: str,
+    data: bytes,
+    *,
+    received_at: str | None = None,
+) -> Path:
+    """Write a receipt PDF using the canonical ``YYYYMMDD_HHMM.pdf`` convention."""
+    try:
+        parsed = parsedate_to_datetime(received_at) if received_at else datetime.now()
+        base_dt = parsed.replace(tzinfo=None) if isinstance(parsed, datetime) else datetime.now()
+    except (TypeError, ValueError, IndexError, OverflowError):
+        base_dt = datetime.now()
+    dest = allocate_canonical_path(
+        dest_dir,
+        base_dt=base_dt.replace(second=0, microsecond=0, tzinfo=None),
+        suffix=Path(filename).suffix or ".pdf",
+    )
+    dest.write_bytes(data)
+    return dest
+
+
 _RECEIPT_PATTERNS = re.compile(
     r"\b(total|amount\s+due|order\s+total|charged|subtotal|invoice|receipt\s+#)\b",
     re.IGNORECASE,
@@ -291,8 +320,11 @@ def _upsert_html_receipt(
     db_conn, uid, mailbox, subject, sender, date_str, plain_text, settings
 ) -> None:
     """Try to extract fields from an inline HTML receipt and upsert into DB."""
-    from intake.classify import classify, load_rules  # noqa: PLC0415
+    from dataclasses import replace  # noqa: PLC0415
+
+    from intake.classify import classify, load_merchant_aliases, load_rules  # noqa: PLC0415
     from intake.db import upsert_receipt  # noqa: PLC0415
+    from intake.merchant import consolidate_merchant  # noqa: PLC0415
     from intake.notify import send_processed_receipt_notifications  # noqa: PLC0415
     from intake.parse import parse_receipt  # noqa: PLC0415
     from intake.personal_finance import (  # noqa: PLC0415
@@ -301,9 +333,11 @@ def _upsert_html_receipt(
     )
 
     rules = load_rules()
+    merchant_aliases = load_merchant_aliases()
     # Build a synthetic filename for the receipt (uid-based)
     synthetic_name = f"email_{uid}_{mailbox.replace('/', '_')}.txt"
     receipt = parse_receipt(synthetic_name, plain_text)
+    receipt = replace(receipt, merchant=consolidate_merchant(receipt.merchant, merchant_aliases))
 
     # Try AI extraction if API key available
     api_key = settings.get("openai_api_key")
@@ -335,8 +369,17 @@ def _upsert_html_receipt(
             raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
             ai_data = json.loads(raw)
             receipt = merge_ai_result(receipt, ai_data)
+            receipt = replace(
+                receipt,
+                merchant=consolidate_merchant(receipt.merchant, merchant_aliases),
+            )
         except Exception:
             pass
+
+    if receipt.card_last4 and not receipt.purchaser:
+        inferred = infer_purchaser_from_card_last4(db_conn, receipt.card_last4)
+        if inferred:
+            receipt = replace(receipt, purchaser=inferred)
 
     category = classify(receipt.merchant or "", rules, full_text=plain_text)
     upsert_receipt(

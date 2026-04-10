@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+
+from intake.purchaser import normalize_purchaser
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS receipts (
@@ -15,6 +18,7 @@ CREATE TABLE IF NOT EXISTS receipts (
     total           REAL,
     category        TEXT NOT NULL,
     receipt_dir     TEXT NOT NULL,
+    file_hash       TEXT,
     raw_text        TEXT,
     processed_by    TEXT NOT NULL DEFAULT 'tesseract',
     processed_at    TEXT NOT NULL
@@ -36,11 +40,26 @@ CREATE TABLE IF NOT EXISTS email_receipts (
 );
 """
 
+_RECEIPT_UPDATE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS receipt_updates (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename        TEXT NOT NULL,
+    source          TEXT NOT NULL,
+    note            TEXT,
+    changes_json    TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_receipt_updates_filename_updated_at
+    ON receipt_updates(filename, updated_at DESC);
+"""
+
 _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN processed_by TEXT NOT NULL DEFAULT 'tesseract'",
     "ALTER TABLE receipts ADD COLUMN purchaser TEXT",
     "ALTER TABLE receipts ADD COLUMN card_last4 TEXT",
     "ALTER TABLE receipts ADD COLUMN reviewed_at TEXT",  # ISO timestamp when suppressed; NULL = not reviewed
+    "ALTER TABLE receipts ADD COLUMN file_hash TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_receipts_file_hash ON receipts(file_hash)",
 ]
 
 
@@ -51,6 +70,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     conn.executescript(_EMAIL_SCHEMA)
+    conn.executescript(_RECEIPT_UPDATE_SCHEMA)
     conn.commit()
     _run_migrations(conn)
     return conn
@@ -71,17 +91,21 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
 
     *data* keys: filename, scan_date, merchant, total, category,
                  receipt_dir, raw_text, processed_by (optional),
-                 purchaser (optional), card_last4 (optional).
+                 purchaser (optional), card_last4 (optional),
+                 file_hash (optional).
     processed_at is set automatically to now (UTC).
     """
     processed_at = datetime.now(UTC).isoformat()
+    normalized_data = dict(data)
+    if "purchaser" in normalized_data:
+        normalized_data["purchaser"] = normalize_purchaser(normalized_data.get("purchaser"))
     conn.execute(
         """
         INSERT INTO receipts
-            (filename, scan_date, merchant, total, category, receipt_dir,
+            (filename, scan_date, merchant, total, category, receipt_dir, file_hash,
              raw_text, processed_by, purchaser, card_last4, processed_at)
         VALUES
-            (:filename, :scan_date, :merchant, :total, :category, :receipt_dir,
+            (:filename, :scan_date, :merchant, :total, :category, :receipt_dir, :file_hash,
              :raw_text, :processed_by, :purchaser, :card_last4, :processed_at)
         ON CONFLICT(filename) DO UPDATE SET
             scan_date    = excluded.scan_date,
@@ -89,6 +113,7 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             total        = excluded.total,
             category     = excluded.category,
             receipt_dir  = excluded.receipt_dir,
+            file_hash    = excluded.file_hash,
             raw_text     = excluded.raw_text,
             processed_by = excluded.processed_by,
             purchaser    = excluded.purchaser,
@@ -99,11 +124,213 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             "processed_by": "tesseract",
             "purchaser": None,
             "card_last4": None,
-            **data,
+            "file_hash": None,
+            **normalized_data,
             "processed_at": processed_at,
         },
     )
     conn.commit()
+
+
+def get_receipt(conn: sqlite3.Connection, filename: str) -> dict | None:
+    """Return a receipt row by filename, or None if it does not exist."""
+    row = conn.execute(
+        """
+        SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
+               raw_text, processed_by, purchaser, card_last4, processed_at, reviewed_at
+        FROM receipts
+        WHERE filename = ?
+        """,
+        (filename,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def get_receipt_by_file_hash(
+    conn: sqlite3.Connection,
+    file_hash: str,
+    *,
+    exclude_filename: str | None = None,
+) -> dict | None:
+    """Return a tracked receipt row for *file_hash*, or None if absent."""
+    params: list[object] = [file_hash]
+    where = "WHERE file_hash = ?"
+    if exclude_filename is not None:
+        where += " AND filename != ?"
+        params.append(exclude_filename)
+    row = conn.execute(
+        f"""
+        SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
+               raw_text, processed_by, purchaser, card_last4, processed_at, reviewed_at
+        FROM receipts
+        {where}
+        ORDER BY processed_at ASC, filename ASC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def infer_purchaser_from_card_last4(
+    conn: sqlite3.Connection,
+    card_last4: str | None,
+    *,
+    exclude_filename: str | None = None,
+) -> str | None:
+    """Return the most recent known purchaser for *card_last4*."""
+    if not card_last4:
+        return None
+
+    params: list[object] = [card_last4]
+    where = "WHERE card_last4 = ? AND purchaser IS NOT NULL AND TRIM(purchaser) != ''"
+    if exclude_filename is not None:
+        where += " AND filename != ?"
+        params.append(exclude_filename)
+
+    rows = conn.execute(
+        f"""
+        SELECT purchaser
+        FROM receipts
+        {where}
+        ORDER BY scan_date DESC, processed_at DESC, filename DESC
+        """,
+        params,
+    ).fetchall()
+    for row in rows:
+        purchaser = normalize_purchaser(row["purchaser"])
+        if purchaser is not None:
+            return purchaser
+    return None
+
+
+def record_receipt_update(
+    conn: sqlite3.Connection,
+    filename: str,
+    *,
+    source: str,
+    changes: dict,
+    note: str | None = None,
+    updated_at: str | None = None,
+) -> str:
+    """Persist a field-level audit event for a receipt update."""
+    if not changes:
+        return updated_at or datetime.now(UTC).isoformat()
+
+    ts = updated_at or datetime.now(UTC).isoformat()
+    conn.execute(
+        """
+        INSERT INTO receipt_updates (filename, source, note, changes_json, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (filename, source, note, json.dumps(changes, sort_keys=True), ts),
+    )
+    conn.commit()
+    return ts
+
+
+def update_receipt_fields(
+    conn: sqlite3.Connection,
+    filename: str,
+    updates: dict,
+    *,
+    source: str,
+    note: str | None = None,
+) -> tuple[dict, dict]:
+    """Update receipt fields, bump processed_at, and write an audit event.
+
+    Returns ``(row, changes)`` where *row* is the updated receipt and *changes*
+    is the field-level diff that was recorded.
+    """
+    current = get_receipt(conn, filename)
+    if current is None:
+        raise KeyError(filename)
+
+    allowed_fields = {
+        "filename",
+        "scan_date",
+        "merchant",
+        "total",
+        "category",
+        "receipt_dir",
+        "file_hash",
+        "raw_text",
+        "processed_by",
+        "purchaser",
+        "card_last4",
+        "reviewed_at",
+    }
+    unknown_fields = sorted(set(updates) - allowed_fields)
+    if unknown_fields:
+        joined = ", ".join(unknown_fields)
+        raise ValueError(f"unsupported receipt field(s): {joined}")
+
+    changes: dict[str, dict[str, object | None]] = {}
+    assignments: list[str] = []
+    params: list[object | None] = []
+    for field, new_value in updates.items():
+        if field == "purchaser":
+            new_value = normalize_purchaser(new_value)
+        old_value = current.get(field)
+        if old_value == new_value:
+            continue
+        changes[field] = {"old": old_value, "new": new_value}
+        assignments.append(f"{field} = ?")
+        params.append(new_value)
+
+    if not changes:
+        return current, {}
+
+    updated_at = datetime.now(UTC).isoformat()
+    changes["processed_at"] = {"old": current.get("processed_at"), "new": updated_at}
+    assignments.append("processed_at = ?")
+    params.append(updated_at)
+    params.append(filename)
+    conn.execute(f"UPDATE receipts SET {', '.join(assignments)} WHERE filename = ?", params)
+    conn.commit()
+    audit_filename = str(updates.get("filename") or filename)
+    record_receipt_update(
+        conn,
+        audit_filename,
+        source=source,
+        changes=changes,
+        note=note,
+        updated_at=updated_at,
+    )
+    updated = get_receipt(conn, audit_filename)
+    assert updated is not None  # updated row must exist if the original row existed
+    return updated, changes
+
+
+def query_receipt_updates(
+    conn: sqlite3.Connection,
+    *,
+    filename: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Return recent receipt update audit events."""
+    params: list[object] = []
+    where = ""
+    if filename is not None:
+        where = "WHERE filename = ?"
+        params.append(filename)
+    params.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT filename, source, note, changes_json, updated_at
+        FROM receipt_updates
+        {where}
+        ORDER BY updated_at DESC, id DESC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    results = []
+    for row in rows:
+        item = dict(row)
+        item["changes"] = json.loads(item.pop("changes_json"))
+        results.append(item)
+    return results
 
 
 def suppress_receipts(conn: sqlite3.Connection, filenames: list[str]) -> int:

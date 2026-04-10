@@ -6,10 +6,15 @@ from pathlib import Path
 import pytest
 
 from intake.sidecar import (
+    AI_DEBUG_SUFFIX,
+    OCR_DEBUG_SUFFIX,
     SIDECAR_SUFFIX,
+    ai_debug_path,
     has_sidecar,
+    ocr_debug_path,
     read_sidecar,
     sidecar_path,
+    write_debug_artifacts,
     write_sidecar,
 )
 
@@ -64,3 +69,25 @@ def test_write_sidecar_does_not_include_raw_text(tmp_pdf):
     write_sidecar(tmp_pdf, data)
     payload = read_sidecar(tmp_pdf)
     assert "raw_text" not in payload
+
+
+def test_debug_paths_suffixes(tmp_pdf):
+    assert ocr_debug_path(tmp_pdf).name.endswith(OCR_DEBUG_SUFFIX)
+    assert ai_debug_path(tmp_pdf).name.endswith(AI_DEBUG_SUFFIX)
+
+
+def test_write_debug_artifacts(tmp_pdf):
+    ocr_path, ai_path = write_debug_artifacts(
+        tmp_pdf,
+        raw_text="Store\nTOTAL 10.00",
+        processed_by="gpt-4o-mini",
+        tier="low",
+        ai_attempts=[{"model": "gpt-4o-mini", "response": {"merchant": "store"}}],
+    )
+
+    assert ocr_path.read_text(encoding="utf-8") == "Store\nTOTAL 10.00"
+    payload = json.loads(ai_path.read_text(encoding="utf-8"))
+    assert payload["processed_by"] == "gpt-4o-mini"
+    assert payload["tier"] == "low"
+    assert payload["used_ai"] is True
+    assert payload["attempts"][0]["model"] == "gpt-4o-mini"

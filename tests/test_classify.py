@@ -12,6 +12,10 @@ def test_kroger_is_grocery_supermarket():
     assert classify("Kroger #123", _RULES) == "grocery/supermarket"
 
 
+def test_kroger_fuel_prefers_more_specific_fuel_match():
+    assert classify("Kroger #123", _RULES, "KROGER FUEL CENTER pump 4") == "fuel/station"
+
+
 def test_shell_is_fuel_station():
     assert classify("Shell Gas Station", _RULES) == "fuel/station"
 
@@ -38,6 +42,10 @@ def test_newegg_is_pc():
 
 def test_steam_is_sw():
     assert classify("Steam Game Purchase", _RULES) == "sw"
+
+
+def test_mcdonalds_is_dining_fast_food():
+    assert classify("McDonald's Restaurant #36549", _RULES) == "dining/fast-food"
 
 
 def test_empty_merchant_is_general():

@@ -13,11 +13,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 SIDECAR_SUFFIX = ".intake.json"
+OCR_DEBUG_SUFFIX = ".ocr.txt"
+AI_DEBUG_SUFFIX = ".ai.json"
 
 
 def sidecar_path(pdf: Path) -> Path:
     """Return the expected sidecar path for *pdf*."""
     return pdf.with_suffix(SIDECAR_SUFFIX)
+
+
+def ocr_debug_path(pdf: Path) -> Path:
+    """Return the OCR debug artifact path for *pdf*."""
+    return pdf.with_suffix(OCR_DEBUG_SUFFIX)
+
+
+def ai_debug_path(pdf: Path) -> Path:
+    """Return the AI debug artifact path for *pdf*."""
+    return pdf.with_suffix(AI_DEBUG_SUFFIX)
 
 
 def has_sidecar(pdf: Path) -> bool:
@@ -35,6 +47,31 @@ def write_sidecar(pdf: Path, data: dict) -> Path:
     path = sidecar_path(pdf)
     path.write_text(json.dumps(payload, indent=2))
     return path
+
+
+def write_debug_artifacts(
+    pdf: Path,
+    *,
+    raw_text: str,
+    processed_by: str,
+    tier: str,
+    ai_attempts: list[dict] | None = None,
+) -> tuple[Path, Path]:
+    """Write OCR and AI debug artifacts next to *pdf*."""
+    ocr_path = ocr_debug_path(pdf)
+    ocr_path.write_text(raw_text or "", encoding="utf-8")
+
+    payload = {
+        "filename": pdf.name,
+        "processed_by": processed_by,
+        "tier": tier,
+        "used_ai": bool(ai_attempts),
+        "attempts": ai_attempts or [],
+        "written_at": datetime.now(UTC).isoformat(),
+    }
+    ai_path = ai_debug_path(pdf)
+    ai_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return ocr_path, ai_path
 
 
 def read_sidecar(pdf: Path) -> dict | None:

@@ -15,7 +15,15 @@ keywords = []
 
 [categories.fuel.station]
 label    = "Gas Stations"
-keywords = ["shell", "bp"]
+keywords = ["shell", "bp", "kroger fuel"]
+
+[categories.dining]
+label    = "Dining & Restaurants"
+keywords = []
+
+[categories.dining.fast-food]
+label    = "Fast Food"
+keywords = ["mcdonald's", "mcdonalds"]
 
 [categories.pharmacy]
 label    = "Pharmacy & Drug Stores"
