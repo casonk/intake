@@ -2,6 +2,30 @@ receipt_dir = "/mnt/setup/bully/info/receipt"
 db_path = "data/intake.db"
 reports_dir = "reports"
 
+# Keep intake-wide settings at the top level of this file.
+# Do not create a separate config/auto-pass.ini.
+# Do not place openai_* / auto_pass_profile / fuzzy_threshold after a table
+# header like [web] or [email]; in TOML, those keys would belong to that table
+# and intake would no longer see them as global settings.
+
+# ── Local report web server (optional) ───────────────────────────────────────
+# Serves the generated HTML/Markdown reports on localhost so wiring-harness can
+# terminate mTLS and proxy them as an internal site.
+#
+# [web]
+# host = "127.0.0.1"
+# port = 5200
+
+# ── Report links (optional) ──────────────────────────────────────────────────
+# By default reports link into the Snowbridge File Browser so folder/file links
+# work from the served HTML site as well as the Markdown output.
+#
+# [report_links]
+# filebrowser_base_url = "https://files.snowbridge.internal"
+# filebrowser_receipt_root = "receipt"
+#
+# Set filebrowser_base_url = "" to disable browser links entirely.
+
 # ── OpenAI fallback (optional) ────────────────────────────────────────────────
 # Two-tier model config:
 #   low  — used when OCR quality is borderline (short text, missing total/vendor)
@@ -11,8 +35,8 @@ reports_dir = "reports"
 # Model rank (higher = more capable):  gpt-4o > gpt-4o-mini > tesseract
 # Backfill re-processes any receipt whose sidecar model rank < current high model.
 #
-# Preferred: resolve the API key from KeePassXC via auto-pass:
-#   Copy config/auto-pass.example.ini to config/auto-pass.ini for repo-level defaults, OR
+# Preferred: resolve the API key from KeePassXC via auto-pass directly from
+# this file:
 #   auto_pass_profile = "master"                  # optional auto-pass profile override
 #   openai_api_key_entry = "vendor/openai/api-key"        # Password field used
 #

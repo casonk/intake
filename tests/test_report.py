@@ -8,6 +8,16 @@ from intake.db import init_db, upsert_receipt
 from intake.report import generate_reports
 
 
+def _browser_uri(*parts: str, is_dir: bool = False) -> str:
+    from urllib.parse import quote
+
+    path = "/".join(quote(part, safe="") for part in ("files", "receipt", *parts))
+    uri = f"https://files.snowbridge.internal/{path}"
+    if is_dir:
+        uri += "/"
+    return uri
+
+
 def _seed_receipts(db_path: Path) -> None:
     conn = init_db(db_path)
     upsert_receipt(
@@ -133,17 +143,21 @@ def test_generate_reports_renders_chart_sections(tmp_path):
     assert "bar-fill fill-merchant" in html
     assert "bar-fill fill-model" in html
     assert "Receipt activity at a glance." in html
-    assert receipt_root.joinpath("grocery", "warehouse").as_uri() in html
-    assert receipt_root.joinpath("gas-station", "20260318_1834.pdf").as_uri() in html
+    assert _browser_uri("grocery", "warehouse", is_dir=True) in html
+    assert _browser_uri("gas-station", "20260318_1834.pdf") in html
+    assert _browser_uri(is_dir=True) in html
+    assert _browser_uri("intake", is_dir=True) in html
     assert "[gas-station]" in md
-    assert receipt_root.joinpath("gas-station").as_uri() in md
-    assert receipt_root.joinpath("gas-station", "20260318_1834.pdf").as_uri() in md
-    assert receipt_root.joinpath("grocery", "kroger", "20260331_1914.pdf").as_uri() in md
+    assert _browser_uri("gas-station", is_dir=True) in md
+    assert _browser_uri("gas-station", "20260318_1834.pdf") in md
+    assert _browser_uri("grocery", "kroger", "20260331_1914.pdf") in md
     assert "## Recent Receipts (last 50)" in md
-    assert receipt_root.joinpath("sw", "dev").as_uri() in md
-    assert receipt_root.joinpath("sw", "dev").as_uri() in html
+    assert _browser_uri("sw", "dev", is_dir=True) in md
+    assert _browser_uri("sw", "dev", is_dir=True) in html
     assert "email_1.txt" in md
-    assert f"[email_1.txt]({receipt_root.joinpath('sw', 'dev').as_uri()})" in md
+    assert f"[email_1.txt]({_browser_uri('sw', 'dev', is_dir=True)})" in md
+    assert f"[receipt/]({_browser_uri(is_dir=True)})" in md
+    assert f"[receipt/intake/]({_browser_uri('intake', is_dir=True)})" in md
 
 
 def test_generate_reports_handles_empty_dataset(tmp_path):

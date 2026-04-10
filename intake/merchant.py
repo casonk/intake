@@ -1,9 +1,8 @@
 """Merchant name normalisation and fuzzy correction.
 
 After OCR extraction, merchant names are often garbled (OCR noise, font
-artefacts, truncation).  This module provides fuzzy matching against the
-known keyword lists defined in ``config/categories.toml`` so that names
-like ``"Kr0ger #1234"`` can be corrected to ``"Kroger"``.
+artefacts, truncation). This module provides merchant cleanup so names like
+``"Kr0ger #1234"`` can be corrected to ``"kroger"``.
 """
 
 from __future__ import annotations
@@ -17,6 +16,12 @@ import re
 _MIN_KEYWORD_LEN = 3
 _FUZZY_MIN_KEYWORD_LEN = 4
 
+_BLACKLISTED_MERCHANT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"^gmail\s*-\s*order confirmation https://mail\.google\.com/mail/u/0/?$", re.IGNORECASE
+    ),
+)
+
 _KNOWN_MERCHANT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bautozone\b|orders@em\.autozone\.com", re.IGNORECASE), "autozone"),
     (
@@ -25,6 +30,22 @@ _KNOWN_MERCHANT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             re.IGNORECASE,
         ),
         "bass pro",
+    ),
+    (
+        re.compile(r"\bmi basic driver improvement course\b", re.IGNORECASE),
+        "mi basic driver improvement course",
+    ),
+    (
+        re.compile(r"\banthropic\b|\bclaude\s+pro\b|support@anthropic\.com", re.IGNORECASE),
+        "anthropic",
+    ),
+    (
+        re.compile(r"\bmcdonald(?:'s|s)\b(?:\s+restaurant(?:\s*#?\d+)?)?", re.IGNORECASE),
+        "mcdonald's",
+    ),
+    (
+        re.compile(r"\bkroger(?:\s+fuel(?:\s+center)?)\b", re.IGNORECASE),
+        "kroger fuel",
     ),
     (re.compile(r"\bvodafone\b", re.IGNORECASE), "vodafone"),
     (
@@ -74,6 +95,14 @@ def clean_merchant_text(text: str) -> str:
     cleaned = re.sub(r"^[^A-Za-z0-9]+", "", cleaned)
     cleaned = re.sub(r"[^A-Za-z0-9]+$", "", cleaned)
     return cleaned
+
+
+def is_blacklisted_merchant(text: str) -> bool:
+    """Return True when *text* is a known recurring non-merchant header."""
+    cleaned = clean_merchant_text(text)
+    if not cleaned:
+        return False
+    return any(pattern.search(cleaned) for pattern in _BLACKLISTED_MERCHANT_PATTERNS)
 
 
 def _tokens(text: str) -> list[str]:
@@ -141,21 +170,34 @@ def consolidate_merchant(merchant: str, aliases: dict[str, list[str]]) -> str:
 
     Returns *merchant* unchanged when no match is found.
     """
-    if not merchant or not aliases:
+    if not merchant:
         return merchant
 
-    norm_merchant = _normalise(merchant)
+    merchant_clean = clean_merchant_text(merchant)
+    if not merchant_clean:
+        return ""
+    merchant_clean = merchant_clean[:60].lower()
+
+    if is_blacklisted_merchant(merchant_clean):
+        return "unknown"
+
+    for pattern, canonical in _KNOWN_MERCHANT_PATTERNS:
+        if pattern.search(merchant_clean):
+            return canonical
+
+    norm_merchant = _normalise(merchant_clean)
     if not norm_merchant:
-        return merchant
+        return merchant_clean
 
     for canonical, alias_list in aliases.items():
-        if norm_merchant == _normalise(canonical):
-            return canonical
+        canonical_clean = clean_merchant_text(canonical)[:60].lower()
+        if norm_merchant == _normalise(canonical_clean):
+            return canonical_clean
         for alias in alias_list:
             if norm_merchant == _normalise(alias):
-                return canonical
+                return canonical_clean
 
-    return merchant
+    return merchant_clean
 
 
 def fuzzy_correct(

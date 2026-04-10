@@ -102,6 +102,11 @@ def test_merge_ai_result_lowercases_purchaser():
     assert r.purchaser == "john smith"
 
 
+def test_merge_ai_result_canonicalizes_purchaser_alias():
+    r = merge_ai_result(_receipt(), {"purchaser": "casonkonzer@gmail.com"})
+    assert r.purchaser == "cason konzer"
+
+
 def test_merge_ai_result_skips_empty_purchaser():
     r = merge_ai_result(_receipt(), {"purchaser": ""})
     assert r.purchaser is None
@@ -135,6 +140,36 @@ def test_merge_ai_result_accepts_real_purchaser_name():
     assert r.purchaser == "jane doe"
 
 
+def test_merge_ai_result_skips_probable_cashier_name_from_counter_line():
+    r = merge_ai_result(
+        _receipt(raw_text="Counter #: 862305 Sal\nMC 5653 42.38"),
+        {"purchaser": "Sam"},
+    )
+    assert r.purchaser is None
+
+
+def test_merge_ai_result_clears_unpaid_notice_total():
+    r = merge_ai_result(
+        _receipt(
+            total=15.0,
+            raw_text="Status: Unpaid\nTotal Amount Paid: $0.00\nTotal Amount Due: $15.00",
+        ),
+        {"total": 15.0},
+    )
+    assert r.total is None
+
+
+def test_merge_ai_result_prefers_total_amount_paid_for_paid_notice():
+    r = merge_ai_result(
+        _receipt(
+            total=None,
+            raw_text="Status: Paid\nTotal Amount Paid: $18.95\nTotal Amount Due: $0.00",
+        ),
+        {"total": 15.0},
+    )
+    assert r.total == pytest.approx(18.95)
+
+
 # ── no-op when AI returns nothing useful ─────────────────────────────────────
 
 
@@ -155,12 +190,20 @@ def test_purchaser_was_blacklisted_true_case_insensitive():
     assert purchaser_was_blacklisted({"purchaser": "ACCOUNT"}) is True
 
 
+def test_purchaser_was_blacklisted_true_for_footer_artifact():
+    assert purchaser_was_blacklisted({"purchaser": "THANK at FOR SHOPPING"}) is True
+
+
 def test_purchaser_was_blacklisted_false_for_null():
     assert purchaser_was_blacklisted({"purchaser": None}) is False
 
 
 def test_purchaser_was_blacklisted_false_for_missing_key():
     assert purchaser_was_blacklisted({}) is False
+
+
+def test_purchaser_was_blacklisted_false_for_known_alias_email():
+    assert purchaser_was_blacklisted({"purchaser": "casonkonzer@gmail.com"}) is False
 
 
 def test_purchaser_was_blacklisted_false_for_real_name():

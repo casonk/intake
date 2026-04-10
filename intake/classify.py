@@ -40,6 +40,16 @@ def _keyword_matches(search_target: str, keyword: str) -> bool:
     return f" {norm_keyword} " in f" {norm_target} "
 
 
+def _match_score(keyword: str, category_path: str, target_index: int) -> tuple[int, int, int, int]:
+    """Return a tuple where higher values mean a more specific match."""
+    norm_keyword = _normalise_phrase(keyword)
+    token_count = len(norm_keyword.split())
+    char_count = len(norm_keyword)
+    depth = category_path.count("/") + 1
+    # Merchant matches (target_index=0) win tie-breaks over raw-text matches.
+    return (token_count, char_count, depth, -target_index)
+
+
 def load_rules(config_path: Path | None = None) -> dict:
     """Load category rules from a TOML file.
 
@@ -95,7 +105,10 @@ def classify(merchant: str, rules: dict, full_text: str = "") -> str:
 
     Return value is ``"category"`` or ``"category/subcategory"``.
     """
-    for search_target in (merchant, full_text):
+    best_category = "general"
+    best_score: tuple[int, int, int, int] | None = None
+
+    for target_index, search_target in enumerate((merchant, full_text)):
         if not search_target:
             continue
         for cat, cat_cfg in rules.items():
@@ -107,9 +120,16 @@ def classify(merchant: str, rules: dict, full_text: str = "") -> str:
                     continue
                 for kw in val.get("keywords", []):
                     if _keyword_matches(search_target, kw):
-                        return f"{cat}/{key}"
+                        category_path = f"{cat}/{key}"
+                        score = _match_score(kw, category_path, target_index)
+                        if best_score is None or score > best_score:
+                            best_score = score
+                            best_category = category_path
             # Fall back to top-level category keywords
             for kw in cat_cfg.get("keywords", []):
                 if _keyword_matches(search_target, kw):
-                    return cat
-    return "general"
+                    score = _match_score(kw, cat, target_index)
+                    if best_score is None or score > best_score:
+                        best_score = score
+                        best_category = cat
+    return best_category

@@ -161,8 +161,25 @@ def extract_receipt(
     - ``mid``  — re-queued when a better mid model is configured (blacklisted purchaser)
     - ``high`` — re-queued when a better high model is configured
     """
+
+    def _attach_debug(current: Receipt, *, ai_attempts: list[dict] | None) -> Receipt:
+        current._debug_ai_attempts = list(ai_attempts or [])  # type: ignore[attr-defined]
+        return current
+
     raw_text = extract_text(pdf_path)
-    receipt = parse_receipt(pdf_path.name, raw_text, pdf_path=pdf_path)
+    receipt = _attach_debug(
+        parse_receipt(pdf_path.name, raw_text, pdf_path=pdf_path), ai_attempts=[]
+    )
+
+    def _canonicalize_merchant(current: Receipt) -> Receipt:
+        from dataclasses import replace
+
+        from intake.merchant import consolidate_merchant
+
+        consolidated = consolidate_merchant(current.merchant, merchant_aliases or {})
+        if consolidated != current.merchant:
+            return replace(current, merchant=consolidated)
+        return current
 
     # Fuzzy-correct garbled merchant name before quality/escalation checks
     if fuzzy_rules:
@@ -177,15 +194,7 @@ def extract_receipt(
         if corrected != receipt.merchant:
             receipt = replace(receipt, merchant=corrected)
 
-    # Consolidate clean-text merchant variants to their canonical name
-    if merchant_aliases:
-        from dataclasses import replace
-
-        from intake.merchant import consolidate_merchant
-
-        consolidated = consolidate_merchant(receipt.merchant, merchant_aliases)
-        if consolidated != receipt.merchant:
-            receipt = replace(receipt, merchant=consolidated)
+    receipt = _canonicalize_merchant(receipt)
 
     patterns = _compile_patterns(
         escalation_patterns if escalation_patterns is not None else DEFAULT_ESCALATION_PATTERNS
@@ -194,15 +203,19 @@ def extract_receipt(
     tier = _extraction_tier(raw_text, receipt, patterns, filename_patterns)
 
     if tier == "ok" or not openai_api_key:
-        return receipt, OCR_MODEL, tier
+        return _attach_debug(receipt, ai_attempts=[]), OCR_MODEL, tier
 
     model = openai_model_high if tier == "high" else openai_model_low
+    ai_attempts: list[dict] = []
 
     try:
         from intake.ai import extract_with_openai, merge_ai_result, purchaser_was_blacklisted
 
         ai_data = extract_with_openai(pdf_path, raw_text, openai_api_key, model)
+        ai_attempts.append({"model": model, "response": ai_data})
         receipt = merge_ai_result(receipt, ai_data)
+        receipt = _canonicalize_merchant(receipt)
+        receipt = _attach_debug(receipt, ai_attempts=ai_attempts)
 
         # Mid-tier upgrade: low model returned a blacklisted purchaser value,
         # indicating cardholder text exists but was misread. Retry with mid model.
@@ -214,8 +227,15 @@ def extract_receipt(
             tier = "mid"
             model = openai_model_mid
             ai_data = extract_with_openai(pdf_path, raw_text, openai_api_key, model)
+            ai_attempts.append({"model": model, "response": ai_data})
             receipt = merge_ai_result(receipt, ai_data)
+            receipt = _canonicalize_merchant(receipt)
+            receipt = _attach_debug(receipt, ai_attempts=ai_attempts)
 
-        return receipt, model, tier
+        return _attach_debug(receipt, ai_attempts=ai_attempts), model, tier
     except Exception:  # noqa: BLE001
-        return receipt, OCR_MODEL, tier  # preserve tier so next run retries
+        return (
+            _attach_debug(receipt, ai_attempts=ai_attempts),
+            OCR_MODEL,
+            tier,
+        )  # preserve tier so next run retries

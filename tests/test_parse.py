@@ -44,6 +44,17 @@ def test_total_from_amount_due():
     assert r.total == pytest.approx(12.50)
 
 
+def test_receipt_datetime_parses_month_name_date_and_time():
+    r = parse_receipt(
+        "20260401_0900.pdf",
+        "Anthropic\nDate of issue March 22, 2026\nRefund issued at 9:38 PM\nTotal credit $200.00",
+    )
+    assert r.receipt_date == date(2026, 3, 22)
+    assert r.receipt_time is not None
+    assert r.receipt_time.hour == 21
+    assert r.receipt_time.minute == 38
+
+
 def test_total_from_usd_line_with_single_decimal():
     r = parse_receipt("20260401_0900.pdf", "Vodafone\nTotal 13.2 USD")
     assert r.total == pytest.approx(13.2)
@@ -75,6 +86,47 @@ def test_total_last_match_wins():
 def test_balance_due_parsed():
     r = parse_receipt("20260315_1400.pdf", "Dentist Office\nBalance Due $350.00")
     assert r.total == pytest.approx(350.00)
+
+
+def test_payment_tender_total_beats_balance_line():
+    text = "\n".join(
+        [
+            "Kroger",
+            "Balance 86.05",
+            "MASTERCARD 88.05",
+            "Total Number Of Items Sold = 14",
+        ]
+    )
+    r = parse_receipt("20260409_1707.pdf", text)
+    assert r.total == pytest.approx(88.05)
+
+
+def test_unpaid_notice_total_is_not_treated_as_spend():
+    text = "\n".join(
+        [
+            "Violation Receipt",
+            "Kalamazoo, MI",
+            "Date: 04/09/2026 08:29 am Payment Type: N/A Status: Unpaid",
+            "Total Amount Paid: $0.00",
+            "Total Amount Due: $15.00",
+        ]
+    )
+    r = parse_receipt("20260409_0829.pdf", text)
+    assert r.total is None
+
+
+def test_paid_notice_prefers_total_amount_paid_over_amount_due():
+    text = "\n".join(
+        [
+            "Violation Receipt",
+            "Kalamazoo, MI",
+            "Date: 04/09/2026 08:32 am Payment Type: Web Status: Paid",
+            "Total Amount Paid: $18.95",
+            "Total Amount Due: $0.00",
+        ]
+    )
+    r = parse_receipt("20260409_0832.pdf", text)
+    assert r.total == pytest.approx(18.95)
 
 
 def test_loyalty_points_total_ignored():
@@ -124,10 +176,29 @@ def test_card_last4_absent_when_not_present():
     assert r.card_last4 is None
 
 
+def test_card_last4_from_discover_with_nearby_line_digits():
+    text = "\n".join(
+        [
+            "W. BLOOMFIELD THNSHP WI",
+            "DISCOVER CHIP READ",
+            "Entry Type: CONTACT",
+            "eeaxgeanvcecae 7875 gal ur",
+            "TOTAL ANT: usd $37.10",
+        ]
+    )
+    r = parse_receipt("20260213_1231.pdf", text)
+    assert r.card_last4 == "7875"
+
+
 def test_purchaser_extracted():
     r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: JOHN DOE\nTotal $5.00")
     assert r.purchaser is not None
     assert "john" in r.purchaser
+
+
+def test_purchaser_alias_normalized_by_ocr_parser():
+    r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: CASON\nTotal $5.00")
+    assert r.purchaser == "cason konzer"
 
 
 def test_purchaser_absent_when_not_present():
@@ -155,4 +226,22 @@ def test_customer_satisfaction_not_treated_as_purchaser():
 def test_cardholder_signature_verified_not_treated_as_purchaser():
     text = "Store\nCardholder Signature Verified\nTotal $5.00"
     r = parse_receipt("20260401_0900.pdf", text)
+    assert r.purchaser is None
+
+
+def test_app_name_discover_not_treated_as_purchaser():
+    text = "Store\nApp Name: Discover\nTotal $5.00"
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert r.purchaser is None
+
+
+def test_thank_you_footer_not_treated_as_purchaser():
+    text = "Store\nCardholder: THANK at FOR SHOPPING\nTotal $5.00"
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert r.purchaser is None
+
+
+def test_counter_staff_name_not_treated_as_purchaser():
+    text = "Store\nCounter #: 862305 Sal\nCardholder: Sam\nMC 5653 42.38\nTotal $42.38"
+    r = parse_receipt("20260226_0730.pdf", text)
     assert r.purchaser is None

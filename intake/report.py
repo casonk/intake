@@ -6,8 +6,12 @@ import math
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from jinja2 import BaseLoader, Environment
+
+_DEFAULT_FILEBROWSER_BASE_URL = "https://files.snowbridge.internal"
+_DEFAULT_FILEBROWSER_RECEIPT_ROOT = "receipt"
 
 _MD_TEMPLATE = """\
 # Intake Receipt Report
@@ -19,6 +23,12 @@ _MD_TEMPLATE = """\
 | Total Receipts | {{ data.total_receipts }} |
 | Total Spend | {{ data.total_spend_display }} |
 | Date Range | {{ data.date_min or "—" }} → {{ data.date_max or "—" }} |
+{% if data.receipt_root_markdown -%}
+| Receipt Root | {{ data.receipt_root_markdown }} |
+{% endif -%}
+{% if data.intake_markdown -%}
+| Intake Inbox | {{ data.intake_markdown }} |
+{% endif %}
 
 ## Spending by Category
 
@@ -131,6 +141,21 @@ _HTML_TEMPLATE = """\
     grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
     gap: 16px;
     margin-top: 22px;
+  }
+  .hero-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .hero-links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(220, 231, 255, 0.78);
+    border: 1px solid rgba(55, 90, 158, 0.18);
   }
   .summary-card {
     background: var(--panel);
@@ -317,6 +342,12 @@ _HTML_TEMPLATE = """\
     <p class="eyebrow">Intake Dashboard</p>
     <h1>Receipt activity at a glance.</h1>
     <p>Daily totals, dominant categories, merchant concentration, and model usage from the current intake database.</p>
+    {% if data.receipt_root_uri or data.intake_uri %}
+    <div class="hero-links">
+      {% if data.receipt_root_uri %}<a href="{{ data.receipt_root_uri }}">Open receipt root</a>{% endif %}
+      {% if data.intake_uri %}<a href="{{ data.intake_uri }}">Open intake inbox</a>{% endif %}
+    </div>
+    {% endif %}
     <div class="summary-grid">
       <article class="summary-card">
         <span class="label">Total Receipts</span>
@@ -593,17 +624,65 @@ def _nice_axis_max(value: float) -> float:
     return nice * magnitude
 
 
-def _path_uri(path: Path | None) -> str | None:
-    if path is None or not path.exists():
-        return None
-    try:
-        return path.resolve().as_uri()
-    except ValueError:
-        return None
-
-
 def _markdown_link(label: str, uri: str | None) -> str:
     return f"[{label}]({uri})" if uri else label
+
+
+def _relative_parts(path: Path | str | None) -> list[str] | None:
+    if path is None:
+        return None
+    value = str(path).replace("\\", "/").strip("/")
+    if not value:
+        return []
+    return [part for part in value.split("/") if part and part != "."]
+
+
+def _filebrowser_uri(
+    relative_path: Path | str | None,
+    *,
+    base_url: str | None,
+    root_path: str,
+    is_dir: bool = False,
+) -> str | None:
+    if not base_url:
+        return None
+    parsed = urlsplit(base_url.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return None
+
+    root_parts = _relative_parts(root_path) or []
+    relative_parts = _relative_parts(relative_path) or []
+    encoded = "/".join(quote(part, safe="") for part in ["files", *root_parts, *relative_parts])
+    final_path = (
+        f"{parsed.path.rstrip('/')}/{encoded}" if parsed.path.rstrip("/") else f"/{encoded}"
+    )
+    if is_dir and not final_path.endswith("/"):
+        final_path += "/"
+    return urlunsplit((parsed.scheme, parsed.netloc, final_path, "", ""))
+
+
+def _filebrowser_uri_for_local_path(
+    path: Path | None,
+    *,
+    receipt_root: Path | None,
+    base_url: str | None,
+    root_path: str,
+) -> str | None:
+    if path is None or receipt_root is None or not path.exists():
+        return None
+    try:
+        relative = path.relative_to(receipt_root)
+    except ValueError:
+        try:
+            relative = path.resolve().relative_to(receipt_root.resolve())
+        except ValueError:
+            return None
+    return _filebrowser_uri(
+        relative,
+        base_url=base_url,
+        root_path=root_path,
+        is_dir=path.is_dir(),
+    )
 
 
 def _category_folder_path(receipt_root: Path | None, category: str) -> Path | None:
@@ -713,7 +792,13 @@ def _prepare_rows(
     return prepared
 
 
-def _prepare_recent(rows: list[dict], *, receipt_root: Path | None) -> list[dict]:
+def _prepare_recent(
+    rows: list[dict],
+    *,
+    receipt_root: Path | None,
+    filebrowser_base_url: str | None,
+    filebrowser_receipt_root: str,
+) -> list[dict]:
     prepared: list[dict] = []
     search_cache: dict[str, Path | None] = {}
     for row in rows:
@@ -723,7 +808,12 @@ def _prepare_recent(rows: list[dict], *, receipt_root: Path | None) -> list[dict
         item["processed_at_display"] = processed_at[:19] if processed_at else "—"
         category = _safe_label(item.get("category"), "General")
         category_path = _category_folder_path(receipt_root, category)
-        category_uri = _path_uri(category_path)
+        category_uri = _filebrowser_uri_for_local_path(
+            category_path,
+            receipt_root=receipt_root,
+            base_url=filebrowser_base_url,
+            root_path=filebrowser_receipt_root,
+        )
         folder_path = _receipt_folder_path(
             receipt_root,
             item.get("receipt_dir"),
@@ -732,7 +822,12 @@ def _prepare_recent(rows: list[dict], *, receipt_root: Path | None) -> list[dict
             category_path=category_path,
             search_cache=search_cache,
         )
-        folder_uri = _path_uri(folder_path)
+        folder_uri = _filebrowser_uri_for_local_path(
+            folder_path,
+            receipt_root=receipt_root,
+            base_url=filebrowser_base_url,
+            root_path=filebrowser_receipt_root,
+        )
         file_path = _receipt_file_path(
             receipt_root,
             item.get("receipt_dir"),
@@ -740,7 +835,12 @@ def _prepare_recent(rows: list[dict], *, receipt_root: Path | None) -> list[dict
             category=category,
             search_cache=search_cache,
         )
-        file_uri = _path_uri(file_path)
+        file_uri = _filebrowser_uri_for_local_path(
+            file_path,
+            receipt_root=receipt_root,
+            base_url=filebrowser_base_url,
+            root_path=filebrowser_receipt_root,
+        )
         file_link_uri = file_uri or folder_uri
         item["folder_name"] = folder_path.name if folder_path else "—"
         item["category_uri"] = category_uri
@@ -860,7 +960,13 @@ def _build_monthly_chart(rows: list[dict]) -> dict:
     }
 
 
-def _build_report_view(data: dict, *, receipt_root: Path | None) -> dict:
+def _build_report_view(
+    data: dict,
+    *,
+    receipt_root: Path | None,
+    filebrowser_base_url: str | None,
+    filebrowser_receipt_root: str,
+) -> dict:
     view = dict(data)
     view["total_spend_display"] = _format_currency(view["total_spend"])
 
@@ -905,7 +1011,12 @@ def _build_report_view(data: dict, *, receipt_root: Path | None) -> dict:
 
     for row in by_category:
         row["total_spend_display"] = row["value_display"]
-        folder_uri = _path_uri(_category_folder_path(receipt_root, row["category"]))
+        folder_uri = _filebrowser_uri_for_local_path(
+            _category_folder_path(receipt_root, row["category"]),
+            receipt_root=receipt_root,
+            base_url=filebrowser_base_url,
+            root_path=filebrowser_receipt_root,
+        )
         row["folder_uri"] = folder_uri
         row["category_markdown"] = _markdown_link(row["category"], folder_uri)
     for row in by_month:
@@ -913,10 +1024,27 @@ def _build_report_view(data: dict, *, receipt_root: Path | None) -> dict:
     for row in top_merchants:
         row["total_spend_display"] = row["value_display"]
 
-    recent = _prepare_recent(view["recent"], receipt_root=receipt_root)
+    recent = _prepare_recent(
+        view["recent"],
+        receipt_root=receipt_root,
+        filebrowser_base_url=filebrowser_base_url,
+        filebrowser_receipt_root=filebrowser_receipt_root,
+    )
 
     top_category = by_category[0] if by_category else None
     top_merchant = top_merchants[0] if top_merchants else None
+    receipt_root_uri = _filebrowser_uri(
+        None,
+        base_url=filebrowser_base_url,
+        root_path=filebrowser_receipt_root,
+        is_dir=True,
+    )
+    intake_uri = _filebrowser_uri(
+        "intake",
+        base_url=filebrowser_base_url,
+        root_path=filebrowser_receipt_root,
+        is_dir=True,
+    )
 
     view.update(
         {
@@ -933,6 +1061,10 @@ def _build_report_view(data: dict, *, receipt_root: Path | None) -> dict:
             "top_merchant_total_display": (
                 top_merchant["total_spend_display"] if top_merchant else "No merchant data yet"
             ),
+            "receipt_root_uri": receipt_root_uri,
+            "receipt_root_markdown": _markdown_link("receipt/", receipt_root_uri),
+            "intake_uri": intake_uri,
+            "intake_markdown": _markdown_link("receipt/intake/", intake_uri),
             "charts": {
                 "monthly": _build_monthly_chart(by_month),
                 "categories": {
@@ -975,6 +1107,8 @@ def generate_reports(
     fmt: str = "both",
     *,
     receipt_root: Path | None = None,
+    filebrowser_base_url: str | None = _DEFAULT_FILEBROWSER_BASE_URL,
+    filebrowser_receipt_root: str = _DEFAULT_FILEBROWSER_RECEIPT_ROOT,
 ) -> list[Path]:
     """Write Markdown and/or HTML reports to *output_dir*.
 
@@ -984,7 +1118,12 @@ def generate_reports(
     from intake.db import query_summary
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    data = _build_report_view(query_summary(conn), receipt_root=receipt_root)
+    data = _build_report_view(
+        query_summary(conn),
+        receipt_root=receipt_root,
+        filebrowser_base_url=filebrowser_base_url,
+        filebrowser_receipt_root=filebrowser_receipt_root,
+    )
 
     md_env = Environment(loader=BaseLoader(), autoescape=False)
     html_env = Environment(loader=BaseLoader(), autoescape=True)

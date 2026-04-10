@@ -103,6 +103,7 @@ def test_extract_receipt_returns_tesseract_when_quality_ok(mock_parse, mock_ocr,
 
     receipt, model, tier = extract_receipt(pdf)
     assert model == OCR_MODEL
+    assert receipt._debug_ai_attempts == []  # type: ignore[attr-defined]
 
 
 @patch("intake.extract.extract_text")
@@ -207,6 +208,34 @@ def test_extract_receipt_uses_ai_when_quality_low(
     )
     assert model == "gpt-4o-mini"
     assert receipt.merchant == "real store"  # merge_ai_result normalises to lowercase
+    assert receipt._debug_ai_attempts == [  # type: ignore[attr-defined]
+        {"model": "gpt-4o-mini", "response": {"merchant": "Real Store", "total": 12.50}}
+    ]
+
+
+@patch("intake.extract.extract_text")
+@patch("intake.extract.parse_receipt")
+@patch("intake.ai.merge_ai_result")
+@patch("intake.ai.extract_with_openai")
+def test_extract_receipt_consolidates_post_ai_merchant(
+    mock_ai, mock_merge, mock_parse, mock_ocr, tmp_path
+):
+    mock_ocr.return_value = "bad"
+    base_receipt = _receipt(merchant="unknown", total=None, raw_text="bad")
+    improved = _receipt(merchant="McDonald's Restaurant #36549", total=6.13, raw_text="bad")
+    mock_parse.return_value = base_receipt
+    mock_ai.return_value = {"merchant": "McDonald's Restaurant #36549", "total": 6.13}
+    mock_merge.return_value = improved
+
+    pdf = tmp_path / "20260401_1000.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    receipt, model, tier = extract_receipt(
+        pdf, openai_api_key="sk-test", openai_model_low="gpt-4o-mini"
+    )
+
+    assert model == "gpt-4o-mini"
+    assert receipt.merchant == "mcdonald's"
 
 
 @patch("intake.extract.extract_text")
