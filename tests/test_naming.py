@@ -21,7 +21,9 @@ def test_is_canonical_receipt_filename():
 
 
 def test_canonical_filename_for_datetime():
-    assert canonical_filename_for_datetime(datetime(2026, 4, 9, 17, 7), ".PDF") == "20260409_1707.pdf"
+    assert (
+        canonical_filename_for_datetime(datetime(2026, 4, 9, 17, 7), ".PDF") == "20260409_1707.pdf"
+    )
 
 
 def test_infer_artifact_datetime_uses_name_date_and_mtime_time(tmp_path):

@@ -1,4 +1,4 @@
-# REFS-PUBLIC.md — Public References
+# REFS-PUBLIC.md - Public References
 
 > Record external public repositories, datasets, documentation, APIs, or other
 > public resources that this repository utilizes or depends on.
@@ -6,22 +6,18 @@
 
 ## Public Repositories
 
-<!-- External repos this project depends on, forks, or integrates with:
-- https://github.com/org/repo — description of usage
--->
+- No fixed external code repository is the main upstream; this repo processes local receipt PDFs and publishes local/private reports.
 
 ## Public Datasets and APIs
 
-<!-- Publicly accessible data sources, REST APIs, or external feeds consumed here:
-- https://example.com/dataset — description of usage
--->
+- No standing public datasets are consumed directly; input comes from local receipt files and local/private portfolio services.
 
 ## Documentation and Specifications
 
-<!-- Reference docs, RFCs, standards, or upstream project documentation:
-- https://docs.example.com — description
--->
+- https://tesseract-ocr.github.io/tessdoc/ - OCR engine installation and runtime reference
+- https://www.sqlite.org/docs.html - SQLite storage reference for the local receipt database
+- https://platform.openai.com/docs - OpenAI API documentation for AI-assisted extraction flows when enabled
 
 ## Notes
 
-<!-- Any context about how these public references are used or versioned -->
+- Local snowbridge and wiring-harness URLs are intentionally omitted here because they are portfolio-private surfaces rather than public references.
