@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+from collections import defaultdict
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from statistics import median
 
+from intake.certification import receipt_certifications_from_dicts, receipt_certifications_to_dicts
+from intake.parse import receipt_items_from_dicts, receipt_items_to_dicts
 from intake.purchaser import normalize_purchaser
 
 _SCHEMA = """
@@ -20,6 +24,8 @@ CREATE TABLE IF NOT EXISTS receipts (
     receipt_dir     TEXT NOT NULL,
     file_hash       TEXT,
     raw_text        TEXT,
+    items_json      TEXT,
+    certifications_json TEXT,
     processed_by    TEXT NOT NULL DEFAULT 'tesseract',
     processed_at    TEXT NOT NULL
 );
@@ -59,6 +65,8 @@ _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN card_last4 TEXT",
     "ALTER TABLE receipts ADD COLUMN reviewed_at TEXT",  # ISO timestamp when suppressed; NULL = not reviewed
     "ALTER TABLE receipts ADD COLUMN file_hash TEXT",
+    "ALTER TABLE receipts ADD COLUMN items_json TEXT",
+    "ALTER TABLE receipts ADD COLUMN certifications_json TEXT",
     "CREATE INDEX IF NOT EXISTS idx_receipts_file_hash ON receipts(file_hash)",
 ]
 
@@ -86,6 +94,54 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
             pass  # column / index already exists
 
 
+def _serialize_items(items: object | None) -> str | None:
+    """Return a normalized JSON payload for itemized receipt lines."""
+    if items is None:
+        return None
+    return json.dumps(receipt_items_to_dicts(items), ensure_ascii=True, sort_keys=True)
+
+
+def _decode_items_json(items_json: str | None) -> list[dict] | None:
+    """Decode stored receipt item JSON, preserving NULL as "not attempted"."""
+    if items_json is None:
+        return None
+    try:
+        payload = json.loads(items_json)
+    except json.JSONDecodeError:
+        return []
+    return receipt_items_to_dicts(receipt_items_from_dicts(payload))
+
+
+def _serialize_certifications(certifications: object | None) -> str | None:
+    """Return a normalized JSON payload for receipt certifications."""
+    if certifications is None:
+        return None
+    return json.dumps(
+        receipt_certifications_to_dicts(certifications),
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+
+
+def _decode_certifications_json(certifications_json: str | None) -> list[dict] | None:
+    """Decode stored certification JSON, preserving NULL as "not attempted/present"."""
+    if certifications_json is None:
+        return None
+    try:
+        payload = json.loads(certifications_json)
+    except json.JSONDecodeError:
+        return []
+    return receipt_certifications_to_dicts(receipt_certifications_from_dicts(payload))
+
+
+def _decode_receipt_row(row: sqlite3.Row) -> dict:
+    """Return a JSON-friendly receipt row with decoded itemization."""
+    item = dict(row)
+    item["items"] = _decode_items_json(item.get("items_json"))
+    item["certifications"] = _decode_certifications_json(item.get("certifications_json"))
+    return item
+
+
 def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
     """Insert or replace a receipt record.
 
@@ -99,14 +155,22 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
     normalized_data = dict(data)
     if "purchaser" in normalized_data:
         normalized_data["purchaser"] = normalize_purchaser(normalized_data.get("purchaser"))
+    items_json = _serialize_items(normalized_data.pop("items", None))
+    if items_json is None and "items_json" in normalized_data:
+        items_json = _serialize_items(_decode_items_json(normalized_data.pop("items_json")))
+    certifications_json = _serialize_certifications(normalized_data.pop("certifications", None))
+    if certifications_json is None and "certifications_json" in normalized_data:
+        certifications_json = _serialize_certifications(
+            _decode_certifications_json(normalized_data.pop("certifications_json"))
+        )
     conn.execute(
         """
         INSERT INTO receipts
             (filename, scan_date, merchant, total, category, receipt_dir, file_hash,
-             raw_text, processed_by, purchaser, card_last4, processed_at)
+             raw_text, items_json, certifications_json, processed_by, purchaser, card_last4, processed_at)
         VALUES
             (:filename, :scan_date, :merchant, :total, :category, :receipt_dir, :file_hash,
-             :raw_text, :processed_by, :purchaser, :card_last4, :processed_at)
+             :raw_text, :items_json, :certifications_json, :processed_by, :purchaser, :card_last4, :processed_at)
         ON CONFLICT(filename) DO UPDATE SET
             scan_date    = excluded.scan_date,
             merchant     = excluded.merchant,
@@ -115,6 +179,8 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             receipt_dir  = excluded.receipt_dir,
             file_hash    = excluded.file_hash,
             raw_text     = excluded.raw_text,
+            items_json   = COALESCE(excluded.items_json, receipts.items_json),
+            certifications_json = COALESCE(excluded.certifications_json, receipts.certifications_json),
             processed_by = excluded.processed_by,
             purchaser    = excluded.purchaser,
             card_last4   = excluded.card_last4,
@@ -125,6 +191,8 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             "purchaser": None,
             "card_last4": None,
             "file_hash": None,
+            "items_json": items_json,
+            "certifications_json": certifications_json,
             **normalized_data,
             "processed_at": processed_at,
         },
@@ -137,13 +205,13 @@ def get_receipt(conn: sqlite3.Connection, filename: str) -> dict | None:
     row = conn.execute(
         """
         SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
-               raw_text, processed_by, purchaser, card_last4, processed_at, reviewed_at
+               raw_text, items_json, certifications_json, processed_by, purchaser, card_last4, processed_at, reviewed_at
         FROM receipts
         WHERE filename = ?
         """,
         (filename,),
     ).fetchone()
-    return dict(row) if row is not None else None
+    return _decode_receipt_row(row) if row is not None else None
 
 
 def get_receipt_by_file_hash(
@@ -161,7 +229,7 @@ def get_receipt_by_file_hash(
     row = conn.execute(
         f"""
         SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
-               raw_text, processed_by, purchaser, card_last4, processed_at, reviewed_at
+               raw_text, items_json, certifications_json, processed_by, purchaser, card_last4, processed_at, reviewed_at
         FROM receipts
         {where}
         ORDER BY processed_at ASC, filename ASC
@@ -169,7 +237,7 @@ def get_receipt_by_file_hash(
         """,
         params,
     ).fetchone()
-    return dict(row) if row is not None else None
+    return _decode_receipt_row(row) if row is not None else None
 
 
 def infer_purchaser_from_card_last4(
@@ -258,6 +326,8 @@ def update_receipt_fields(
         "processed_by",
         "purchaser",
         "card_last4",
+        "items",
+        "certifications",
         "reviewed_at",
     }
     unknown_fields = sorted(set(updates) - allowed_fields)
@@ -269,13 +339,26 @@ def update_receipt_fields(
     assignments: list[str] = []
     params: list[object | None] = []
     for field, new_value in updates.items():
+        db_field = field
         if field == "purchaser":
             new_value = normalize_purchaser(new_value)
-        old_value = current.get(field)
-        if old_value == new_value:
+        if field == "items":
+            db_field = "items_json"
+            new_value = _serialize_items(new_value)
+            old_value = current.get("items")
+            new_display_value = _decode_items_json(new_value)
+        elif field == "certifications":
+            db_field = "certifications_json"
+            new_value = _serialize_certifications(new_value)
+            old_value = current.get("certifications")
+            new_display_value = _decode_certifications_json(new_value)
+        else:
+            old_value = current.get(field)
+            new_display_value = new_value
+        if old_value == new_display_value:
             continue
-        changes[field] = {"old": old_value, "new": new_value}
-        assignments.append(f"{field} = ?")
+        changes[field] = {"old": old_value, "new": new_display_value}
+        assignments.append(f"{db_field} = ?")
         params.append(new_value)
 
     if not changes:
@@ -368,6 +451,7 @@ def query_summary(conn: sqlite3.Connection) -> dict:
     by_category = rows("""
         SELECT category,
                COUNT(*) AS count,
+               COUNT(total) AS known_total_count,
                COALESCE(SUM(total), 0) AS total_spend
         FROM receipts
         GROUP BY category
@@ -377,20 +461,37 @@ def query_summary(conn: sqlite3.Connection) -> dict:
     by_month = rows("""
         SELECT SUBSTR(scan_date, 1, 7) AS month,
                COUNT(*) AS count,
+               COUNT(total) AS known_total_count,
                COALESCE(SUM(total), 0) AS total_spend
         FROM receipts
         GROUP BY month
         ORDER BY month
         """)
 
-    top_merchants = rows("""
+    all_merchants = rows("""
         SELECT merchant,
                COUNT(*) AS count,
-               COALESCE(SUM(total), 0) AS total_spend
+               COUNT(total) AS known_total_count,
+               COALESCE(SUM(total), 0) AS total_spend,
+               MIN(scan_date) AS date_min,
+               MAX(scan_date) AS date_max,
+               COUNT(DISTINCT SUBSTR(scan_date, 1, 7)) AS active_months
         FROM receipts
         GROUP BY merchant
-        ORDER BY total_spend DESC
-        LIMIT 10
+        ORDER BY total_spend DESC, count DESC, merchant
+        """)
+
+    top_merchants = all_merchants[:10]
+
+    merchant_by_month = rows("""
+        SELECT merchant,
+               SUBSTR(scan_date, 1, 7) AS month,
+               COUNT(*) AS count,
+               COUNT(total) AS known_total_count,
+               COALESCE(SUM(total), 0) AS total_spend
+        FROM receipts
+        GROUP BY merchant, month
+        ORDER BY merchant, month
         """)
 
     by_model = rows("""
@@ -403,21 +504,50 @@ def query_summary(conn: sqlite3.Connection) -> dict:
 
     recent = rows("""
         SELECT scan_date, merchant, category, total, filename, receipt_dir,
-               purchaser, card_last4, processed_by, processed_at
+               purchaser, card_last4, items_json, certifications_json, processed_by, processed_at
         FROM receipts
         ORDER BY scan_date DESC, processed_at DESC
         LIMIT 50
         """)
+
+    merchant_receipts = rows("""
+        SELECT merchant, scan_date, category, total, filename, receipt_dir,
+               purchaser, card_last4, items_json, certifications_json, processed_by, processed_at
+        FROM receipts
+        ORDER BY COALESCE(merchant, ''), scan_date DESC, processed_at DESC, filename DESC
+        """)
+
+    item_rows = rows("""
+        SELECT items_json
+        FROM receipts
+        """)
+    itemization_attempted = 0
+    itemized_receipts = 0
+    total_line_items = 0
+    for row in item_rows:
+        items = _decode_items_json(row.get("items_json"))
+        if items is None:
+            continue
+        itemization_attempted += 1
+        if items:
+            itemized_receipts += 1
+            total_line_items += len(items)
 
     return {
         "total_receipts": total_receipts,
         "total_spend": total_spend,
         "date_min": date_range[0],
         "date_max": date_range[1],
+        "itemization_attempted": itemization_attempted,
+        "itemized_receipts": itemized_receipts,
+        "total_line_items": total_line_items,
         "by_category": by_category,
         "by_month": by_month,
         "by_model": by_model,
+        "all_merchants": all_merchants,
         "top_merchants": top_merchants,
+        "merchant_by_month": merchant_by_month,
+        "merchant_receipts": merchant_receipts,
         "recent": recent,
     }
 
@@ -430,12 +560,14 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
     - merchant contains an @ sign (email leaked in)
     - merchant is very short (≤ 3 chars)
     - total is null or exactly 0.0
+    - total crosses one or more explicit parser-review guard thresholds
+    - merchant/card novelty signals for recent scan dates
+    - merchant-level amount outliers for recent scan dates
 
     Rows with a ``reviewed_at`` timestamp are suppressed from results unless
     *include_suppressed* is True.
     """
-    suppressed_clause = "" if include_suppressed else "AND reviewed_at IS NULL"
-    cursor = conn.execute(f"""
+    cursor = conn.execute("""
         SELECT
             id,
             filename,
@@ -450,19 +582,104 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
             processed_at,
             reviewed_at
         FROM receipts
-        WHERE (
-            merchant IS NULL
-            OR LOWER(TRIM(merchant)) IN ('unknown', 'receipt', '')
-            OR merchant LIKE '%@%'
-            OR LENGTH(TRIM(merchant)) <= 3
-            OR total IS NULL
-            OR total = 0.0
-        )
-        {suppressed_clause}
-        ORDER BY category, filename
+        ORDER BY scan_date, processed_at, filename
         """)
     cols = [d[0] for d in cursor.description]
-    return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
+    rows = [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
+
+    def _parse_scan_date(value: object | None) -> date | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError:
+            return None
+
+    latest_scan_date = max(
+        (_parse_scan_date(row.get("scan_date")) for row in rows),
+        default=None,
+    )
+    novelty_cutoff = latest_scan_date - timedelta(days=30) if latest_scan_date is not None else None
+
+    merchant_seen: dict[str, int] = defaultdict(int)
+    card_seen: dict[str, int] = defaultdict(int)
+    merchant_card_seen: dict[tuple[str, str], int] = defaultdict(int)
+    merchant_totals: dict[str, list[float]] = defaultdict(list)
+
+    total_guard_thresholds = (250.0, 500.0, 750.0, 1000.0)
+
+    flagged: list[dict] = []
+    for row in rows:
+        reasons: list[str] = []
+        quality_reasons: list[str] = []
+        total_guard_reasons: list[str] = []
+
+        merchant = str(row.get("merchant") or "").strip()
+        merchant_norm = merchant.casefold()
+        card_last4 = str(row.get("card_last4") or "").strip()
+        total = row.get("total")
+        scan_date = _parse_scan_date(row.get("scan_date"))
+        novelty_allowed = (
+            novelty_cutoff is not None and scan_date is not None and scan_date >= novelty_cutoff
+        )
+
+        if not merchant_norm:
+            quality_reasons.append("missing_merchant")
+        elif merchant_norm in {"unknown", "receipt"}:
+            quality_reasons.append("placeholder_merchant")
+        if "@" in merchant:
+            quality_reasons.append("merchant_contains_email")
+        if merchant and len(merchant) <= 3:
+            quality_reasons.append("short_merchant")
+        if total is None:
+            quality_reasons.append("missing_total")
+        elif total == 0.0:
+            quality_reasons.append("zero_total")
+        elif float(total) > 0:
+            for threshold in total_guard_thresholds:
+                if float(total) > threshold:
+                    total_guard_reasons.append(f"total_over_{int(threshold)}")
+
+        reasons.extend(quality_reasons)
+        reasons.extend(total_guard_reasons)
+
+        if novelty_allowed and not quality_reasons:
+            if merchant_norm and merchant_seen[merchant_norm] == 0:
+                reasons.append("new_merchant")
+            if card_last4 and card_seen[card_last4] == 0:
+                reasons.append("new_card_last4")
+            if (
+                merchant_norm
+                and card_last4
+                and merchant_card_seen[(merchant_norm, card_last4)] == 0
+            ):
+                reasons.append("new_merchant_card_pair")
+            prior_totals = merchant_totals[merchant_norm]
+            if total is not None and len(prior_totals) >= 3:
+                prior_median = float(median(prior_totals))
+                if prior_median > 0 and float(total) >= max(prior_median * 3, prior_median + 250):
+                    reasons.append(
+                        f"amount_outlier_for_merchant (prior median ${prior_median:.2f})"
+                    )
+
+        if merchant_norm:
+            merchant_seen[merchant_norm] += 1
+            if total is not None and float(total) > 0:
+                merchant_totals[merchant_norm].append(float(total))
+        if card_last4:
+            card_seen[card_last4] += 1
+        if merchant_norm and card_last4:
+            merchant_card_seen[(merchant_norm, card_last4)] += 1
+
+        if reasons and (include_suppressed or row.get("reviewed_at") is None):
+            enriched = dict(row)
+            enriched["review_reasons"] = reasons
+            enriched["review_reason_summary"] = ", ".join(reasons)
+            flagged.append(enriched)
+
+    flagged.sort(key=lambda row: (row.get("category") or "", row.get("filename") or ""))
+    return flagged
 
 
 # ── email receipt helpers ──────────────────────────────────────────────────────

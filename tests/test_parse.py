@@ -161,6 +161,55 @@ def test_total_computed_from_subtotal_tax_and_discount():
     assert r.total == pytest.approx(180.74)
 
 
+def test_itemization_extracts_simple_line_items():
+    text = "\n".join(
+        [
+            "Kroger",
+            "Bananas 2.99",
+            "Whole Milk 4.39",
+            "Total 7.38",
+        ]
+    )
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert [item.description for item in r.items] == ["Bananas", "Whole Milk"]
+    assert [item.amount for item in r.items] == [pytest.approx(2.99), pytest.approx(4.39)]
+
+
+def test_itemization_extracts_quantity_and_unit_price_lines():
+    text = "\n".join(
+        [
+            "Hardware Store",
+            "Bolts 3 @ 1.50 4.50",
+            "2 x Washers 1.20",
+            "Total 5.70",
+        ]
+    )
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert len(r.items) == 2
+    assert r.items[0].description == "Bolts"
+    assert r.items[0].quantity == pytest.approx(3.0)
+    assert r.items[0].unit_price == pytest.approx(1.5)
+    assert r.items[0].amount == pytest.approx(4.5)
+    assert r.items[1].description == "Washers"
+    assert r.items[1].quantity == pytest.approx(2.0)
+    assert r.items[1].amount == pytest.approx(1.2)
+
+
+def test_itemization_ignores_total_and_tender_lines():
+    text = "\n".join(
+        [
+            "Shop",
+            "Apples 3.25",
+            "MASTERCARD 3.25",
+            "Card Number: ************5653",
+            "Total 3.25",
+        ]
+    )
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert len(r.items) == 1
+    assert r.items[0].description == "Apples"
+
+
 def test_card_last4_from_visa():
     r = parse_receipt("20260401_0900.pdf", "Store\nVISA xxxx xxxx xxxx 4321\nTotal $5.00")
     assert r.card_last4 == "4321"
@@ -190,6 +239,19 @@ def test_card_last4_from_discover_with_nearby_line_digits():
     assert r.card_last4 == "7875"
 
 
+def test_card_last4_from_ocr_noisy_card_number_line():
+    text = "\n".join(
+        [
+            "Boyne Mountain Resort",
+            "Total Due: 25.00",
+            "MasterCard 25.00",
+            "Card Number: XXXXXXXXKXXKKKAKAXKK S653",
+        ]
+    )
+    r = parse_receipt("20260329_1155.pdf", text)
+    assert r.card_last4 == "5653"
+
+
 def test_purchaser_extracted():
     r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: JOHN DOE\nTotal $5.00")
     assert r.purchaser is not None
@@ -198,6 +260,21 @@ def test_purchaser_extracted():
 
 def test_purchaser_alias_normalized_by_ocr_parser():
     r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: CASON\nTotal $5.00")
+    assert r.purchaser == "cason konzer"
+
+
+def test_purchaser_extracted_from_bill_to_email_block():
+    text = "\n".join(
+        [
+            "Credit Note",
+            "Anthropic, PBC Bill to",
+            "548 Market Street casonkonzer@gmail.com's Organization",
+            "PMB 90375 4350 Bald Eagle Lake Road",
+            "support@anthropic.com casonkonzer@gmail.com",
+            "Refund issued - Visa - 9369 $200.00",
+        ]
+    )
+    r = parse_receipt("20260322_2241.pdf", text)
     assert r.purchaser == "cason konzer"
 
 
@@ -245,3 +322,18 @@ def test_counter_staff_name_not_treated_as_purchaser():
     text = "Store\nCounter #: 862305 Sal\nCardholder: Sam\nMC 5653 42.38\nTotal $42.38"
     r = parse_receipt("20260226_0730.pdf", text)
     assert r.purchaser is None
+
+
+def test_certification_extracted_from_aaa_line():
+    text = "\n".join(
+        [
+            "Heritage Collision",
+            "Certified by AAA",
+            "Customer: Michael J. Harrington Jr.",
+        ]
+    )
+    r = parse_receipt("20110830_1149.pdf", text)
+    assert len(r.certifications) == 1
+    assert r.certifications[0].issuer == "AAA"
+    assert r.certifications[0].label == "AAA certified"
+    assert r.certifications[0].source_text == "Certified by AAA"

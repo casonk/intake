@@ -95,7 +95,7 @@ keywords = []
 
 [categories.dining.fast-food]
 label    = "Fast Food"
-keywords = ["burger-hut", "taco-town", "mcdonald's", "mcdonalds"]
+keywords = ["burger-hut", "taco-town", "mcdonald's", "mcdonalds", "chick-fil-a", "chick fil a", "chickfila"]
 
 [categories.dining.sit-down]
 label    = "Sit-Down Restaurants"

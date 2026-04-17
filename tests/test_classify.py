@@ -48,6 +48,10 @@ def test_mcdonalds_is_dining_fast_food():
     assert classify("McDonald's Restaurant #36549", _RULES) == "dining/fast-food"
 
 
+def test_chick_fil_a_is_dining_fast_food():
+    assert classify("Chick-fil-A #1234", _RULES) == "dining/fast-food"
+
+
 def test_empty_merchant_is_general():
     assert classify("", _RULES) == "general"
 

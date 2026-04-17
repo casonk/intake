@@ -138,9 +138,18 @@ def test_send_processed_receipt_notification_invokes_signal_sender(monkeypatch, 
     assert sent == 1
     assert len(calls) == 1
     cmd, capture_output, text = calls[0]
-    assert cmd[:4] == [sys.executable, str(send_script), "--config", str(config_path)]
-    assert cmd[4] == "+15551234567"
-    assert "Receipt processed" in cmd[5]
+    assert cmd[:8] == [
+        sys.executable,
+        str(send_script),
+        "--meta",
+        "cc-service: intake",
+        "--meta",
+        "cc-intent: notify",
+        "--config",
+        str(config_path),
+    ]
+    assert cmd[8] == "+15551234567"
+    assert "Receipt processed" in cmd[9]
     assert capture_output is True
     assert text is True
 
@@ -186,10 +195,18 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
     assert sent == 1
     assert len(calls) == 1
     cmd, capture_output, text = calls[0]
-    assert cmd[:3] == [sys.executable, str(send_script), "me@example.com"]
-    assert cmd[3] == "[intake] Receipt processed: kroger $4.33"
-    assert "Receipt processed" in cmd[4]
-    assert cmd[5:] == ["--config", str(config_path)]
+    assert cmd[:7] == [
+        sys.executable,
+        str(send_script),
+        "--header",
+        "X-Portfolio-Service: intake",
+        "--header",
+        "X-Crew-Chief-Intent: notify",
+        "me@example.com",
+    ]
+    assert cmd[7] == "[intake] Receipt processed: kroger $4.33"
+    assert "Receipt processed" in cmd[8]
+    assert cmd[9:] == ["--config", str(config_path)]
     assert capture_output is True
     assert text is True
 
@@ -243,6 +260,7 @@ def test_send_processed_receipt_notification_note_to_self(monkeypatch, tmp_path)
         "-m",
         cmd[-1],
     ]
+    assert cmd[-1].startswith("cc-service: intake\ncc-intent: notify\n\n")
     assert "Receipt processed" in cmd[-1]
     assert capture_output is True
     assert text is True

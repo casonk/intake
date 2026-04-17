@@ -9,6 +9,11 @@ from pathlib import Path
 
 from intake.parse import Receipt
 
+_PORTFOLIO_SERVICE_HEADER = "X-Portfolio-Service: intake"
+_CREW_CHIEF_INTENT_HEADER = "X-Crew-Chief-Intent: notify"
+_SIGNAL_SERVICE_META = "cc-service: intake"
+_SIGNAL_INTENT_META = "cc-intent: notify"
+
 
 def _section_config(settings: dict, section: str) -> dict:
     cfg = settings.get(section)
@@ -40,6 +45,11 @@ def _signal_recipients(settings: dict) -> list[str]:
 def _signal_note_to_self(settings: dict) -> bool:
     cfg = _signal_config(settings)
     return bool(cfg.get("note_to_self", False))
+
+
+def _signal_message_with_metadata(message: str) -> str:
+    metadata_lines = [_SIGNAL_SERVICE_META, _SIGNAL_INTENT_META]
+    return "\n".join([*metadata_lines, "", message])
 
 
 def _signal_cli_fields(config_path: Path) -> tuple[str, str]:
@@ -208,7 +218,7 @@ def send_processed_receipt_notification(
         cmd = ["signal-cli", "-a", account]
         if bus_name:
             cmd.extend(["--bus-name", bus_name])
-        cmd.extend(["send", "--note-to-self", "-m", message])
+        cmd.extend(["send", "--note-to-self", "-m", _signal_message_with_metadata(message)])
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             error = (result.stderr or result.stdout or "").strip()
@@ -222,6 +232,10 @@ def send_processed_receipt_notification(
         cmd = [
             sys.executable,
             str(send_script),
+            "--meta",
+            _SIGNAL_SERVICE_META,
+            "--meta",
+            _SIGNAL_INTENT_META,
             "--config",
             str(config_path),
             recipient,
@@ -275,6 +289,10 @@ def send_processed_receipt_gmail_notification(
         cmd = [
             sys.executable,
             str(send_script),
+            "--header",
+            _PORTFOLIO_SERVICE_HEADER,
+            "--header",
+            _CREW_CHIEF_INTENT_HEADER,
             recipient,
             subject,
             message,

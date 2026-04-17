@@ -162,6 +162,105 @@ def test_install_clockwork_manifest_writes_units_when_clockwork_is_available(mon
     assert "ExecStart=/bin/bash -lc" in unit
 
 
+def test_cmd_review_renders_reasoned_flags(tmp_path, capsys):
+    db_path = tmp_path / "intake.db"
+    reports_dir = tmp_path / "reports"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260301_0900.pdf",
+            "scan_date": "2026-03-01",
+            "merchant": "kroger",
+            "total": 10.0,
+            "category": "grocery/supermarket",
+            "receipt_dir": "grocery/supermarket/20260301_0900.pdf",
+            "raw_text": "",
+            "processed_by": "tesseract",
+            "card_last4": "5653",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260305_0900.pdf",
+            "scan_date": "2026-03-05",
+            "merchant": "kroger",
+            "total": 11.0,
+            "category": "grocery/supermarket",
+            "receipt_dir": "grocery/supermarket/20260305_0900.pdf",
+            "raw_text": "",
+            "processed_by": "tesseract",
+            "card_last4": "5653",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260310_0900.pdf",
+            "scan_date": "2026-03-10",
+            "merchant": "kroger",
+            "total": 12.0,
+            "category": "grocery/supermarket",
+            "receipt_dir": "grocery/supermarket/20260310_0900.pdf",
+            "raw_text": "",
+            "processed_by": "tesseract",
+            "card_last4": "5653",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260411_1200.pdf",
+            "scan_date": "2026-04-11",
+            "merchant": "new shop",
+            "total": 55.0,
+            "category": "general",
+            "receipt_dir": "general/20260411_1200.pdf",
+            "raw_text": "",
+            "processed_by": "gpt-4.1",
+            "card_last4": "7464",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260412_1200.pdf",
+            "scan_date": "2026-04-12",
+            "merchant": "kroger",
+            "total": 400.0,
+            "category": "grocery/supermarket",
+            "receipt_dir": "grocery/supermarket/20260412_1200.pdf",
+            "raw_text": "",
+            "processed_by": "gpt-4.1",
+            "card_last4": "5653",
+        },
+    )
+    conn.close()
+
+    cli._cmd_review(
+        Namespace(
+            db=str(db_path),
+            output_dir=str(reports_dir),
+            show_suppressed=False,
+        ),
+        {},
+    )
+
+    out = capsys.readouterr().out
+    review_md = (reports_dir / "review.md").read_text(encoding="utf-8")
+
+    assert "new_merchant, new_card_last4, new_merchant_card_pair" in out
+    assert "total_over_250, amount_outlier_for_merchant (prior median $11.00)" in out
+    assert "amount_outlier_for_merchant (prior median $11.00)" in out
+    assert (
+        "| # | file | receipt_dir | merchant | total | model | reasons | correction |" in review_md
+    )
+    assert "new_merchant, new_card_last4, new_merchant_card_pair" in review_md
+    assert "total_over_250, amount_outlier_for_merchant (prior median $11.00)" in review_md
+    assert "amount_outlier_for_merchant (prior median $11.00)" in review_md
+
+
 def test_cmd_correct_updates_db_and_sidecar_and_records_audit(tmp_path, capsys):
     receipt_root = tmp_path / "receipts"
     pdf = receipt_root / "grocery" / "supermarket" / "20260409_1707.pdf"
@@ -210,6 +309,8 @@ def test_cmd_correct_updates_db_and_sidecar_and_records_audit(tmp_path, capsys):
             clear_purchaser=False,
             card_last4=None,
             clear_card_last4=False,
+            certification=None,
+            clear_certifications=False,
             note="card charge wins over balance line",
         ),
         {},
@@ -282,6 +383,8 @@ def test_cmd_correct_moves_receipt_when_category_changes(tmp_path):
             clear_purchaser=False,
             card_last4=None,
             clear_card_last4=False,
+            certification=None,
+            clear_certifications=False,
             note="reclassified as fuel",
         ),
         {},
@@ -308,6 +411,158 @@ def test_cmd_correct_moves_receipt_when_category_changes(tmp_path):
         "old": "general/20260409_1707.pdf",
         "new": "gas-station/20260409_1707.pdf",
     }
+
+
+def test_cmd_correct_updates_certifications_in_db_and_sidecar(tmp_path):
+    receipt_root = tmp_path / "receipts"
+    pdf = receipt_root / "auto" / "heritage-collision" / "20110830_1149.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": pdf.name,
+            "scan_date": "2011-08-30",
+            "merchant": "heritage collision",
+            "total": None,
+            "category": "auto/heritage-collision",
+            "receipt_dir": "auto/heritage-collision/20110830_1149.pdf",
+            "raw_text": "Certified by AAA",
+            "processed_by": "gpt-4.1",
+        },
+    )
+    conn.close()
+    write_sidecar(
+        pdf,
+        {
+            "filename": pdf.name,
+            "scan_date": "2011-08-30",
+            "merchant": "heritage collision",
+            "total": None,
+            "category": "auto/heritage-collision",
+            "receipt_dir": "auto/heritage-collision/20110830_1149.pdf",
+            "processed_by": "gpt-4.1",
+            "tier": "ok",
+        },
+    )
+
+    cli._cmd_correct(
+        Namespace(
+            filename=pdf.name,
+            receipt_dir=str(receipt_root),
+            db=str(db_path),
+            merchant=None,
+            total=None,
+            category=None,
+            purchaser=None,
+            clear_purchaser=False,
+            card_last4=None,
+            clear_card_last4=False,
+            certification=["AAA=AAA certified"],
+            clear_certifications=False,
+            note="record aaa certification",
+        ),
+        {},
+    )
+
+    conn = init_db(db_path)
+    row = get_receipt(conn, pdf.name)
+    history = query_receipt_updates(conn, filename=pdf.name)
+    conn.close()
+    sidecar = read_sidecar(pdf)
+
+    assert row is not None
+    assert row["certifications"] == [
+        {
+            "issuer": "AAA",
+            "label": "AAA certified",
+            "source_text": "manual: AAA=AAA certified",
+        }
+    ]
+    assert sidecar is not None
+    assert sidecar["certifications"] == row["certifications"]
+    assert history[0]["changes"]["certifications"] == {"old": None, "new": row["certifications"]}
+
+
+def test_cmd_correct_resyncs_sidecar_when_db_already_matches(tmp_path, capsys):
+    receipt_root = tmp_path / "receipts"
+    pdf = receipt_root / "auto" / "heritage-collision" / "20110830_1149.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": pdf.name,
+            "scan_date": "2011-08-30",
+            "merchant": "heritage collision",
+            "total": None,
+            "category": "auto/heritage-collision",
+            "receipt_dir": "auto/heritage-collision/20110830_1149.pdf",
+            "raw_text": "Certified by AAA",
+            "processed_by": "gpt-4.1",
+            "certifications": [
+                {
+                    "issuer": "AAA",
+                    "label": "AAA certified",
+                    "source_text": "manual: AAA=AAA certified",
+                }
+            ],
+        },
+    )
+    conn.close()
+    write_sidecar(
+        pdf,
+        {
+            "filename": pdf.name,
+            "scan_date": "2011-08-30",
+            "merchant": "heritage collision",
+            "total": None,
+            "category": "auto/heritage-collision",
+            "receipt_dir": "auto/heritage-collision/20110830_1149.pdf",
+            "processed_by": "gpt-4.1",
+            "tier": "ok",
+            "certifications": [],
+        },
+    )
+
+    cli._cmd_correct(
+        Namespace(
+            filename=pdf.name,
+            receipt_dir=str(receipt_root),
+            db=str(db_path),
+            merchant=None,
+            total=None,
+            category=None,
+            purchaser=None,
+            clear_purchaser=False,
+            card_last4=None,
+            clear_card_last4=False,
+            certification=["AAA=AAA certified"],
+            clear_certifications=False,
+            note="retry sidecar sync",
+        ),
+        {},
+    )
+
+    sidecar = read_sidecar(pdf)
+
+    assert sidecar is not None
+    assert sidecar["certifications"] == [
+        {
+            "issuer": "AAA",
+            "label": "AAA certified",
+            "source_text": "manual: AAA=AAA certified",
+        }
+    ]
+
+    out = capsys.readouterr().out
+    assert "No DB changes applied for 20110830_1149.pdf; sidecar synced:" in out
 
 
 def test_move_receipt_artifacts_moves_debug_files(tmp_path):
@@ -574,6 +829,91 @@ def test_cmd_dedup_merge_promotes_keeper_fields_and_leaves_files(tmp_path):
     assert history[0]["changes"]["purchaser"] == {"old": None, "new": "cason konzer"}
 
 
+def test_cmd_dedup_merge_prefers_local_pdf_over_email_row_and_audits_delete(tmp_path):
+    receipt_root = tmp_path / "receipts"
+    keeper_pdf = receipt_root / "general" / "20260410_1616.pdf"
+    keeper_pdf.parent.mkdir(parents=True)
+    keeper_pdf.write_bytes(b"%PDF-1.4\n")
+
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": keeper_pdf.name,
+            "scan_date": "2026-04-10",
+            "merchant": "fcm travel",
+            "total": 1716.01,
+            "category": "general",
+            "receipt_dir": "general/20260410_1616.pdf",
+            "raw_text": "fcm travel pdf",
+            "processed_by": "tesseract",
+            "purchaser": "cason konzer",
+            "card_last4": "7464",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "email_30642_INBOX.txt",
+            "scan_date": "2026-04-12",
+            "merchant": "fcm travel",
+            "total": 1716.01,
+            "category": "general",
+            "receipt_dir": "email/general",
+            "raw_text": "fcm travel email",
+            "processed_by": "gpt-4.1",
+            "purchaser": "cason konzer",
+            "card_last4": "7464",
+        },
+    )
+    conn.close()
+    write_sidecar(
+        keeper_pdf,
+        {
+            "filename": keeper_pdf.name,
+            "scan_date": "2026-04-10",
+            "merchant": "fcm travel",
+            "total": 1716.01,
+            "category": "general",
+            "receipt_dir": "general/20260410_1616.pdf",
+            "processed_by": "tesseract",
+            "purchaser": "cason konzer",
+            "card_last4": "7464",
+            "tier": "ok",
+        },
+    )
+
+    cli._cmd_dedup(
+        Namespace(
+            db=str(db_path),
+            receipt_dir=str(receipt_root),
+            window=3,
+            merge=True,
+            remove=False,
+        ),
+        {},
+    )
+
+    conn = init_db(db_path)
+    keeper_row = get_receipt(conn, keeper_pdf.name)
+    dup_row = get_receipt(conn, "email_30642_INBOX.txt")
+    dup_history = query_receipt_updates(conn, filename="email_30642_INBOX.txt")
+    conn.close()
+
+    assert keeper_row is not None
+    assert dup_row is None
+    assert dup_history[0]["source"] == "dedup-merge-delete"
+    assert dup_history[0]["changes"]["keeper_filename"] == {
+        "old": None,
+        "new": "20260410_1616.pdf",
+    }
+    assert dup_history[0]["changes"]["status"] == {
+        "old": "tracked",
+        "new": "duplicate-merged-removed",
+    }
+
+
 def test_cmd_dedup_detects_exact_file_hash_matches_outside_day_window(tmp_path, capsys):
     db_path = tmp_path / "intake.db"
     conn = init_db(db_path)
@@ -809,3 +1149,272 @@ def test_cmd_process_exhausts_incoming_hash_duplicate(tmp_path, monkeypatch, cap
 
     out = capsys.readouterr().out
     assert "duplicate by file hash" in out
+
+
+def test_cmd_process_supports_jpg_and_mov_receipts(tmp_path, monkeypatch):
+    import intake.classify as classify_mod
+    import intake.extract as extract_mod
+
+    receipt_root = tmp_path / "receipts"
+    intake_dir = receipt_root / "intake"
+    intake_dir.mkdir(parents=True)
+    jpg = intake_dir / "20260410_1707.JPG"
+    mov = intake_dir / "20260410_1710.MOV"
+    jpg.write_bytes(b"jpg")
+    mov.write_bytes(b"mov")
+
+    db_path = tmp_path / "intake.db"
+
+    def fake_extract(path, **_kwargs):
+        return (
+            Receipt(
+                filename=path.name,
+                scan_date=date(2026, 4, 10),
+                receipt_date=date(2026, 4, 2),
+                receipt_time=None,
+                merchant="target",
+                total=23.45,
+                raw_text="target\ntotal 23.45",
+            ),
+            "tesseract",
+            "ok",
+        )
+
+    monkeypatch.setattr(extract_mod, "extract_receipt", fake_extract)
+    monkeypatch.setattr(classify_mod, "classify", lambda *_args, **_kwargs: "general")
+    monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+    monkeypatch.setattr(cli, "_notify_processed_receipt", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+
+    cli._cmd_process(
+        Namespace(receipt_dir=str(receipt_root), db=str(db_path), dry_run=False),
+        {},
+    )
+
+    jpg_dest = receipt_root / "general" / "20260402_1707.jpg"
+    mov_dest = receipt_root / "general" / "20260402_1710.mov"
+
+    assert jpg_dest.exists()
+    assert mov_dest.exists()
+    assert read_sidecar(jpg_dest) is not None
+    assert read_sidecar(mov_dest) is not None
+
+    conn = init_db(db_path)
+    jpg_row = get_receipt(conn, jpg_dest.name)
+    mov_row = get_receipt(conn, mov_dest.name)
+    conn.close()
+
+    assert jpg_row is not None
+    assert mov_row is not None
+    assert jpg_row["receipt_dir"] == "general/20260402_1707.jpg"
+    assert mov_row["receipt_dir"] == "general/20260402_1710.mov"
+
+
+def test_cmd_process_prefers_still_image_for_live_photo_pair(tmp_path, monkeypatch, capsys):
+    import intake.classify as classify_mod
+    import intake.extract as extract_mod
+
+    receipt_root = tmp_path / "receipts"
+    intake_dir = receipt_root / "intake"
+    intake_dir.mkdir(parents=True)
+    jpg = intake_dir / "LIVE_0001.JPG"
+    mov = intake_dir / "LIVE_0001.MOV"
+    jpg.write_bytes(b"jpg")
+    mov.write_bytes(b"mov")
+
+    db_path = tmp_path / "intake.db"
+    calls: list[str] = []
+
+    def fake_extract(path, **_kwargs):
+        calls.append(path.name)
+        return (
+            Receipt(
+                filename=path.name,
+                scan_date=date(2026, 4, 16),
+                receipt_date=date(2026, 4, 15),
+                receipt_time=None,
+                merchant="target",
+                total=6.66,
+                raw_text="target\ntotal 6.66",
+            ),
+            "tesseract",
+            "ok",
+        )
+
+    monkeypatch.setattr(extract_mod, "extract_receipt", fake_extract)
+    monkeypatch.setattr(classify_mod, "classify", lambda *_args, **_kwargs: "general")
+    monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+    monkeypatch.setattr(cli, "_notify_processed_receipt", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+
+    cli._cmd_process(
+        Namespace(receipt_dir=str(receipt_root), db=str(db_path), dry_run=False),
+        {},
+    )
+
+    general_jpgs = list((receipt_root / "general").glob("*.jpg"))
+    exhausted_movs = list((receipt_root / "exhaust" / "duplicates" / "live-photo").glob("*.mov"))
+
+    assert calls == ["LIVE_0001.JPG"]
+    assert len(general_jpgs) == 1
+    assert len(exhausted_movs) == 1
+
+    exhausted_sidecar = read_sidecar(exhausted_movs[0])
+    conn = init_db(db_path)
+    jpg_row = get_receipt(conn, general_jpgs[0].name)
+    mov_row = get_receipt(conn, exhausted_movs[0].name)
+    live_photo_history = query_receipt_updates(conn, filename=exhausted_movs[0].name)
+    conn.close()
+
+    assert jpg_row is not None
+    assert mov_row is None
+    assert exhausted_sidecar is not None
+    assert exhausted_sidecar["status"] == "live-photo-duplicate-exhausted"
+    assert exhausted_sidecar["duplicate_of"] == "LIVE_0001.JPG"
+    assert live_photo_history[0]["source"] == "ingest-live-photo-duplicate"
+
+    out = capsys.readouterr().out
+    assert "[live-photo] kept LIVE_0001.JPG" in out
+
+
+def test_cmd_itemize_backfills_items_into_db_and_sidecar(tmp_path, monkeypatch, capsys):
+    import intake.classify as classify_mod
+
+    receipt_root = tmp_path / "receipts"
+    pdf = receipt_root / "grocery" / "supermarket" / "20260409_1707.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": pdf.name,
+            "scan_date": "2026-04-09",
+            "merchant": "kroger",
+            "total": 7.38,
+            "category": "grocery/supermarket",
+            "receipt_dir": "grocery/supermarket/20260409_1707.pdf",
+            "raw_text": "Bananas 2.99\nWhole Milk 4.39\nTotal 7.38",
+            "processed_by": "tesseract",
+        },
+    )
+    conn.close()
+    write_sidecar(
+        pdf,
+        {
+            "filename": pdf.name,
+            "scan_date": "2026-04-09",
+            "merchant": "kroger",
+            "total": 7.38,
+            "category": "grocery/supermarket",
+            "receipt_dir": "grocery/supermarket/20260409_1707.pdf",
+            "processed_by": "tesseract",
+            "tier": "ok",
+        },
+    )
+    monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+
+    cli._cmd_itemize(
+        Namespace(
+            receipt_dir=str(receipt_root),
+            db=str(db_path),
+            dry_run=False,
+            force=False,
+            limit=None,
+        ),
+        {},
+    )
+
+    conn = init_db(db_path)
+    row = get_receipt(conn, pdf.name)
+    history = query_receipt_updates(conn, filename=pdf.name)
+    conn.close()
+    sidecar = read_sidecar(pdf)
+
+    assert row is not None
+    assert row["items"] == [
+        {"description": "Bananas", "amount": 2.99, "quantity": None, "unit_price": None},
+        {"description": "Whole Milk", "amount": 4.39, "quantity": None, "unit_price": None},
+    ]
+    assert sidecar is not None
+    assert sidecar["items"] == row["items"]
+    assert history[0]["source"] == "itemize-backfill"
+
+    out = capsys.readouterr().out
+    assert "Itemized 20260409_1707.pdf" in out
+
+
+def test_cmd_certify_backfills_certifications_into_db_and_sidecar(tmp_path, monkeypatch, capsys):
+    import intake.classify as classify_mod
+
+    receipt_root = tmp_path / "receipts"
+    pdf = receipt_root / "auto" / "heritage-collision" / "20110830_1149.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": pdf.name,
+            "scan_date": "2011-08-30",
+            "merchant": "heritage collision",
+            "total": None,
+            "category": "auto/heritage-collision",
+            "receipt_dir": "auto/heritage-collision/20110830_1149.pdf",
+            "raw_text": "Certified by AAA",
+            "processed_by": "gpt-4.1",
+        },
+    )
+    conn.close()
+    write_sidecar(
+        pdf,
+        {
+            "filename": pdf.name,
+            "scan_date": "2011-08-30",
+            "merchant": "heritage collision",
+            "total": None,
+            "category": "auto/heritage-collision",
+            "receipt_dir": "auto/heritage-collision/20110830_1149.pdf",
+            "processed_by": "gpt-4.1",
+            "tier": "ok",
+        },
+    )
+    monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+
+    cli._cmd_certify(
+        Namespace(
+            receipt_dir=str(receipt_root),
+            db=str(db_path),
+            dry_run=False,
+            force=False,
+            limit=None,
+        ),
+        {},
+    )
+
+    conn = init_db(db_path)
+    row = get_receipt(conn, pdf.name)
+    history = query_receipt_updates(conn, filename=pdf.name)
+    conn.close()
+    sidecar = read_sidecar(pdf)
+
+    assert row is not None
+    assert row["certifications"] == [
+        {"issuer": "AAA", "label": "AAA certified", "source_text": "Certified by AAA"}
+    ]
+    assert sidecar is not None
+    assert sidecar["certifications"] == row["certifications"]
+    assert history[0]["source"] == "certify-backfill"
+
+    out = capsys.readouterr().out
+    assert "Certified 20110830_1149.pdf: AAA certified" in out

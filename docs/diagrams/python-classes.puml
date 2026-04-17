@@ -10,7 +10,9 @@ class "FetchResult" as intake.email.FetchResult {
 }
 class "Receipt" as intake.parse.Receipt {
   card_last4 : str | None
+  certifications : list[ReceiptCertification]
   filename : str
+  items : list[ReceiptItem]
   merchant : str
   purchaser : str | None
   raw_text : str
@@ -19,6 +21,22 @@ class "Receipt" as intake.parse.Receipt {
   scan_date : date
   total : float | None
   suggested_filename() -> str
+}
+class "ReceiptCertification" as intake.certification.ReceiptCertification {
+  issuer : str
+  label : str
+  source_text : str | None
+}
+class "ReceiptItem" as intake.parse.ReceiptItem {
+  amount : float | None
+  description : str
+  quantity : float | None
+  unit_price : float | None
+}
+class "_ReportHandler" as intake.web._ReportHandler {
+  do_GET() -> None
+  do_HEAD() -> None
+  log_message(fmt: str) -> None
 }
 class "_StripHTML" as intake.email._StripHTML {
   handle_data(data: str) -> None

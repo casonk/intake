@@ -3,11 +3,25 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
 
+from intake.certification import (
+    ReceiptCertification,
+    extract_certifications,
+)
 from intake.purchaser import is_probable_staff_name, normalize_purchaser
+
+
+@dataclass(frozen=True)
+class ReceiptItem:
+    """One itemized line extracted from a receipt."""
+
+    description: str
+    amount: float | None = None
+    quantity: float | None = None
+    unit_price: float | None = None
 
 
 @dataclass
@@ -21,6 +35,8 @@ class Receipt:
     raw_text: str
     purchaser: str | None = None  # cardholder name if found on receipt
     card_last4: str | None = None  # last 4 digits of payment card if found
+    items: list[ReceiptItem] = field(default_factory=list)
+    certifications: list[ReceiptCertification] = field(default_factory=list)
 
     def suggested_filename(self, *, source_path: Path | None = None, suffix: str = ".pdf") -> str:
         """Return a canonical ``YYYYMMDD_HHMM.EXT`` filename for this receipt."""
@@ -46,6 +62,8 @@ def parse_receipt(filename: str, raw_text: str, pdf_path: Path | None = None) ->
     receipt_date, receipt_time = _parse_receipt_datetime(raw_text)
     purchaser = _parse_purchaser(raw_text)
     card_last4 = _parse_card_last4(raw_text)
+    items = _parse_items(raw_text)
+    certifications = extract_certifications(raw_text)
     return Receipt(
         filename=filename,
         scan_date=scan_date,
@@ -56,7 +74,97 @@ def parse_receipt(filename: str, raw_text: str, pdf_path: Path | None = None) ->
         raw_text=raw_text,
         purchaser=purchaser,
         card_last4=card_last4,
+        items=items,
+        certifications=certifications,
     )
+
+
+def _coerce_item_number(value: object | None) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def normalize_receipt_item(
+    *,
+    description: object | None,
+    amount: object | None = None,
+    quantity: object | None = None,
+    unit_price: object | None = None,
+) -> ReceiptItem | None:
+    """Return a normalized item, or None when the payload is unusable."""
+    desc = re.sub(r"\s+", " ", str(description or "")).strip(" -:;,.|")
+    if not desc:
+        return None
+    amount_val = _coerce_item_number(amount)
+    quantity_val = _coerce_item_number(quantity)
+    unit_price_val = _coerce_item_number(unit_price)
+    if amount_val is None and quantity_val is None and unit_price_val is None:
+        return None
+    if amount_val is not None and amount_val <= 0:
+        return None
+    if quantity_val is not None and quantity_val <= 0:
+        quantity_val = None
+    if unit_price_val is not None and unit_price_val <= 0:
+        unit_price_val = None
+    return ReceiptItem(
+        description=desc[:120],
+        amount=amount_val,
+        quantity=quantity_val,
+        unit_price=unit_price_val,
+    )
+
+
+def receipt_items_to_dicts(items: list[ReceiptItem] | list[dict] | None) -> list[dict]:
+    """Render receipt items as JSON-friendly dictionaries."""
+    rendered: list[dict] = []
+    for item in items or []:
+        normalized = (
+            item
+            if isinstance(item, ReceiptItem)
+            else normalize_receipt_item(
+                description=item.get("description") if isinstance(item, dict) else None,
+                amount=item.get("amount") if isinstance(item, dict) else None,
+                quantity=item.get("quantity") if isinstance(item, dict) else None,
+                unit_price=item.get("unit_price") if isinstance(item, dict) else None,
+            )
+        )
+        if normalized is not None:
+            rendered.append(asdict(normalized))
+    return rendered
+
+
+def receipt_items_from_dicts(items: object) -> list[ReceiptItem]:
+    """Return normalized ReceiptItem objects from a decoded JSON payload."""
+    if not isinstance(items, list):
+        return []
+    normalized: list[ReceiptItem] = []
+    for item in items:
+        if isinstance(item, ReceiptItem):
+            normalized.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        parsed = normalize_receipt_item(
+            description=item.get("description"),
+            amount=item.get("amount"),
+            quantity=item.get("quantity"),
+            unit_price=item.get("unit_price"),
+        )
+        if parsed is not None:
+            normalized.append(parsed)
+    return normalized
 
 
 # ── filename scan-date ────────────────────────────────────────────────────────
@@ -469,6 +577,141 @@ def _parse_total(raw_text: str) -> float | None:
     )
 
 
+# ── itemization ───────────────────────────────────────────────────────────────
+
+_ITEM_AMOUNT_RE = r"\$?(?P<amount>\d{1,6}(?:[.,]\d{2})?)"
+_ITEM_QTY_X_RE = re.compile(
+    rf"^\s*(?P<qty>\d+(?:[.,]\d+)?)\s*[x×]\s+(?P<desc>.+?)\s+{_ITEM_AMOUNT_RE}\s*$",
+    re.IGNORECASE,
+)
+_ITEM_AT_RE = re.compile(
+    rf"^\s*(?P<desc>.+?)\s+(?P<qty>\d+(?:[.,]\d+)?)\s*@\s*\$?(?P<unit>\d{{1,6}}(?:[.,]\d{{2}})?)\s*(?:=)?\s*{_ITEM_AMOUNT_RE}\s*$",
+    re.IGNORECASE,
+)
+_ITEM_LEADING_QTY_RE = re.compile(
+    rf"^\s*(?P<qty>\d+(?:[.,]\d+)?)\s+(?P<desc>[A-Za-z].+?)\s+{_ITEM_AMOUNT_RE}\s*$",
+    re.IGNORECASE,
+)
+_ITEM_DESC_AMOUNT_RE = re.compile(
+    rf"^\s*(?P<desc>.+?)\s+{_ITEM_AMOUNT_RE}\s*(?:[A-Z]{{1,3}})?\s*$",
+    re.IGNORECASE,
+)
+_ITEM_EXCLUDE_TERMS = (
+    "total",
+    "subtotal",
+    "sub total",
+    "tax",
+    "balance",
+    "amount due",
+    "amount paid",
+    "amount charged",
+    "grand total",
+    "invoice total",
+    "total due",
+    "change",
+    "refund",
+    "credit",
+    "discount",
+    "coupon",
+    "saving",
+    "fuel point",
+    "points earned",
+    "annual card savings",
+    "cashier",
+    "clerk",
+    "customer",
+    "card number",
+    "purchase",
+    "mastercard",
+    "visa",
+    "discover",
+    "capital one",
+    "ref#",
+    "aid",
+    "tc:",
+    "entry id",
+    "date:",
+    "time:",
+    "thank you",
+    "page ",
+    "product code",
+    "access code",
+    "season pass",
+    "description qty unit price amount",
+)
+
+
+def _clean_item_description(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip(" -:;,.|")
+
+
+def _is_candidate_item_line(line: str) -> bool:
+    lowered = line.lower()
+    if not re.search(r"[a-z]", lowered):
+        return False
+    if not re.search(r"\d[.,]\d{2}\b", line):
+        return False
+    return not any(term in lowered for term in _ITEM_EXCLUDE_TERMS)
+
+
+def _item_from_match(
+    match: re.Match[str], *, quantity_key: str | None = None, unit_key: str | None = None
+) -> ReceiptItem | None:
+    return normalize_receipt_item(
+        description=match.group("desc"),
+        amount=match.group("amount"),
+        quantity=match.group(quantity_key) if quantity_key else None,
+        unit_price=match.group(unit_key) if unit_key else None,
+    )
+
+
+def _parse_items(raw_text: str) -> list[ReceiptItem]:
+    items: list[ReceiptItem] = []
+    seen: set[tuple[str, float | None, float | None, float | None]] = set()
+    for raw_line in raw_text.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line or not _is_candidate_item_line(line):
+            continue
+
+        parsed: ReceiptItem | None = None
+        for pattern, quantity_key, unit_key in (
+            (_ITEM_AT_RE, "qty", "unit"),
+            (_ITEM_QTY_X_RE, "qty", None),
+            (_ITEM_LEADING_QTY_RE, "qty", None),
+            (_ITEM_DESC_AMOUNT_RE, None, None),
+        ):
+            match = pattern.match(line)
+            if not match:
+                continue
+            parsed = _item_from_match(match, quantity_key=quantity_key, unit_key=unit_key)
+            if parsed is not None:
+                cleaned = _clean_item_description(parsed.description)
+                if cleaned:
+                    parsed = ReceiptItem(
+                        description=cleaned,
+                        amount=parsed.amount,
+                        quantity=parsed.quantity,
+                        unit_price=parsed.unit_price,
+                    )
+                    break
+
+        if parsed is None:
+            continue
+
+        key = (
+            parsed.description.lower(),
+            parsed.amount,
+            parsed.quantity,
+            parsed.unit_price,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(parsed)
+
+    return items
+
+
 # ── purchaser / card ──────────────────────────────────────────────────────────
 
 # Masked card patterns: "VISA xxxx1234", "MC **** 5678", "xxxx-xxxx-xxxx-9012"
@@ -483,6 +726,31 @@ _CARD_BRAND_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _CARD_LAST4_TOKEN_RE = re.compile(r"\b(\d{4})\b")
+_CARD_NUMBER_LABEL_RE = re.compile(r"\bcard\s*number\b", re.IGNORECASE)
+_CARD_LAST4_OCR_FIXUPS = str.maketrans(
+    {
+        "B": "8",
+        "D": "0",
+        "G": "6",
+        "I": "1",
+        "L": "1",
+        "O": "0",
+        "Q": "0",
+        "S": "5",
+        "Z": "2",
+    }
+)
+
+
+def _normalize_card_last4_candidate(token: str) -> str | None:
+    """Normalize a 4-character OCR token into card last4 digits when plausible."""
+    cleaned = re.sub(r"[^A-Z0-9]", "", token.upper())
+    if len(cleaned) != 4:
+        return None
+    normalized = cleaned.translate(_CARD_LAST4_OCR_FIXUPS)
+    if re.fullmatch(r"\d{4}", normalized):
+        return normalized
+    return None
 
 
 def _parse_card_last4(raw_text: str) -> str | None:
@@ -495,6 +763,12 @@ def _parse_card_last4(raw_text: str) -> str | None:
         return m.group(1)
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     for idx, line in enumerate(lines):
+        if _CARD_NUMBER_LABEL_RE.search(line):
+            compact = re.sub(r"[^A-Z0-9]", "", line.upper())
+            if len(compact) >= 4:
+                normalized = _normalize_card_last4_candidate(compact[-4:])
+                if normalized is not None:
+                    return normalized
         if not _CARD_BRAND_TOKEN_RE.search(line):
             continue
         window = " ".join(lines[idx : idx + 4])
@@ -511,6 +785,23 @@ _PURCHASER_RE = re.compile(
     r"[:\s]+([A-Z][A-Za-z\s'\-]{2,40}?)(?:\s{2,}|\n|$)",
     re.IGNORECASE,
 )
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_BILL_TO_RE = re.compile(r"\bbill\s+to\b", re.IGNORECASE)
+
+
+def _parse_bill_to_purchaser(raw_text: str) -> str | None:
+    """Extract a purchaser from a ``Bill to`` block, preferring email aliases."""
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    for idx, line in enumerate(lines):
+        if not _BILL_TO_RE.search(line):
+            continue
+        block = " ".join(lines[idx : idx + 6])
+        email_match = _EMAIL_RE.search(block)
+        if email_match:
+            normalized = normalize_purchaser(email_match.group(0))
+            if normalized is not None:
+                return normalized
+    return None
 
 
 def _parse_purchaser(raw_text: str) -> str | None:
@@ -522,4 +813,7 @@ def _parse_purchaser(raw_text: str) -> str | None:
             normalized = normalize_purchaser(name)
             if normalized is not None and not is_probable_staff_name(normalized, raw_text):
                 return normalized
+    bill_to_purchaser = _parse_bill_to_purchaser(raw_text)
+    if bill_to_purchaser is not None:
+        return bill_to_purchaser
     return None

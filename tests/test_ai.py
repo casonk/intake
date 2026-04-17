@@ -170,6 +170,39 @@ def test_merge_ai_result_prefers_total_amount_paid_for_paid_notice():
     assert r.total == pytest.approx(18.95)
 
 
+def test_merge_ai_result_populates_itemized_lines():
+    r = merge_ai_result(
+        _receipt(),
+        {
+            "items": [
+                {"description": "Bananas", "amount": 2.99, "quantity": 1, "unit_price": 2.99},
+                {"description": "Whole Milk", "amount": 4.39, "quantity": None, "unit_price": None},
+            ]
+        },
+    )
+    assert len(r.items) == 2
+    assert r.items[0].description == "Bananas"
+    assert r.items[0].amount == pytest.approx(2.99)
+
+
+def test_merge_ai_result_merges_certifications():
+    r = merge_ai_result(
+        _receipt(),
+        {
+            "certifications": [
+                {
+                    "issuer": "AAA",
+                    "label": "AAA certified",
+                    "source_text": "Certified by AAA",
+                }
+            ]
+        },
+    )
+    assert len(r.certifications) == 1
+    assert r.certifications[0].issuer == "AAA"
+    assert r.certifications[0].label == "AAA certified"
+
+
 # ── no-op when AI returns nothing useful ─────────────────────────────────────
 
 
