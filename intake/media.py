@@ -17,9 +17,7 @@ IMAGE_RECEIPT_SUFFIXES = frozenset(
     }
 )
 VIDEO_RECEIPT_SUFFIXES = frozenset({".mov", ".mp4", ".m4v"})
-SUPPORTED_RECEIPT_SUFFIXES = (
-    PDF_RECEIPT_SUFFIXES | IMAGE_RECEIPT_SUFFIXES | VIDEO_RECEIPT_SUFFIXES
-)
+SUPPORTED_RECEIPT_SUFFIXES = PDF_RECEIPT_SUFFIXES | IMAGE_RECEIPT_SUFFIXES | VIDEO_RECEIPT_SUFFIXES
 
 
 def receipt_suffix(path: str | Path) -> str:
@@ -51,11 +49,15 @@ def iter_supported_receipt_files(folder: Path) -> list[Path]:
     """Return sorted direct child receipt files under *folder*."""
     if not folder.exists():
         return []
-    return sorted(path for path in folder.iterdir() if path.is_file() and is_supported_receipt(path))
+    return sorted(
+        path for path in folder.iterdir() if path.is_file() and is_supported_receipt(path)
+    )
 
 
 def rglob_supported_receipt_files(folder: Path) -> list[Path]:
     """Return sorted receipt files found recursively under *folder*."""
     if not folder.exists():
         return []
-    return sorted(path for path in folder.rglob("*") if path.is_file() and is_supported_receipt(path))
+    return sorted(
+        path for path in folder.rglob("*") if path.is_file() and is_supported_receipt(path)
+    )
