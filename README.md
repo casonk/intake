@@ -1,6 +1,8 @@
 # intake
 
-Process incoming receipt PDF scans from a snowbridge SMB share into a structured SQLite database and Markdown/HTML reports.
+Process incoming receipt PDFs, images, and short videos from a snowbridge SMB share into a structured SQLite database and Markdown/HTML reports.
+
+Consent reference: [`../../doc-repos/my-consent/financial-records.md`](../../doc-repos/my-consent/financial-records.md) documents the explicit consent covering receipt OCR, categorization, reporting, and downstream finance-pipeline processing handled by this repo.
 
 ## Prerequisites
 
@@ -51,6 +53,47 @@ intake process --receipt-dir /mnt/setup/bully/info/receipt --dry-run
 Processed receipts now normalize to the canonical `YYYYMMDD_HHMM.EXT` filename
 format. When the minute slot is already occupied, `intake` keeps the same
 format and advances minute-by-minute instead of appending `-1`, `-2`, etc.
+When the inbox contains an iPhone-style live-photo pair with the same stem
+(for example `LIVE_0001.JPG` and `LIVE_0001.MOV`), intake keeps the still image
+as the canonical receipt input and exhausts the companion `.MOV` with an audit
+trail instead of ingesting both as separate receipts.
+
+Every receipt now attempts an itemized breakdown. `intake` first parses line
+items from stored OCR text and, when an OpenAI key is configured, will retry
+with AI extraction if the receipt otherwise looks good but no itemization was
+found. Itemization is stored in the DB, written into sidecars, included in the
+finance-pipeline batch JSON, and shown in the report.
+
+**Backfill itemized breakdowns** for receipts already in the database:
+
+```bash
+intake itemize
+intake itemize --dry-run
+intake itemize --limit 100
+intake itemize --force
+```
+
+`items_json = NULL` means a receipt has not yet had an itemization attempt
+recorded. `items_json = []` means intake attempted itemization but found no
+usable line items.
+
+**Backfill certification extraction** for receipts already in the database:
+
+```bash
+intake certify
+intake certify --dry-run
+intake certify --limit 100
+intake certify --force
+```
+
+`certifications_json = NULL` means a receipt has not yet had certification
+extraction attempted. `certifications_json = []` means intake attempted
+certification extraction but found no structured claims worth storing.
+
+By default `intake certify` trusts stored OCR first so a corpus-wide backfill
+does not re-extract every local receipt file. Use `--force` when you explicitly
+want a second pass that retries local extraction for receipts whose stored OCR
+did not yield any certifications.
 
 **Generate reports** (Markdown + HTML) from the database:
 
@@ -64,6 +107,41 @@ By default, report links target the Snowbridge File Browser at
 receipt links work from the served report site instead of pointing at local
 `file:///` paths. Override that behavior through `[report_links]` in
 `config/settings.toml` when needed.
+
+The generated report includes both a visual merchant timeline section for the
+top merchants and an exact merchant-month breakdown table so you can review
+historical spend over time by vendor. It also writes a static merchant
+directory under `reports/merchants/` plus one detail page per merchant, so the
+served site can drill from the summary into merchant-specific monthly history
+and receipt-level detail.
+
+**Generate a manual-review queue** for suspicious or novel receipts:
+
+```bash
+intake review
+intake review --show-suppressed
+intake suppress --all
+intake suppress 20260409_1707.pdf
+intake suppress --unsuppress 20260409_1707.pdf
+```
+
+`intake review` writes `reports/review.md` and flags two families of issues:
+
+- extraction-quality issues such as missing or placeholder merchants, merchants
+  that still contain email/header text, suspiciously short merchants, and
+  missing or zero totals
+- explicit total guard thresholds: `total_over_250`, `total_over_500`,
+  `total_over_750`, and `total_over_1000`
+- reasoned novelty issues on recent, otherwise plausible receipts: first-seen
+  merchants, first-seen card last4 values, first-seen merchant/card pairs, and
+  merchant-level amount outliers relative to prior history
+
+Novelty and outlier flags intentionally do not stack onto obviously broken
+rows. Fix extraction-quality issues first with `intake correct ...`, then rerun
+`intake review` so the novelty signals stay high-signal instead of noisy.
+The total guard thresholds do not auto-rewrite values; they deliberately keep
+large totals visible in the review queue so likely OCR decimal/comma mistakes
+get human review before they spread downstream.
 
 **Regenerate reports every day at noon** with a user-level systemd timer:
 
@@ -112,7 +190,7 @@ openai_model_high = "gpt-4.1"
 Those keys are intake-wide settings, so keep them above the first table header
 in the TOML file.
 
-**Audit intake** — list pending PDFs without processing them:
+**Audit intake** — list pending receipt files without processing them:
 
 ```bash
 intake audit
@@ -147,6 +225,24 @@ Manual corrections are written to the `receipt_updates` SQLite table with a
 field-level before/after diff, source label, note, and timestamp. That gives
 you a durable trail you can mine later for auto-healing rules or regression
 fixtures.
+
+Merchant-level certifications and claims are tracked as structured receipt
+metadata rather than being folded into the merchant name or category. The
+current intake flow extracts them from receipt text when possible, stores them
+in the DB and sidecars, carries them into downstream batch JSON, and renders
+them on merchant detail pages in `reports/merchants/`.
+
+**Record or clear certifications manually** through the audited correction path:
+
+```bash
+intake correct 20110830_1149.pdf --certification "AAA=AAA certified" --note "shop badge visible on estimate"
+intake correct 20110830_1149.pdf --clear-certifications --note "badge was OCR noise"
+```
+
+Keep these as structured claims with evidence. Do not create a separate
+merchant-metadata file or another local correction log for certifications; use
+`intake correct` so the DB row, sidecar, and `receipt_updates` history stay in
+sync.
 
 **Deduplicate historical receipts** without falling back to ad hoc scripts:
 

@@ -33,6 +33,10 @@ def _seed_receipts(db_path: Path) -> None:
             "processed_by": "tesseract",
             "purchaser": "john",
             "card_last4": "1111",
+            "items": [
+                {"description": "Bananas", "amount": 2.99},
+                {"description": "Whole Milk", "amount": 4.39},
+            ],
         },
     )
     upsert_receipt(
@@ -124,20 +128,39 @@ def test_generate_reports_renders_chart_sections(tmp_path):
 
     assert output_dir / "intake-report.md" in written
     assert output_dir / "intake-report.html" in written
+    assert output_dir / "merchants" / "index.md" in written
+    assert output_dir / "merchants" / "index.html" in written
+    assert output_dir / "merchants" / "kroger.md" in written
+    assert output_dir / "merchants" / "kroger.html" in written
 
     md = (output_dir / "intake-report.md").read_text(encoding="utf-8")
     html = (output_dir / "intake-report.html").read_text(encoding="utf-8")
+    merchant_index_md = (output_dir / "merchants" / "index.md").read_text(encoding="utf-8")
+    merchant_index_html = (output_dir / "merchants" / "index.html").read_text(encoding="utf-8")
+    merchant_detail_md = (output_dir / "merchants" / "kroger.md").read_text(encoding="utf-8")
+    merchant_detail_html = (output_dir / "merchants" / "kroger.html").read_text(encoding="utf-8")
 
     assert "| Category | Count | Total Spend | % of Total | Chart |" in md
     assert "| Month | Count | Total Spend | Chart |" in md
     assert "| Model | Receipt Count | Share | Chart |" in md
+    assert "| Itemized Receipts | 1 / 5 (20.0%) |" in md
+    assert "| Total Line Items | 2 |" in md
     assert "########################" in md
 
     assert "Monthly Spend Trend" in html
     assert "Top Categories by Spend" in html
     assert "Top Merchants by Spend" in html
+    assert "Merchant Spend Over Time" in html
+    assert "Merchant Month Breakdown" in html
     assert "Extraction Model Mix" in html
     assert "Recent Receipts (last 50)" in html
+    assert 'aria-label="Section menu"' in html
+    assert 'href="merchants/index.html"' in html
+    assert 'href="#merchant-spend-over-time"' in html
+    assert 'href="#merchant-month-breakdown"' in html
+    assert 'href="#recent-receipts"' in html
+    assert "Itemized Receipts" in html
+    assert "Total Line Items" in html
     assert '<svg class="line-chart"' in html
     assert "bar-fill fill-category" in html
     assert "bar-fill fill-merchant" in html
@@ -151,13 +174,52 @@ def test_generate_reports_renders_chart_sections(tmp_path):
     assert _browser_uri("gas-station", is_dir=True) in md
     assert _browser_uri("gas-station", "20260318_1834.pdf") in md
     assert _browser_uri("grocery", "kroger", "20260331_1914.pdf") in md
+    assert "## Merchant Spend Over Time" in md
+    assert "## Merchant Month Breakdown" in md
     assert "## Recent Receipts (last 50)" in md
+    assert "[Merchant Directory](merchants/index.md)" in md
+    assert "[Visual Overview](#visual-overview)" in md
+    assert "[Merchant Trends](#merchant-spend-over-time)" in md
     assert _browser_uri("sw", "dev", is_dir=True) in md
     assert _browser_uri("sw", "dev", is_dir=True) in html
     assert "email_1.txt" in md
     assert f"[email_1.txt]({_browser_uri('sw', 'dev', is_dir=True)})" in md
     assert f"[receipt/]({_browser_uri(is_dir=True)})" in md
     assert f"[receipt/intake/]({_browser_uri('intake', is_dir=True)})" in md
+    assert "2: Bananas, Whole Milk" in md
+    assert "2: Bananas, Whole Milk" in html
+    assert "Jan 2026 $45.67 (1); Mar 2026 $53.81 (1)" in md
+    assert "Jan 2026 $45.67 (1)<br>Mar 2026 $53.81 (1)" in html
+    assert "| [kroger](merchants/kroger.md) | Jan 2026 | 1 | $45.67 |" in md
+    assert "| [kroger](merchants/kroger.md) | Mar 2026 | 1 | $53.81 |" in md
+    assert '<a href="merchants/kroger.html">kroger</a>' in html
+
+    assert "# Merchant Directory" in merchant_index_md
+    assert "[Main Report](../intake-report.md)" in merchant_index_md
+    assert "| [kroger](kroger.md) | 2 | $99.48 | 2 | 2026-01-10 → 2026-03-31 |" in merchant_index_md
+    assert "Browse every tracked merchant." in merchant_index_html
+    assert "data-merchant-row" in merchant_index_html
+    assert 'href="kroger.html"' in merchant_index_html
+    assert 'id="merchant-filter"' in merchant_index_html
+
+    assert "# Merchant: kroger" in merchant_detail_md
+    assert (
+        "[Main Report](../intake-report.md) | [Merchant Directory](index.md)" in merchant_detail_md
+    )
+    assert "## Monthly Spend" in merchant_detail_md
+    assert "| Jan 2026 | 1 | $45.67 |" in merchant_detail_md
+    assert "| Mar 2026 | 1 | $53.81 |" in merchant_detail_md
+    assert "| [grocery/supermarket]" in merchant_detail_md
+    assert "| 2026-03-31 | [grocery]" in merchant_detail_md
+
+    assert "<title>kroger · Intake Merchant History</title>" in merchant_detail_html
+    assert 'href="../intake-report.html"' in merchant_detail_html
+    assert 'href="index.html"' in merchant_detail_html
+    assert "Every tracked receipt for this merchant bucket." in merchant_detail_html
+    assert "Category Mix" in merchant_detail_html
+    assert "Monthly Spend" in merchant_detail_html
+    assert _browser_uri("grocery", "kroger", is_dir=True) in merchant_detail_html
+    assert _browser_uri("grocery", "kroger", "20260331_1914.pdf") in merchant_detail_html
 
 
 def test_generate_reports_handles_empty_dataset(tmp_path):
@@ -165,14 +227,173 @@ def test_generate_reports_handles_empty_dataset(tmp_path):
     output_dir = tmp_path / "reports"
 
     conn = init_db(db_path)
-    generate_reports(conn, output_dir, fmt="both", receipt_root=tmp_path / "receipts")
+    written = generate_reports(conn, output_dir, fmt="both", receipt_root=tmp_path / "receipts")
     conn.close()
 
     html = (output_dir / "intake-report.html").read_text(encoding="utf-8")
     md = (output_dir / "intake-report.md").read_text(encoding="utf-8")
+    merchant_index_html = (output_dir / "merchants" / "index.html").read_text(encoding="utf-8")
+    merchant_index_md = (output_dir / "merchants" / "index.md").read_text(encoding="utf-8")
 
     assert "No spend data yet." in html
     assert "No category data yet." in html
     assert "No merchant data yet." in html
     assert "No extraction data yet." in html
     assert "| Total Receipts | 0 |" in md
+    assert output_dir / "merchants" / "index.html" in written
+    assert output_dir / "merchants" / "index.md" in written
+    assert "No merchant data yet." in merchant_index_html
+    assert "No merchant data yet." in merchant_index_md
+
+
+def test_generate_reports_resolves_non_pdf_receipt_links(tmp_path):
+    db_path = tmp_path / "intake.db"
+    output_dir = tmp_path / "reports"
+    receipt_root = tmp_path / "receipts"
+
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260402_1707.jpg",
+            "scan_date": "2026-04-02",
+            "merchant": "target",
+            "total": 23.45,
+            "category": "general",
+            "receipt_dir": "general/20260402_1707.jpg",
+            "raw_text": "target",
+            "processed_by": "tesseract",
+        },
+    )
+    written = generate_reports(conn, output_dir, fmt="both", receipt_root=receipt_root)
+    conn.close()
+
+    jpg = receipt_root / "general" / "20260402_1707.jpg"
+    jpg.parent.mkdir(parents=True, exist_ok=True)
+    jpg.write_text("image placeholder", encoding="utf-8")
+
+    conn = init_db(db_path)
+    written = generate_reports(conn, output_dir, fmt="both", receipt_root=receipt_root)
+    conn.close()
+
+    html = (output_dir / "intake-report.html").read_text(encoding="utf-8")
+    md = (output_dir / "intake-report.md").read_text(encoding="utf-8")
+
+    assert output_dir / "intake-report.html" in written
+    assert _browser_uri("general", "20260402_1707.jpg") in html
+    assert _browser_uri("general", "20260402_1707.jpg") in md
+
+
+def test_generate_reports_distinguishes_unknown_totals_from_true_zero(tmp_path):
+    db_path = tmp_path / "intake.db"
+    output_dir = tmp_path / "reports"
+
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260101_0558.pdf",
+            "scan_date": "2026-01-01",
+            "merchant": "keepgo",
+            "total": None,
+            "category": "phone/keepgo",
+            "receipt_dir": "phone/keepgo/20260101_0558.pdf",
+            "raw_text": "keepgo",
+            "processed_by": "gpt-4.1",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20210327_1740.pdf",
+            "scan_date": "2021-03-27",
+            "merchant": "bloomberg for education",
+            "total": 0.0,
+            "category": "sw",
+            "receipt_dir": "sw/20210327_1740.pdf",
+            "raw_text": "bloomberg for education",
+            "processed_by": "gpt-4.1",
+        },
+    )
+    generate_reports(conn, output_dir, fmt="both", receipt_root=tmp_path / "receipts")
+    conn.close()
+
+    md = (output_dir / "intake-report.md").read_text(encoding="utf-8")
+    merchant_index_md = (output_dir / "merchants" / "index.md").read_text(encoding="utf-8")
+    keepgo_md = (output_dir / "merchants" / "keepgo.md").read_text(encoding="utf-8")
+    bloomberg_md = (output_dir / "merchants" / "bloomberg-for-education.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "| [keepgo](merchants/keepgo.md) | Jan 2026 | 1 | — |" in md
+    assert (
+        "| [bloomberg for education](merchants/bloomberg-for-education.md) | Mar 2021 | 1 | $0.00 |"
+        in md
+    )
+    assert "| [keepgo](keepgo.md) | 1 | — | 1 | 2026-01-01 → 2026-01-01 |" in merchant_index_md
+    assert (
+        "| [bloomberg for education](bloomberg-for-education.md) | 1 | $0.00 | 1 | 2021-03-27 → 2021-03-27 |"
+        in merchant_index_md
+    )
+    assert "| Total Spend | — |" in keepgo_md
+    assert "| Jan 2026 | 1 | — |" in keepgo_md
+    assert "| Total Spend | $0.00 |" in bloomberg_md
+    assert "| Mar 2021 | 1 | $0.00 |" in bloomberg_md
+
+
+def test_generate_reports_render_certifications_on_merchant_page(tmp_path):
+    db_path = tmp_path / "intake.db"
+    output_dir = tmp_path / "reports"
+    receipt_root = tmp_path / "receipts"
+
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20110830_1149.pdf",
+            "scan_date": "2011-08-30",
+            "merchant": "heritage collision",
+            "total": None,
+            "category": "auto/heritage-collision",
+            "receipt_dir": "auto/heritage-collision/20110830_1149.pdf",
+            "raw_text": "Certified by AAA",
+            "processed_by": "gpt-4.1",
+            "certifications": [
+                {
+                    "issuer": "AAA",
+                    "label": "AAA certified",
+                    "source_text": "Certified by AAA",
+                }
+            ],
+        },
+    )
+    conn.close()
+
+    pdf = receipt_root / "auto" / "heritage-collision" / "20110830_1149.pdf"
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_text("pdf placeholder", encoding="utf-8")
+
+    generate_reports(conn := init_db(db_path), output_dir, fmt="both", receipt_root=receipt_root)
+    conn.close()
+
+    merchant_detail_md = (output_dir / "merchants" / "heritage-collision.md").read_text(
+        encoding="utf-8"
+    )
+    merchant_detail_html = (output_dir / "merchants" / "heritage-collision.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "## Certifications" in merchant_detail_md
+    assert (
+        "| AAA certified | AAA | 1 | Certified by AAA on [20110830_1149.pdf]" in merchant_detail_md
+    )
+    assert "| 2011-08-30 | [auto/heritage-collision]" in merchant_detail_md
+    assert "| AAA certified |" in merchant_detail_md
+
+    assert (
+        "Structured merchant certifications and claims captured from receipt evidence."
+        in merchant_detail_html
+    )
+    assert "AAA certified" in merchant_detail_html
+    assert "Certified by AAA" in merchant_detail_html
+    assert _browser_uri("auto", "heritage-collision", "20110830_1149.pdf") in merchant_detail_html

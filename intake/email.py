@@ -356,12 +356,15 @@ def _upsert_html_receipt(
                         "content": (
                             "Extract receipt fields from this email body and return ONLY valid JSON "
                             'with keys: "merchant", "total" (float), "receipt_date" (YYYY-MM-DD), '
-                            '"receipt_time" (HH:MM), "purchaser", "card_last4". Use null for missing.\n\n'
+                            '"receipt_time" (HH:MM), "purchaser", "card_last4", '
+                            '"items" (array of {"description","amount","quantity","unit_price"}), '
+                            '"certifications" (array of {"issuer","label","source_text"}). '
+                            "Use null for missing values and [] when no itemized lines are visible.\n\n"
                             f"Subject: {subject}\nFrom: {sender}\n\n{plain_text[:3000]}"
                         ),
                     }
                 ],
-                max_tokens=256,
+                max_tokens=512,
             )
             import json
 
@@ -397,6 +400,8 @@ def _upsert_html_receipt(
             ),
             "purchaser": receipt.purchaser,
             "card_last4": receipt.card_last4,
+            "items": receipt.items,
+            "certifications": receipt.certifications,
         },
     )
     _, errors = send_processed_receipt_notifications(

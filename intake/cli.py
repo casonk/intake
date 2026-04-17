@@ -40,6 +40,25 @@ def _repo_relative_path(value: str | Path) -> Path:
     return (_REPO_ROOT / path).resolve()
 
 
+def _intake_receipt_files(intake_dir: Path) -> list[Path]:
+    """Return supported receipt files waiting in the intake folder."""
+    from intake.media import iter_supported_receipt_files
+
+    return iter_supported_receipt_files(intake_dir)
+
+
+def _tracked_receipt_files(receipt_dir: Path) -> list[Path]:
+    """Return supported tracked receipt files outside intake/exhaust."""
+    from intake.media import rglob_supported_receipt_files
+
+    return [
+        path
+        for path in rglob_supported_receipt_files(receipt_dir)
+        if path.relative_to(receipt_dir).parts[0] not in ("intake", "exhaust")
+        and len(path.relative_to(receipt_dir).parts) >= 2
+    ]
+
+
 def _normalise_settings_paths(settings: dict) -> None:
     """Convert repo-relative settings to absolute paths.
 
@@ -328,6 +347,8 @@ def _sync_receipt_sidecar(receipt_root: Path, row: dict) -> Path | None:
             "processed_by": row["processed_by"],
             "purchaser": row.get("purchaser"),
             "card_last4": row.get("card_last4"),
+            "items": row.get("items"),
+            "certifications": row.get("certifications"),
             "processed_at": row["processed_at"],
         }
     )
@@ -509,6 +530,58 @@ def _backfill_row_purchaser_from_card(conn, row: dict) -> dict:
     return updated
 
 
+def _receipt_row_from_receipt(
+    receipt,
+    *,
+    filename: str,
+    category: str,
+    receipt_dir: str,
+    file_hash: str | None,
+    processed_by: str,
+    tier: str,
+) -> dict:
+    """Serialize a Receipt into the DB/sidecar row shape."""
+    from intake.certification import receipt_certifications_to_dicts
+    from intake.parse import receipt_items_to_dicts
+
+    return {
+        "filename": filename,
+        "scan_date": receipt.scan_date.isoformat(),
+        "merchant": receipt.merchant,
+        "total": receipt.total,
+        "category": category,
+        "receipt_dir": receipt_dir,
+        "file_hash": file_hash,
+        "raw_text": receipt.raw_text,
+        "processed_by": processed_by,
+        "purchaser": receipt.purchaser,
+        "card_last4": receipt.card_last4,
+        "items": receipt_items_to_dicts(receipt.items),
+        "certifications": receipt_certifications_to_dicts(receipt.certifications),
+        "tier": tier,
+    }
+
+
+def _receipt_event_from_row(row: dict, *, tier: str) -> dict:
+    """Build a downstream finance-pipeline event from a serialized row."""
+    return {
+        "filename": row["filename"],
+        "receipt_dir": row["receipt_dir"],
+        "scan_date": row["scan_date"],
+        "receipt_date": None,
+        "receipt_time": None,
+        "merchant": row.get("merchant"),
+        "total": row.get("total"),
+        "category": row["category"],
+        "processed_by": row.get("processed_by") or "tesseract",
+        "tier": tier,
+        "purchaser": row.get("purchaser"),
+        "card_last4": row.get("card_last4"),
+        "items": row.get("items") or [],
+        "certifications": row.get("certifications") or [],
+    }
+
+
 def _debug_ai_attempts(receipt) -> list[dict]:
     attempts = getattr(receipt, "_debug_ai_attempts", [])
     return attempts if isinstance(attempts, list) else []
@@ -524,6 +597,148 @@ def _write_receipt_debug_artifacts(pdf: Path, receipt, *, processed_by: str, tie
         tier=tier,
         ai_attempts=_debug_ai_attempts(receipt),
     )
+
+
+def _preferred_live_photo_still(files: list[Path]) -> Path | None:
+    """Return the preferred still image from a same-stem live-photo group."""
+    from intake.media import is_image_receipt
+
+    stills = [path for path in files if is_image_receipt(path)]
+    if not stills:
+        return None
+    preferred_suffixes = {
+        ".jpg": 0,
+        ".jpeg": 1,
+        ".png": 2,
+        ".tif": 3,
+        ".tiff": 4,
+        ".bmp": 5,
+        ".webp": 6,
+    }
+    return sorted(
+        stills,
+        key=lambda path: (preferred_suffixes.get(path.suffix.lower(), 99), path.name.lower()),
+    )[0]
+
+
+def _exhaust_live_photo_duplicate(
+    receipt_root: Path,
+    conn,
+    *,
+    duplicate: Path,
+    keeper: Path,
+    reserved_paths: set[Path] | None = None,
+    source: str = "ingest-live-photo-duplicate",
+) -> Path:
+    """Move a same-stem live-photo companion file to exhaust with audit history."""
+    from intake.db import record_receipt_update
+    from intake.parse import _parse_scan_date
+    from intake.sidecar import write_sidecar
+
+    current_rel = str(duplicate.relative_to(receipt_root))
+    dest_dir = receipt_root / "exhaust" / "duplicates" / "live-photo"
+    dest = _canonical_receipt_artifact_path(
+        dest_dir,
+        source_path=duplicate,
+        scan_date=None,
+        raw_text=None,
+        reserved_paths=reserved_paths,
+    )
+    dest_rel = str(dest.relative_to(receipt_root))
+    duplicate_hash = _file_hash(duplicate)
+    _move_receipt_artifacts(
+        receipt_root,
+        current_relpath=current_rel,
+        new_relpath=dest_rel,
+    )
+
+    duplicate_scan_date = _parse_scan_date(dest.name, dest).isoformat()
+    write_sidecar(
+        dest,
+        {
+            "filename": dest.name,
+            "scan_date": duplicate_scan_date,
+            "merchant": None,
+            "total": None,
+            "category": "exhaust/duplicates/live-photo",
+            "receipt_dir": dest_rel,
+            "file_hash": duplicate_hash,
+            "processed_by": "live-photo-skip",
+            "purchaser": None,
+            "card_last4": None,
+            "items": [],
+            "certifications": [],
+            "status": "live-photo-duplicate-exhausted",
+            "duplicate_of": keeper.name,
+        },
+    )
+
+    changes = {
+        "status": {"old": "intake-pending", "new": "live-photo-duplicate-exhausted"},
+        "receipt_dir": {"old": current_rel, "new": dest_rel},
+        "file_hash": {"old": None, "new": duplicate_hash},
+        "duplicate_of": {"old": None, "new": keeper.name},
+    }
+    if dest.name != duplicate.name:
+        changes["filename"] = {"old": duplicate.name, "new": dest.name}
+    record_receipt_update(
+        conn,
+        dest.name,
+        source=source,
+        note=f"same-stem live-photo pair detected; kept still image {keeper.name}",
+        changes=changes,
+    )
+    return dest
+
+
+def _collapse_intake_live_photo_duplicates(
+    receipt_root: Path,
+    conn,
+    receipt_files: list[Path],
+    *,
+    reserved_paths: set[Path] | None = None,
+) -> tuple[list[Path], list[str]]:
+    """Exhaust same-stem image/video live-photo duplicates before OCR."""
+    from collections import defaultdict
+
+    from intake.media import is_image_receipt, is_video_receipt
+
+    stem_groups: dict[str, list[Path]] = defaultdict(list)
+    for path in receipt_files:
+        stem_groups[path.stem.lower()].append(path)
+
+    kept: list[Path] = []
+    messages: list[str] = []
+    for paths in stem_groups.values():
+        keeper = _preferred_live_photo_still(paths)
+        if keeper is not None and any(is_video_receipt(path) for path in paths):
+            kept.append(keeper)
+            for duplicate in sorted(
+                (
+                    path
+                    for path in paths
+                    if path != keeper and is_video_receipt(path) and is_image_receipt(keeper)
+                ),
+                key=lambda path: path.name.lower(),
+            ):
+                dest = _exhaust_live_photo_duplicate(
+                    receipt_root,
+                    conn,
+                    duplicate=duplicate,
+                    keeper=keeper,
+                    reserved_paths=reserved_paths,
+                )
+                messages.append(
+                    f"  [live-photo] kept {keeper.name}, exhausted {duplicate.name} -> {dest.relative_to(receipt_root)}"
+                )
+            for other in paths:
+                if other == keeper or is_video_receipt(other):
+                    continue
+                kept.append(other)
+            continue
+        kept.extend(paths)
+
+    return sorted(set(kept)), messages
 
 
 def _exhaust_hash_duplicate(
@@ -572,6 +787,8 @@ def _exhaust_hash_duplicate(
             "processed_by": existing_row.get("processed_by") or "tesseract",
             "purchaser": existing_row.get("purchaser"),
             "card_last4": existing_row.get("card_last4"),
+            "items": existing_row.get("items"),
+            "certifications": existing_row.get("certifications"),
             "status": "duplicate-exhausted",
             "duplicate_of": existing_row.get("filename"),
         },
@@ -726,9 +943,9 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
         print(f"ERROR: intake directory not found: {intake_dir}", file=sys.stderr)
         sys.exit(1)
 
-    pdfs = sorted(intake_dir.glob("*.pdf"))
-    if not pdfs:
-        print("No PDFs found in intake.")
+    receipt_files = _intake_receipt_files(intake_dir)
+    if not receipt_files:
+        print("No receipt files found in intake.")
         return
 
     rules = load_rules()
@@ -736,8 +953,16 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
     conn = init_db(db_path)
     pf_events: list[dict] = []
     reserved_paths: set[Path] = set()
+    receipt_files, live_photo_messages = _collapse_intake_live_photo_duplicates(
+        receipt_dir,
+        conn,
+        receipt_files,
+        reserved_paths=reserved_paths,
+    )
+    for message in live_photo_messages:
+        print(message)
 
-    for pdf in pdfs:
+    for pdf in receipt_files:
         print(f"  Processing: {pdf.name}")
         if args.dry_run:
             print("    [dry-run] skipping OCR and move")
@@ -781,20 +1006,15 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
             shutil.move(str(pdf), dest)
             renamed = f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
 
-            row = {
-                "filename": dest.name,
-                "scan_date": receipt.scan_date.isoformat(),
-                "merchant": receipt.merchant,
-                "total": receipt.total,
-                "category": category,
-                "receipt_dir": str(dest.relative_to(receipt_dir)),
-                "file_hash": file_hash,
-                "raw_text": receipt.raw_text,
-                "processed_by": model,
-                "purchaser": receipt.purchaser,
-                "card_last4": receipt.card_last4,
-                "tier": tier,
-            }
+            row = _receipt_row_from_receipt(
+                receipt,
+                filename=dest.name,
+                category=category,
+                receipt_dir=str(dest.relative_to(receipt_dir)),
+                file_hash=file_hash,
+                processed_by=model,
+                tier=tier,
+            )
             upsert_receipt(conn, row)
             write_sidecar(dest, {k: v for k, v in row.items() if k != "raw_text"})
             _write_receipt_debug_artifacts(dest, receipt, processed_by=model, tier=tier)
@@ -913,12 +1133,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     merchant_aliases = load_merchant_aliases()
     extract_kwargs = _get_extract_kwargs(settings)
 
-    all_pdfs = [
-        pdf
-        for pdf in sorted(receipt_dir.rglob("*.pdf"))
-        if pdf.relative_to(receipt_dir).parts[0] not in ("intake", "exhaust")
-        and len(pdf.relative_to(receipt_dir).parts) >= 2
-    ]
+    all_pdfs = _tracked_receipt_files(receipt_dir)
 
     if not all_pdfs:
         print("No receipts found in category folders.")
@@ -1032,6 +1247,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
             "processed_by": sc.get("processed_by", "tesseract"),
             "purchaser": sc.get("purchaser"),
             "card_last4": sc.get("card_last4"),
+            "items": sc.get("items"),
             "tier": sc.get("tier", "ok"),
         }
         row = _backfill_row_purchaser_from_card(conn, row)
@@ -1073,20 +1289,15 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
                 rel = pdf.relative_to(receipt_dir)
                 category = "/".join(rel.parts[:-1])
 
-            row = {
-                "filename": pdf.name,
-                "scan_date": receipt.scan_date.isoformat(),
-                "merchant": receipt.merchant,
-                "total": receipt.total,
-                "category": category,
-                "receipt_dir": str(rel),
-                "file_hash": _file_hash(pdf),
-                "raw_text": receipt.raw_text,
-                "processed_by": model,
-                "purchaser": receipt.purchaser,
-                "card_last4": receipt.card_last4,
-                "tier": tier,
-            }
+            row = _receipt_row_from_receipt(
+                receipt,
+                filename=pdf.name,
+                category=category,
+                receipt_dir=str(rel),
+                file_hash=_file_hash(pdf),
+                processed_by=model,
+                tier=tier,
+            )
             existing_old = get_receipt(conn, original_filename)
             if renamed_pdf and existing_old is not None:
                 db_updates = {k: v for k, v in row.items() if k != "tier"}
@@ -1132,6 +1343,258 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     conn.close()
     _trigger_personal_finance(settings, pf_events, trigger="backfill")
     print(f"\nBackfill complete: {ok} ingested, {failed} error(s).")
+
+
+def _cmd_itemize(args: argparse.Namespace, settings: dict) -> None:
+    """Attempt an itemized breakdown for existing receipt rows."""
+    from intake.classify import load_merchant_aliases, load_rules
+    from intake.db import init_db, update_receipt_fields
+    from intake.extract import extract_receipt
+    from intake.parse import parse_receipt, receipt_items_to_dicts
+
+    receipt_root = None
+    if args.receipt_dir or settings.get("receipt_dir"):
+        receipt_root = _require_receipt_dir(settings, args.receipt_dir)
+
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
+    conn = init_db(db_path)
+    row_cursor = conn.execute("""
+            SELECT filename, scan_date, merchant, total, category, receipt_dir, raw_text,
+                   items_json, processed_by, purchaser, card_last4, processed_at
+            FROM receipts
+            ORDER BY scan_date DESC, processed_at DESC, filename DESC
+            """)
+    rows = [dict(row) for row in row_cursor.fetchall()]
+    if args.limit is not None:
+        rows = rows[: args.limit]
+
+    rules = load_rules()
+    merchant_aliases = load_merchant_aliases()
+
+    updated = skipped = failed = 0
+    itemized = 0
+    line_items = 0
+    pf_events: list[dict] = []
+
+    for row in rows:
+        if row.get("items_json") is not None and not args.force:
+            skipped += 1
+            continue
+
+        receipt_dir_rel = str(row.get("receipt_dir") or "")
+        pdf = None
+        if (
+            receipt_root is not None
+            and receipt_dir_rel
+            and not receipt_dir_rel.startswith("email/")
+        ):
+            candidate = receipt_root / receipt_dir_rel
+            if candidate.exists():
+                pdf = candidate
+
+        try:
+            receipt = None
+            processed_by = row.get("processed_by") or "tesseract"
+            tier = "stored-ocr"
+            note_parts: list[str] = []
+
+            raw_text = row.get("raw_text") or ""
+            if raw_text:
+                receipt = parse_receipt(row["filename"], raw_text, pdf_path=pdf)
+                note_parts.append("stored OCR")
+
+            if pdf is not None and (args.force or receipt is None or not receipt.items):
+                reextracted, processed_by, tier = extract_receipt(
+                    pdf,
+                    **_get_extract_kwargs(settings),
+                    fuzzy_rules=rules,
+                    merchant_aliases=merchant_aliases,
+                )
+                if receipt is None or reextracted.items or not raw_text:
+                    receipt = reextracted
+                note_parts.append("PDF re-extraction")
+
+            items = receipt_items_to_dicts(receipt.items) if receipt is not None else []
+            items_label = str(len(items))
+            if items:
+                preview = ", ".join(
+                    item["description"] for item in items[:3] if item.get("description")
+                )
+                if len(items) > 3:
+                    preview += ", ..."
+                items_label = f"{len(items)} [{preview}]"
+
+            if args.dry_run:
+                print(f"  [dry-run] {row['filename']}: {items_label}")
+                continue
+
+            note = (
+                "attempted itemized breakdown via " + " + ".join(note_parts)
+                if note_parts
+                else "attempted itemized breakdown with no OCR text or local PDF available"
+            )
+            updated_row, changes = update_receipt_fields(
+                conn,
+                row["filename"],
+                {"items": items},
+                source="itemize-backfill",
+                note=note,
+            )
+            if not changes:
+                skipped += 1
+                continue
+
+            if receipt_root is not None:
+                _sync_receipt_sidecar(receipt_root, updated_row)
+            if pdf is not None and receipt is not None:
+                _write_receipt_debug_artifacts(
+                    pdf,
+                    receipt,
+                    processed_by=processed_by,
+                    tier=f"itemize-{tier}",
+                )
+
+            if updated_row.get("items"):
+                itemized += 1
+                line_items += len(updated_row["items"])
+            pf_events.append(_receipt_event_from_row(updated_row, tier=f"itemize-{tier}"))
+            updated += 1
+            print(f"  Itemized {row['filename']}: {items_label}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ERROR itemizing {row['filename']}: {exc}", file=sys.stderr)
+            failed += 1
+
+    conn.close()
+    _trigger_personal_finance(settings, pf_events, trigger="itemize")
+    print(
+        f"\nItemization complete: {updated} updated, {skipped} skipped, {failed} error(s), "
+        f"{itemized} with line items, {line_items} total line items."
+    )
+
+
+def _cmd_certify(args: argparse.Namespace, settings: dict) -> None:
+    """Attempt structured certification extraction for existing receipt rows."""
+    from intake.certification import receipt_certifications_to_dicts
+    from intake.classify import load_merchant_aliases, load_rules
+    from intake.db import init_db, update_receipt_fields
+    from intake.extract import extract_receipt
+    from intake.parse import parse_receipt
+
+    receipt_root = None
+    if args.receipt_dir or settings.get("receipt_dir"):
+        receipt_root = _require_receipt_dir(settings, args.receipt_dir)
+
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
+    conn = init_db(db_path)
+    row_cursor = conn.execute("""
+            SELECT filename, scan_date, merchant, total, category, receipt_dir, raw_text,
+                   certifications_json, processed_by, purchaser, card_last4, processed_at
+            FROM receipts
+            ORDER BY scan_date DESC, processed_at DESC, filename DESC
+            """)
+    rows = [dict(row) for row in row_cursor.fetchall()]
+    if args.limit is not None:
+        rows = rows[: args.limit]
+
+    rules = load_rules()
+    merchant_aliases = load_merchant_aliases()
+
+    updated = skipped = failed = 0
+    certified = 0
+    pf_events: list[dict] = []
+
+    for row in rows:
+        if row.get("certifications_json") is not None and not args.force:
+            skipped += 1
+            continue
+
+        receipt_dir_rel = str(row.get("receipt_dir") or "")
+        pdf = None
+        if (
+            receipt_root is not None
+            and receipt_dir_rel
+            and not receipt_dir_rel.startswith("email/")
+        ):
+            candidate = receipt_root / receipt_dir_rel
+            if candidate.exists():
+                pdf = candidate
+
+        try:
+            receipt = None
+            processed_by = row.get("processed_by") or "tesseract"
+            tier = "stored-ocr"
+            note_parts: list[str] = []
+
+            raw_text = row.get("raw_text") or ""
+            if raw_text:
+                receipt = parse_receipt(row["filename"], raw_text, pdf_path=pdf)
+                note_parts.append("stored OCR")
+
+            if pdf is not None and (receipt is None or (args.force and not receipt.certifications)):
+                reextracted, processed_by, tier = extract_receipt(
+                    pdf,
+                    **_get_extract_kwargs(settings),
+                    fuzzy_rules=rules,
+                    merchant_aliases=merchant_aliases,
+                )
+                if receipt is None or reextracted.certifications or not raw_text:
+                    receipt = reextracted
+                note_parts.append("PDF re-extraction")
+
+            certifications = (
+                receipt_certifications_to_dicts(receipt.certifications)
+                if receipt is not None
+                else []
+            )
+            cert_labels = ", ".join(
+                cert["label"] for cert in certifications if cert.get("label")
+            ) or str(len(certifications))
+
+            if args.dry_run:
+                print(f"  [dry-run] {row['filename']}: {cert_labels}")
+                continue
+
+            note = (
+                "attempted structured certification extraction via " + " + ".join(note_parts)
+                if note_parts
+                else "attempted structured certification extraction with no OCR text or local PDF available"
+            )
+            updated_row, changes = update_receipt_fields(
+                conn,
+                row["filename"],
+                {"certifications": certifications},
+                source="certify-backfill",
+                note=note,
+            )
+            if not changes:
+                skipped += 1
+                continue
+
+            if receipt_root is not None:
+                _sync_receipt_sidecar(receipt_root, updated_row)
+            if pdf is not None and receipt is not None:
+                _write_receipt_debug_artifacts(
+                    pdf,
+                    receipt,
+                    processed_by=processed_by,
+                    tier=f"certify-{tier}",
+                )
+
+            if updated_row.get("certifications"):
+                certified += 1
+            pf_events.append(_receipt_event_from_row(updated_row, tier=f"certify-{tier}"))
+            updated += 1
+            print(f"  Certified {row['filename']}: {cert_labels}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ERROR certifying {row['filename']}: {exc}", file=sys.stderr)
+            failed += 1
+
+    conn.close()
+    _trigger_personal_finance(settings, pf_events, trigger="certify")
+    print(
+        f"\nCertification backfill complete: {updated} updated, {skipped} skipped, "
+        f"{failed} error(s), {certified} with certifications."
+    )
 
 
 # Keywords in merchant names that suggest product docs rather than receipts
@@ -1245,14 +1708,15 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
         return
 
     # ── terminal summary ──────────────────────────────────────────────────────
-    col_w = {"#": 4, "file": 36, "merchant": 28, "total": 9, "model": 12, "dir": 34}
+    reason_width = max(42, *(len(row.get("review_reason_summary") or "") for row in flagged))
+    col_w = {"#": 4, "file": 36, "merchant": 24, "total": 9, "model": 12, "reasons": reason_width}
     header = (
         f"{'#':<{col_w['#']}} "
         f"{'file':<{col_w['file']}} "
         f"{'merchant':<{col_w['merchant']}} "
         f"{'total':>{col_w['total']}} "
         f"{'model':<{col_w['model']}} "
-        f"{'dir':<{col_w['dir']}}"
+        f"{'reasons':<{col_w['reasons']}}"
     )
     sep = "-" * len(header)
 
@@ -1266,18 +1730,23 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
         filename = row["filename"][: col_w["file"]]
         total = f"{row['total']:.2f}" if row["total"] is not None else "—"
         model = (row["processed_by"] or "tesseract")[: col_w["model"]]
-        receipt_dir = (row["receipt_dir"] or "")[: col_w["dir"]]
+        reasons = row.get("review_reason_summary") or ""
         print(
             f"{i:<{col_w['#']}} "
             f"{filename:<{col_w['file']}} "
             f"{merchant:<{col_w['merchant']}} "
             f"{total:>{col_w['total']}} "
             f"{model:<{col_w['model']}} "
-            f"{receipt_dir:<{col_w['dir']}}"
+            f"{reasons:<{col_w['reasons']}}"
         )
 
     print(sep)
-    print("\nFlag reasons: null/unknown/short merchant · zero/null total · email in merchant")
+    print(
+        "\nFlag reasons: missing/placeholder merchant · merchant_contains_email · "
+        "short_merchant · missing/zero total · total_over_250/500/750/1000 · "
+        "recent new_merchant/new_card_last4/new_merchant_card_pair · "
+        "amount_outlier_for_merchant"
+    )
 
     # ── Markdown export ───────────────────────────────────────────────────────
     output_dir = Path(args.output_dir or settings.get("reports_dir") or _DEFAULT_REPORTS_DIR)
@@ -1290,8 +1759,8 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
         f"**{len(flagged)} record(s)** flagged for manual review.",
         "Apply fixes with `intake correct FILENAME ...`, which patches the DB + sidecar and records an audit event.",
         "",
-        "| # | file | receipt_dir | merchant | total | model | correction |",
-        "|---|------|-------------|----------|-------|-------|------------|",
+        "| # | file | receipt_dir | merchant | total | model | reasons | correction |",
+        "|---|------|-------------|----------|-------|-------|---------|------------|",
     ]
     for i, row in enumerate(flagged, 1):
         merchant = (row["merchant"] or "—").replace("|", "\\|")
@@ -1299,8 +1768,9 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
         receipt_dir = (row["receipt_dir"] or "").replace("|", "\\|")
         total = f"{row['total']:.2f}" if row["total"] is not None else "—"
         model = row["processed_by"] or "tesseract"
+        reasons = (row.get("review_reason_summary") or "—").replace("|", "\\|")
         lines.append(
-            f"| {i} | `{filename}` | `{receipt_dir}` | {merchant} | {total} | {model} |  |"
+            f"| {i} | `{filename}` | `{receipt_dir}` | {merchant} | {total} | {model} | {reasons} |  |"
         )
 
     lines += [
@@ -1314,6 +1784,12 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
               move manually then re-run `intake backfill`.
             - To correct a merchant name directly:
               `intake correct 20260409_1707.pdf --merchant kroger --note "manual fix"`
+            - Total guard flags (`total_over_250`, `total_over_500`, `total_over_750`,
+              `total_over_1000`) are explicit parser-review thresholds. They do not
+              auto-rewrite totals; they force human eyes on expensive receipts.
+            - Novelty and amount-outlier flags are only applied to recent receipts
+              that already have a plausible merchant and total, so `intake review`
+              stays operational instead of flooding on old or obviously broken rows.
             """),
     ]
 
@@ -1362,6 +1838,7 @@ def _cmd_suppress(args: argparse.Namespace, settings: dict) -> None:
 
 def _cmd_correct(args: argparse.Namespace, settings: dict) -> None:
     """Apply a manual correction, update the sidecar, and record an audit event."""
+    from intake.certification import parse_manual_certification, receipt_certifications_to_dicts
     from intake.db import init_db, update_receipt_fields
 
     db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
@@ -1382,6 +1859,12 @@ def _cmd_correct(args: argparse.Namespace, settings: dict) -> None:
         updates["card_last4"] = args.card_last4.strip() or None
     if args.clear_card_last4:
         updates["card_last4"] = None
+    if args.certification:
+        manual_certs = [parse_manual_certification(spec) for spec in args.certification]
+        manual_certs = [cert for cert in manual_certs if cert is not None]
+        updates["certifications"] = receipt_certifications_to_dicts(manual_certs)
+    if args.clear_certifications:
+        updates["certifications"] = []
 
     if not updates:
         print("ERROR: no changes requested. Pass at least one field to correct.", file=sys.stderr)
@@ -1417,7 +1900,11 @@ def _cmd_correct(args: argparse.Namespace, settings: dict) -> None:
     conn.close()
 
     if not changes:
-        print(f"No changes applied for {args.filename}.")
+        sc_path = _sync_receipt_sidecar(receipt_root, updated_row)
+        if sc_path is not None:
+            print(f"No DB changes applied for {args.filename}; sidecar synced: {sc_path}")
+        else:
+            print(f"No changes applied for {args.filename}.")
         return
 
     sc_path = _sync_receipt_sidecar(receipt_root, updated_row)
@@ -1581,13 +2068,13 @@ def _cmd_audit(args: argparse.Namespace, settings: dict) -> None:
         print(f"ERROR: intake directory not found: {intake_dir}", file=sys.stderr)
         sys.exit(1)
 
-    pdfs = sorted(intake_dir.glob("*.pdf"))
-    if not pdfs:
+    receipt_files = _intake_receipt_files(intake_dir)
+    if not receipt_files:
         print("Intake folder is empty.")
         return
 
-    print(f"Found {len(pdfs)} PDF(s) in {intake_dir}:")
-    for pdf in pdfs:
+    print(f"Found {len(receipt_files)} receipt file(s) in {intake_dir}:")
+    for pdf in receipt_files:
         print(f"  {pdf.name}")
 
 
@@ -1717,20 +2204,15 @@ def _cmd_merge(args: argparse.Namespace, settings: dict) -> None:
                 primary = dest
                 rel = primary.relative_to(receipt_dir)
                 category = "/".join(rel.parts[:-1])
-            row = {
-                "filename": primary.name,
-                "scan_date": receipt.scan_date.isoformat(),
-                "merchant": receipt.merchant,
-                "total": receipt.total,
-                "category": category,
-                "receipt_dir": str(rel),
-                "file_hash": _file_hash(primary),
-                "raw_text": receipt.raw_text,
-                "processed_by": model,
-                "purchaser": receipt.purchaser,
-                "card_last4": receipt.card_last4,
-                "tier": tier,
-            }
+            row = _receipt_row_from_receipt(
+                receipt,
+                filename=primary.name,
+                category=category,
+                receipt_dir=str(rel),
+                file_hash=_file_hash(primary),
+                processed_by=model,
+                tier=tier,
+            )
             existing_old = get_receipt(conn, original_filename)
             if renamed_primary and existing_old is not None:
                 db_updates = {k: v for k, v in row.items() if k != "tier"}
@@ -1799,7 +2281,7 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
 
 
 def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
-    """Process all PDFs currently in the intake inbox folder.
+    """Process all supported receipt files currently in the intake inbox folder.
 
     Returns (ok_count, error_count).  Mirrors _cmd_process but is callable
     from the daemon loop without requiring argparse Namespace objects.
@@ -1814,7 +2296,7 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
     if not receipt_dir:
         return 0, 0
     intake_dir = receipt_dir / "intake"
-    pdfs = sorted(intake_dir.glob("*.pdf")) if intake_dir.exists() else []
+    pdfs = _intake_receipt_files(intake_dir) if intake_dir.exists() else []
     if not pdfs:
         return 0, 0
 
@@ -1824,6 +2306,14 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
     ok = errors = 0
     pf_events: list[dict] = []
     reserved_paths: set[Path] = set()
+    pdfs, live_photo_messages = _collapse_intake_live_photo_duplicates(
+        receipt_dir,
+        conn,
+        pdfs,
+        reserved_paths=reserved_paths,
+    )
+    for message in live_photo_messages:
+        print(message)
     for pdf in pdfs:
         try:
             file_hash = _file_hash(pdf)
@@ -1861,20 +2351,15 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
                 reserved_paths=reserved_paths,
             )
             shutil.move(str(pdf), dest)
-            row = {
-                "filename": dest.name,
-                "scan_date": receipt.scan_date.isoformat(),
-                "merchant": receipt.merchant,
-                "total": receipt.total,
-                "category": category,
-                "receipt_dir": str(dest.relative_to(receipt_dir)),
-                "file_hash": file_hash,
-                "raw_text": receipt.raw_text,
-                "processed_by": model,
-                "purchaser": receipt.purchaser,
-                "card_last4": receipt.card_last4,
-                "tier": tier,
-            }
+            row = _receipt_row_from_receipt(
+                receipt,
+                filename=dest.name,
+                category=category,
+                receipt_dir=str(dest.relative_to(receipt_dir)),
+                file_hash=file_hash,
+                processed_by=model,
+                tier=tier,
+            )
             upsert_receipt(conn, row)
             write_sidecar(dest, {k: v for k, v in row.items() if k != "raw_text"})
             _write_receipt_debug_artifacts(dest, receipt, processed_by=model, tier=tier)
@@ -1960,13 +2445,9 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
             )
         else:
             # 1. Process file inbox
-            inbox_pdfs = (
-                len(list((receipt_dir / "intake").glob("*.pdf")))
-                if (receipt_dir / "intake").exists()
-                else 0
-            )
+            inbox_pdfs = len(_intake_receipt_files(receipt_dir / "intake"))
             if inbox_pdfs:
-                print(f"[inbox] {inbox_pdfs} PDF(s) found — processing…", flush=True)
+                print(f"[inbox] {inbox_pdfs} receipt file(s) found — processing…", flush=True)
                 ok, err = _process_inbox(settings, db_path)
                 print(f"[inbox] done: {ok} processed, {err} error(s)", flush=True)
             else:
@@ -2104,17 +2585,23 @@ def _find_duplicate_groups(rows: list, window_days: int) -> list[list]:
 def _best_row(rows: list) -> dict:
     """Return the row that best represents the transaction.
 
-    Priority: most extra fields filled (purchaser, card_last4) → highest model
-    rank → earliest processed_at.
+    Priority: real local receipt artifact over email/synthetic rows → most
+    extra fields filled (purchaser, card_last4) → highest model rank →
+    earliest processed_at.
     """
     from intake.extract import model_rank
 
+    def has_local_artifact(row: dict) -> int:
+        receipt_dir = str(row.get("receipt_dir") or "").strip()
+        return int(bool(receipt_dir) and not receipt_dir.startswith("email/"))
+
     def score(row: dict) -> tuple:
+        local_artifact = has_local_artifact(row)
         extra = sum(1 for f in ("purchaser", "card_last4") if row.get(f))
         rank = model_rank(row.get("processed_by") or "tesseract")
         # Negate processed_at so earlier timestamps sort higher.
         ts = row.get("processed_at") or ""
-        return (extra, rank, ts)
+        return (local_artifact, extra, rank, ts)
 
     return max(rows, key=score)
 
@@ -2309,6 +2796,16 @@ def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
                         conn.commit()
                         print(f"    - moved duplicate → {new_rel}")
                     else:
+                        record_receipt_update(
+                            conn,
+                            row["filename"],
+                            source="dedup-merge-delete",
+                            note=f"deleted duplicate DB row; kept {keeper['filename']}",
+                            changes={
+                                "status": {"old": "tracked", "new": "duplicate-merged-removed"},
+                                "keeper_filename": {"old": None, "new": keeper["filename"]},
+                            },
+                        )
                         conn.execute("DELETE FROM receipts WHERE filename = ?", (row["filename"],))
                     removed += 1
             if not remove:
@@ -2429,7 +2926,7 @@ def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="intake",
-        description="Process, sort, and report on receipt PDF scans.",
+        description="Process, sort, and report on receipt files.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -2493,6 +2990,46 @@ def main() -> None:
         help="Send notifications for each backfilled receipt (default: off — historical data)",
     )
 
+    # itemize
+    p_itm = sub.add_parser(
+        "itemize",
+        help="Attempt itemized breakdowns for historical receipts and store them in DB/sidecars",
+    )
+    p_itm.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_itm.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_itm.add_argument("--dry-run", action="store_true", help="Preview itemization changes only")
+    p_itm.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-attempt itemization even when a receipt already has stored items_json",
+    )
+    p_itm.add_argument(
+        "--limit",
+        metavar="N",
+        type=int,
+        help="Process only the most recent N receipt rows",
+    )
+
+    # certify
+    p_crt = sub.add_parser(
+        "certify",
+        help="Attempt certification extraction for historical receipts and store it in DB/sidecars",
+    )
+    p_crt.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_crt.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_crt.add_argument("--dry-run", action="store_true", help="Preview certification changes only")
+    p_crt.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-attempt certification extraction even when a receipt already has stored certifications_json",
+    )
+    p_crt.add_argument(
+        "--limit",
+        metavar="N",
+        type=int,
+        help="Process only the most recent N receipt rows",
+    )
+
     # merge
     p_mrg = sub.add_parser(
         "merge",
@@ -2504,14 +3041,14 @@ def main() -> None:
         "--window",
         metavar="MINUTES",
         default=5,
-        help="Group PDFs whose scan times are within this many minutes (default: 5)",
+        help="Group PDF receipts whose scan times are within this many minutes (default: 5)",
     )
     p_mrg.add_argument("--dry-run", action="store_true", help="Show groups without merging")
 
     # exhaust
     p_exh = sub.add_parser(
         "exhaust",
-        help="Move product docs / non-receipt PDFs to the exhaust folder",
+        help="Move product docs / non-receipt PDF receipts to the exhaust folder",
     )
     p_exh.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
     p_exh.add_argument("--db", metavar="PATH", help="SQLite database path")
@@ -2540,7 +3077,7 @@ def main() -> None:
         "filenames",
         nargs="*",
         metavar="FILENAME",
-        help="One or more PDF filenames to suppress (e.g. 20110729.pdf)",
+        help="One or more receipt filenames to suppress (e.g. 20110729_1149.pdf)",
     )
     p_sup.add_argument(
         "--all",
@@ -2558,7 +3095,7 @@ def main() -> None:
         "correct",
         help="Apply a manual correction, sync the sidecar, and record an audit event",
     )
-    p_cor.add_argument("filename", metavar="FILENAME", help="Receipt PDF filename to correct")
+    p_cor.add_argument("filename", metavar="FILENAME", help="Receipt filename to correct")
     p_cor.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
     p_cor.add_argument("--db", metavar="PATH", help="SQLite database path")
     p_cor.add_argument("--merchant", metavar="NAME", help="Corrected merchant name")
@@ -2576,6 +3113,17 @@ def main() -> None:
         action="store_true",
         help="Clear the stored card_last4 value",
     )
+    p_cor.add_argument(
+        "--certification",
+        action="append",
+        metavar="SPEC",
+        help="Add or replace certifications, e.g. 'AAA=AAA certified' (repeatable)",
+    )
+    p_cor.add_argument(
+        "--clear-certifications",
+        action="store_true",
+        help="Clear the stored certifications",
+    )
     p_cor.add_argument("--note", metavar="TEXT", help="Optional audit note for this correction")
 
     # history
@@ -2583,7 +3131,7 @@ def main() -> None:
         "history",
         help="Show the recorded audit trail for a receipt",
     )
-    p_hist.add_argument("filename", metavar="FILENAME", help="Receipt PDF filename")
+    p_hist.add_argument("filename", metavar="FILENAME", help="Receipt filename")
     p_hist.add_argument("--db", metavar="PATH", help="SQLite database path")
     p_hist.add_argument(
         "--limit",
@@ -2618,7 +3166,7 @@ def main() -> None:
     p_ded.add_argument(
         "--merge",
         action="store_true",
-        help="Merge fields into the best row and delete the rest (PDF files untouched)",
+        help="Merge fields into the best row and delete the rest (receipt files untouched)",
     )
     p_ded.add_argument(
         "--remove",
@@ -2636,7 +3184,7 @@ def main() -> None:
     p_con.add_argument("--dry-run", action="store_true", help="Print changes without writing")
 
     # audit
-    p_aud = sub.add_parser("audit", help="List intake PDFs without processing them")
+    p_aud = sub.add_parser("audit", help="List intake receipt files without processing them")
     p_aud.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
 
     # daemon
@@ -2696,6 +3244,10 @@ def main() -> None:
         _cmd_serve(args, settings)
     elif args.command == "backfill":
         _cmd_backfill(args, settings)
+    elif args.command == "itemize":
+        _cmd_itemize(args, settings)
+    elif args.command == "certify":
+        _cmd_certify(args, settings)
     elif args.command == "merge":
         _cmd_merge(args, settings)
     elif args.command == "exhaust":

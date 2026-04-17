@@ -23,7 +23,7 @@ keywords = []
 
 [categories.dining.fast-food]
 label    = "Fast Food"
-keywords = ["mcdonald's", "mcdonalds"]
+keywords = ["mcdonald's", "mcdonalds", "chick-fil-a", "chick fil a", "chickfila"]
 
 [categories.pharmacy]
 label    = "Pharmacy & Drug Stores"

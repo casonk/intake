@@ -8,7 +8,8 @@ from datetime import date, time
 
 import pytest
 
-from intake.parse import Receipt
+from intake.certification import ReceiptCertification
+from intake.parse import Receipt, ReceiptItem
 from intake.personal_finance import (
     build_receipt_event,
     personal_finance_enabled,
@@ -27,6 +28,14 @@ def _receipt() -> Receipt:
         raw_text="raw",
         purchaser="john doe",
         card_last4="4321",
+        items=[ReceiptItem(description="Bananas", amount=2.99)],
+        certifications=[
+            ReceiptCertification(
+                issuer="AAA",
+                label="AAA certified",
+                source_text="Certified by AAA",
+            )
+        ],
     )
 
 
@@ -50,6 +59,12 @@ def test_build_receipt_event_includes_expected_fields():
     assert event["category"] == "grocery/supermarket"
     assert event["receipt_time"] == "18:34"
     assert event["tier"] == "ok"
+    assert event["items"] == [
+        {"description": "Bananas", "amount": 2.99, "quantity": None, "unit_price": None}
+    ]
+    assert event["certifications"] == [
+        {"issuer": "AAA", "label": "AAA certified", "source_text": "Certified by AAA"}
+    ]
 
 
 def test_trigger_personal_finance_writes_json_and_runs_command(monkeypatch, tmp_path):

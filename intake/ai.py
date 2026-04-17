@@ -14,12 +14,13 @@ import re
 from datetime import date, time
 from pathlib import Path
 
-from intake.parse import Receipt
+from intake.certification import merge_certifications, receipt_certifications_from_dicts
+from intake.parse import Receipt, receipt_items_from_dicts
 from intake.purchaser import is_blacklisted_purchaser, is_probable_staff_name, normalize_purchaser
 
 
 def extract_with_openai(
-    pdf_path: Path,
+    receipt_path: Path,
     raw_ocr: str,
     api_key: str,
     model: str = "gpt-4o-mini",
@@ -32,7 +33,7 @@ def extract_with_openai(
     """
     import openai
 
-    image_b64 = _first_page_b64(pdf_path)
+    image_b64 = _preview_image_b64(receipt_path)
 
     content: list[dict] = [
         {
@@ -46,6 +47,10 @@ def extract_with_openai(
                 '  "receipt_time"  — time printed on the receipt in HH:MM 24-hr format (string)\n'
                 '  "purchaser"     — cardholder or customer name if visible (string)\n'
                 '  "card_last4"    — last 4 digits of the payment card if visible (string)\n'
+                '  "items"         — array of itemized line objects with keys '
+                '"description", "amount", "quantity", "unit_price" (null when unknown)\n'
+                '  "certifications" — array of certification objects with keys '
+                '"issuer", "label", "source_text" for merchant or shop certifications (use [] when none visible)\n'
                 "Output only the JSON object, no markdown, no explanation."
             ),
         },
@@ -71,7 +76,7 @@ def extract_with_openai(
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": content}],
-        max_tokens=256,
+        max_tokens=768,
     )
 
     raw = response.choices[0].message.content or "{}"
@@ -122,6 +127,14 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
         if len(digits) == 4:
             kwargs["card_last4"] = digits
 
+    items = receipt_items_from_dicts(ai.get("items"))
+    if items:
+        kwargs["items"] = items
+
+    certifications = receipt_certifications_from_dicts(ai.get("certifications"))
+    if certifications:
+        kwargs["certifications"] = merge_certifications(receipt.certifications, certifications)
+
     total = ai.get("total")
     if total is not None:
         from intake.parse import normalize_transaction_total  # noqa: PLC0415
@@ -154,14 +167,11 @@ def purchaser_was_blacklisted(ai_dict: dict) -> bool:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
-def _first_page_b64(pdf_path: Path) -> str:
-    """Render the first page of a PDF to a base64-encoded PNG string."""
-    import pdfplumber
+def _preview_image_b64(receipt_path: Path) -> str:
+    """Render a supported receipt file to a base64-encoded PNG string."""
+    from intake.ocr import render_preview_image
 
-    with pdfplumber.open(pdf_path) as pdf:
-        if not pdf.pages:
-            raise ValueError(f"No pages in {pdf_path}")
-        image = pdf.pages[0].to_image(resolution=150).original
+    image = render_preview_image(receipt_path, resolution=150)
 
     buf = io.BytesIO()
     image.save(buf, format="PNG")

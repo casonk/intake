@@ -40,6 +40,7 @@ def test_write_and_read_sidecar(tmp_pdf):
         "merchant": "Acme",
         "total": 9.99,
         "category": "general",
+        "items": [{"description": "Widget", "amount": 9.99}],
     }
     path = write_sidecar(tmp_pdf, data)
 
@@ -50,6 +51,7 @@ def test_write_and_read_sidecar(tmp_pdf):
     payload = read_sidecar(tmp_pdf)
     assert payload["merchant"] == "Acme"
     assert payload["total"] == 9.99
+    assert payload["items"] == [{"description": "Widget", "amount": 9.99}]
     assert "processed_at" in payload
 
 

@@ -1,6 +1,6 @@
 """High-level receipt extraction: OCR → parse → quality check → optional AI fallback.
 
-This module is the single entry-point for turning a PDF into a Receipt.
+This module is the single entry-point for turning a receipt file into a Receipt.
 It returns both the Receipt and the name of the model that produced it,
 allowing callers to store that provenance and make model-aware skip decisions
 on future re-runs (e.g. backfill only receipts processed with an older model).
@@ -9,7 +9,9 @@ Extraction tiers
 ----------------
 ok    → Tesseract output is reliable; no AI call needed.
 low   → Quality heuristics failed (short text, missing fields, high noise);
-        use the low-fidelity model (default: gpt-4o-mini).
+        use the low-fidelity model (default: gpt-4o-mini). This tier is also
+        used when OCR found no itemized breakdown and AI is available, so
+        every receipt gets an itemization attempt.
 mid   → Low-tier AI ran but returned a blacklisted purchaser value, suggesting
         there is cardholder text the cheaper model mis-read; retry with the
         mid-fidelity model (default: gpt-4o).
@@ -112,7 +114,7 @@ def _compile_patterns(raw: list[str]) -> list[re.Pattern]:
 
 
 def _filename_escalates(filename: str, patterns: list[re.Pattern]) -> bool:
-    """Return True if the PDF *filename* stem matches any filename escalation pattern."""
+    """Return True if the receipt filename stem matches any filename escalation pattern."""
     stem = Path(filename).stem.lower()
     return any(p.search(stem) for p in patterns)
 
@@ -139,7 +141,7 @@ def _extraction_tier(
 
 
 def extract_receipt(
-    pdf_path: Path,
+    receipt_path: Path,
     openai_api_key: str | None = None,
     openai_model_low: str = "gpt-4o-mini",
     openai_model_mid: str = "gpt-4o",
@@ -149,7 +151,7 @@ def extract_receipt(
     fuzzy_threshold: float = 0.82,
     merchant_aliases: dict[str, list[str]] | None = None,
 ) -> tuple[Receipt, str, str]:
-    """Extract a Receipt from *pdf_path*, with optional tiered AI fallback.
+    """Extract a Receipt from *receipt_path*, with optional tiered AI fallback.
 
     Returns ``(receipt, model_name, tier)`` where:
     - *model_name* — the model that produced the final receipt
@@ -166,9 +168,9 @@ def extract_receipt(
         current._debug_ai_attempts = list(ai_attempts or [])  # type: ignore[attr-defined]
         return current
 
-    raw_text = extract_text(pdf_path)
+    raw_text = extract_text(receipt_path)
     receipt = _attach_debug(
-        parse_receipt(pdf_path.name, raw_text, pdf_path=pdf_path), ai_attempts=[]
+        parse_receipt(receipt_path.name, raw_text, pdf_path=receipt_path), ai_attempts=[]
     )
 
     def _canonicalize_merchant(current: Receipt) -> Receipt:
@@ -201,6 +203,8 @@ def extract_receipt(
     )
     filename_patterns = _compile_patterns(DEFAULT_FILENAME_ESCALATION_PATTERNS)
     tier = _extraction_tier(raw_text, receipt, patterns, filename_patterns)
+    if tier == "ok" and not receipt.items and openai_api_key:
+        tier = "low"
 
     if tier == "ok" or not openai_api_key:
         return _attach_debug(receipt, ai_attempts=[]), OCR_MODEL, tier
@@ -211,7 +215,7 @@ def extract_receipt(
     try:
         from intake.ai import extract_with_openai, merge_ai_result, purchaser_was_blacklisted
 
-        ai_data = extract_with_openai(pdf_path, raw_text, openai_api_key, model)
+        ai_data = extract_with_openai(receipt_path, raw_text, openai_api_key, model)
         ai_attempts.append({"model": model, "response": ai_data})
         receipt = merge_ai_result(receipt, ai_data)
         receipt = _canonicalize_merchant(receipt)
@@ -226,7 +230,7 @@ def extract_receipt(
         ):
             tier = "mid"
             model = openai_model_mid
-            ai_data = extract_with_openai(pdf_path, raw_text, openai_api_key, model)
+            ai_data = extract_with_openai(receipt_path, raw_text, openai_api_key, model)
             ai_attempts.append({"model": model, "response": ai_data})
             receipt = merge_ai_result(receipt, ai_data)
             receipt = _canonicalize_merchant(receipt)

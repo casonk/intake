@@ -16,7 +16,7 @@ from intake.extract import (
     model_rank,
     should_reprocess,
 )
-from intake.parse import Receipt
+from intake.parse import Receipt, ReceiptItem
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -104,6 +104,37 @@ def test_extract_receipt_returns_tesseract_when_quality_ok(mock_parse, mock_ocr,
     receipt, model, tier = extract_receipt(pdf)
     assert model == OCR_MODEL
     assert receipt._debug_ai_attempts == []  # type: ignore[attr-defined]
+
+
+@patch("intake.extract.extract_text")
+@patch("intake.extract.parse_receipt")
+@patch("intake.ai.merge_ai_result")
+@patch("intake.ai.extract_with_openai")
+def test_extract_receipt_attempts_ai_when_items_missing(
+    mock_ai, mock_merge, mock_parse, mock_ocr, tmp_path
+):
+    good_text = _fake_good_text()
+    base_receipt = _receipt(raw_text=good_text)
+    improved = _receipt(raw_text=good_text)
+    improved.items = [ReceiptItem(description="Bananas", amount=2.99)]
+    mock_ocr.return_value = good_text
+    mock_parse.return_value = base_receipt
+    mock_ai.return_value = {
+        "items": [{"description": "Bananas", "amount": 2.99, "quantity": None, "unit_price": None}]
+    }
+    mock_merge.return_value = improved
+
+    pdf = tmp_path / "20260401_1000.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    receipt, model, tier = extract_receipt(
+        pdf, openai_api_key="sk-test", openai_model_low="gpt-4o-mini"
+    )
+
+    assert model == "gpt-4o-mini"
+    assert tier == "low"
+    assert mock_ai.call_count == 1
+    assert receipt.items[0].description == "Bananas"
 
 
 @patch("intake.extract.extract_text")
