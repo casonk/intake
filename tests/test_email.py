@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from intake.db import init_db, is_email_processed, record_email_receipt
 from intake.email import (
     FetchResult,
+    _extract_credit_card_payment_email,
+    _extract_progressive_payment_email,
+    _is_internal_intake_notification,
     _looks_like_receipt,
+    _preferred_payment_category,
     _safe_save,
     _safe_save_receipt_pdf,
     html_to_text,
@@ -55,6 +61,9 @@ def test_html_to_text_plain_text_passthrough():
 
 # ── _looks_like_receipt ───────────────────────────────────────────────────────
 
+# TODO: Add broader scheduled-payment regression fixtures as more live examples
+# are collected for Capital One, Discover, and Progressive variants.
+
 
 @pytest.mark.parametrize(
     "text",
@@ -82,6 +91,123 @@ def test_looks_like_receipt_true(text):
 )
 def test_looks_like_receipt_false(text):
     assert _looks_like_receipt(text) is False
+
+
+@pytest.mark.parametrize(
+    ("subject", "text"),
+    [
+        (
+            "We've received your payment",
+            "Thanks for your payment\nPayment amount:\n$69.69\nPosted date:\nApril 16, 2026",
+        ),
+        (
+            "Your Scheduled Payment",
+            "Payment Info\nAmount: $20.26\nPayment Post Date: April 16, 2026",
+        ),
+    ],
+)
+def test_looks_like_receipt_true_for_credit_card_payment_emails(subject, text):
+    assert _looks_like_receipt(f"{subject}\n{text}") is True
+
+
+def test_extract_credit_card_payment_email_capital_one_posted():
+    body = """
+    VentureOne Credit Card...5653
+    Thanks for your payment of $69.69
+    CASON,
+    Payment amount:
+    $69.69
+    Posted date:
+    April 16, 2026
+    This email was sent to casonkonzer@gmail.com
+    """
+    parsed = _extract_credit_card_payment_email(
+        "We've received your payment",
+        '"Capital One | VentureOne" capitalone@notification.capitalone.com',
+        body,
+    )
+    assert parsed == {
+        "merchant": "capital one",
+        "total": 69.69,
+        "receipt_date": date(2026, 4, 16),
+        "purchaser": "cason konzer",
+        "card_last4": "5653",
+        "category": "finance/credit-card-payment",
+    }
+
+
+def test_extract_credit_card_payment_email_discover_scheduled():
+    body = """
+    Account ending in 7875
+    CASON KONZER, your online Discover card payment is scheduled
+    Payment Info
+    Amount: $69.69
+    Payment Post Date: April 16, 2026
+    Confirmation Number: 9N00-2CHP-2P8D
+    """
+    parsed = _extract_credit_card_payment_email(
+        "Your Scheduled Payment",
+        "Discover Card discover@services.discover.com",
+        body,
+    )
+    assert parsed == {
+        "merchant": "discover",
+        "total": 69.69,
+        "receipt_date": date(2026, 4, 16),
+        "purchaser": "cason konzer",
+        "card_last4": "7875",
+        "category": "finance/credit-card-payment",
+    }
+
+
+def test_preferred_payment_category_prefers_credit_card_subcategory():
+    rules = {
+        "finance": {
+            "label": "Finance & Transfers",
+            "keywords": [],
+            "credit-card-payment": {"label": "Credit Card Payments", "keywords": []},
+        }
+    }
+    assert _preferred_payment_category(rules) == "finance/credit-card-payment"
+
+
+def test_extract_progressive_payment_email_renewal_reminder():
+    body = """
+    Your auto policy renewal payment is due on 05/01/2026 by 12:01 a.m. EST.
+    Your Payment Options
+    Total Premium
+    $1,125.00
+    Pay In Full
+    $1,028.00
+    Minimum Installment
+    $193.55
+    Cason, your rate went down by $48!
+    """
+    parsed = _extract_progressive_payment_email(
+        "Progressive policy renewal reminder",
+        "Progressive customerservice@e.progressive.com",
+        body,
+    )
+    assert parsed == {
+        "merchant": "progressive",
+        "total": 193.55,
+        "receipt_date": date(2026, 5, 1),
+        "purchaser": "cason konzer",
+        "card_last4": None,
+        "category": "auto/insurance",
+    }
+
+
+def test_internal_intake_notification_is_skipped():
+    settings = {"gmail": {"subject_prefix": "[intake] "}}
+    assert (
+        _is_internal_intake_notification(
+            "[intake] Receipt processed: capital one $69.69",
+            "casonkonzer@gmail.com",
+            settings,
+        )
+        is True
+    )
 
 
 # ── _safe_save ────────────────────────────────────────────────────────────────

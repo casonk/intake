@@ -87,6 +87,10 @@ reports_dir = "reports"
 #   "order confirmation",
 #   "your order",
 #   "order #",
+#   "we've received your payment",
+#   "your payment of",
+#   "your scheduled payment",
+#   "policy renewal reminder",
 # ]
 #
 # # How far back to search on each run (days)
