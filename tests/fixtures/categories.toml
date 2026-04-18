@@ -37,6 +37,10 @@ keywords = []
 label    = "Auto Parts"
 keywords = ["autozone"]
 
+[categories.auto.insurance]
+label    = "Auto Insurance"
+keywords = ["progressive", "policy renewal", "auto policy"]
+
 [categories.pc]
 label    = "Computer Hardware"
 keywords = ["newegg"]
@@ -44,6 +48,14 @@ keywords = ["newegg"]
 [categories.sw]
 label    = "Software & Dev Tools"
 keywords = ["steam"]
+
+[categories.finance]
+label    = "Finance & Transfers"
+keywords = []
+
+[categories.finance.credit-card-payment]
+label    = "Credit Card Payments"
+keywords = ["capital one", "ventureone", "discover card", "scheduled payment", "received your payment"]
 
 [categories.general]
 label    = "General / Uncategorized"

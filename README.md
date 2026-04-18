@@ -58,6 +58,15 @@ When the inbox contains an iPhone-style live-photo pair with the same stem
 as the canonical receipt input and exhausts the companion `.MOV` with an audit
 trail instead of ingesting both as separate receipts.
 
+Email ingestion also handles issuer payment-notification emails for supported
+credit cards. Capital One and Discover payment scheduled/posted messages are
+treated as finance records instead of ordinary merchant receipts, with issuer,
+payment amount, posted/scheduled date, purchaser, and card last4 extracted
+from the email body.
+
+TODO: keep expanding regression coverage for live scheduled-payment variants
+from Capital One, Discover, and Progressive as new provider templates arrive.
+
 Every receipt now attempts an itemized breakdown. `intake` first parses line
 items from stored OCR text and, when an OpenAI key is configured, will retry
 with AI extraction if the receipt otherwise looks good but no itemization was

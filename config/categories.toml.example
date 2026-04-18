@@ -73,6 +73,10 @@ keywords = ["parts-depot", "motor-supply"]
 label    = "Auto Service"
 keywords = ["quick-lube", "tire-center"]
 
+[categories.auto.insurance]
+label    = "Auto Insurance"
+keywords = ["progressive", "policy renewal", "auto policy"]
+
 [categories.tech]
 label    = "Technology"
 keywords = []
@@ -124,6 +128,14 @@ keywords = ["trail-outfitters", "base-camp-supply"]
 [categories.outdoor.resort]
 label    = "Ski & Mountain Resorts"
 keywords = ["summit-ski", "alpine-resort"]
+
+[categories.finance]
+label    = "Finance & Transfers"
+keywords = []
+
+[categories.finance.credit-card-payment]
+label    = "Credit Card Payments"
+keywords = ["capital one", "ventureone", "discover card", "scheduled payment", "received your payment"]
 
 [categories.general]
 label    = "General / Uncategorized"
