@@ -55,6 +55,94 @@ def test_receipt_datetime_parses_month_name_date_and_time():
     assert r.receipt_time.minute == 38
 
 
+# ── currency detection ────────────────────────────────────────────────────────
+
+
+def test_currency_defaults_to_usd():
+    r = parse_receipt("20260401_0900.pdf", "Some Store\nTOTAL $47.23")
+    assert r.currency == "USD"
+
+
+# ISO-4217 code adjacent to amount
+def test_currency_iso_code_after_amount():
+    for code in ("CAD", "EUR", "JPY", "GBP", "AUD", "CHF", "MXN", "KRW"):
+        r = parse_receipt("20260401_0900.pdf", f"Store\nTotal: 47.23 {code}")
+        assert r.currency == code, f"expected {code}"
+
+
+def test_currency_iso_code_before_amount():
+    r = parse_receipt("20260401_0900.pdf", "Store\nGBP 99.50\nTotal 99.50")
+    assert r.currency == "GBP"
+
+
+# Unicode currency symbols
+def test_currency_euro_symbol():
+    r = parse_receipt("20260401_0900.pdf", "Store\n€47.23\nTotal 47.23")
+    assert r.currency == "EUR"
+
+
+def test_currency_pound_symbol():
+    r = parse_receipt("20260401_0900.pdf", "Store\n£99.50\nTotal 99.50")
+    assert r.currency == "GBP"
+
+
+def test_currency_yen_symbol():
+    r = parse_receipt("20260401_0900.pdf", "Store\n¥5000\nTotal 5000")
+    assert r.currency == "JPY"
+
+
+def test_currency_rupee_symbol():
+    r = parse_receipt("20260401_0900.pdf", "Store\n₹1500.00\nTotal 1500.00")
+    assert r.currency == "INR"
+
+
+def test_currency_won_symbol():
+    r = parse_receipt("20260401_0900.pdf", "Store\n₩50000\nTotal 50000")
+    assert r.currency == "KRW"
+
+
+def test_currency_yuan_character():
+    r = parse_receipt("20260401_0900.pdf", "店铺\n元200.00\nTotal 200.00")
+    assert r.currency == "CNY"
+
+
+# Non-ISO text aliases
+def test_currency_cdn_dollar_alias():
+    r = parse_receipt("20260401_0900.pdf", "Store\nCDN$ 22.50\nTotal 22.50")
+    assert r.currency == "CAD"
+
+
+def test_currency_ca_dollar_alias():
+    r = parse_receipt("20260401_0900.pdf", "Store\nCA$ 15.00\nTotal 15.00")
+    assert r.currency == "CAD"
+
+
+def test_currency_canadian_dollar_text():
+    r = parse_receipt("20260401_0900.pdf", "Store\nAll prices in Canadian dollar\nTotal 15.00")
+    assert r.currency == "CAD"
+
+
+def test_currency_euro_word():
+    r = parse_receipt("20260401_0900.pdf", "Store\nTotal in Euro: 47.23")
+    assert r.currency == "EUR"
+
+
+def test_currency_yen_word():
+    r = parse_receipt("20260401_0900.pdf", "Store\nTotal in Yen: 5000")
+    assert r.currency == "JPY"
+
+
+def test_currency_sterling_word():
+    r = parse_receipt("20260401_0900.pdf", "Store\nPrices in Sterling\nTotal 99.50")
+    assert r.currency == "GBP"
+
+
+# Explicit Currency: label
+def test_currency_explicit_label():
+    r = parse_receipt("20260401_0900.pdf", "Store\nCurrency: AUD\nTotal: 88.00")
+    assert r.currency == "AUD"
+
+
 def test_total_from_usd_line_with_single_decimal():
     r = parse_receipt("20260401_0900.pdf", "Vodafone\nTotal 13.2 USD")
     assert r.total == pytest.approx(13.2)

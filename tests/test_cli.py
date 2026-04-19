@@ -83,6 +83,9 @@ def test_install_systemd_unit_avoids_repo_working_directory(monkeypatch):
     assert job["working_directory"] == "%h"
     assert job["start_limit_interval_sec"] == "0"
     assert "/bin/bash -lc" in job["exec_start"]
+    assert (
+        f'export PYTHONPATH="{cli._REPO_ROOT}${{PYTHONPATH:+:$PYTHONPATH}}"; ' in job["exec_start"]
+    )
     assert 'until /usr/bin/python3 -c "import intake.cli" >/dev/null 2>&1;' in job["exec_start"]
     assert "exec /usr/bin/python3 -m intake.cli daemon" in job["exec_start"]
 
@@ -104,6 +107,9 @@ def test_install_report_timer_units_writes_noon_schedule(monkeypatch):
     assert captured["target"] == "systemd-user"
     assert job["working_directory"] == "%h"
     assert "/bin/bash -lc" in job["exec_start"]
+    assert (
+        f'export PYTHONPATH="{cli._REPO_ROOT}${{PYTHONPATH:+:$PYTHONPATH}}"; ' in job["exec_start"]
+    )
     assert 'until /usr/bin/python3 -c "import intake.cli" >/dev/null 2>&1;' in job["exec_start"]
     assert "exec /usr/bin/python3 -m intake.cli report" in job["exec_start"]
     assert timer["on_calendar"] == "*-*-* 12:00:00"
@@ -127,6 +133,9 @@ def test_install_web_unit_writes_localhost_service(monkeypatch):
     assert job["working_directory"] == "%h"
     assert job["start_limit_interval_sec"] == "0"
     assert "/bin/bash -lc" in job["exec_start"]
+    assert (
+        f'export PYTHONPATH="{cli._REPO_ROOT}${{PYTHONPATH:+:$PYTHONPATH}}"; ' in job["exec_start"]
+    )
     assert 'until /usr/bin/python3 -c "import intake.cli" >/dev/null 2>&1;' in job["exec_start"]
     assert "exec /usr/bin/python3 -m intake.cli serve" in job["exec_start"]
 
@@ -160,6 +169,7 @@ def test_install_clockwork_manifest_writes_units_when_clockwork_is_available(mon
     assert "Description=intake receipt processor daemon" in unit
     assert "StartLimitIntervalSec=0" in unit
     assert "ExecStart=/bin/bash -lc" in unit
+    assert f'export PYTHONPATH="{cli._REPO_ROOT}${{PYTHONPATH:+:$PYTHONPATH}}"; ' in unit
 
 
 def test_cmd_review_renders_reasoned_flags(tmp_path, capsys):

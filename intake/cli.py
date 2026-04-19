@@ -217,8 +217,10 @@ def _install_clockwork_manifest(manifest_text: str, *, target: str) -> None:
 def _build_wait_exec_start(*, python_executable: str, ready_message: str, command: str) -> str:
     """Build the guarded shell wrapper used by intake's scheduled units."""
     python_q = shlex.quote(python_executable)
+    repo_root = str(_REPO_ROOT).replace("\\", "\\\\").replace('"', '\\"')
     return (
-        f'/bin/bash -lc \'until {python_q} -c "import intake.cli" >/dev/null 2>&1; do '
+        f'/bin/bash -lc \'export PYTHONPATH="{repo_root}${{PYTHONPATH:+:$PYTHONPATH}}"; '
+        f'until {python_q} -c "import intake.cli" >/dev/null 2>&1; do '
         f'echo "{ready_message}"; '
         "sleep 30; "
         f"done; exec {python_q} -m intake.cli {command}'"
@@ -556,6 +558,7 @@ def _receipt_row_from_receipt(
         "processed_by": processed_by,
         "purchaser": receipt.purchaser,
         "card_last4": receipt.card_last4,
+        "currency": receipt.currency,
         "items": receipt_items_to_dicts(receipt.items),
         "certifications": receipt_certifications_to_dicts(receipt.certifications),
         "tier": tier,
@@ -1247,6 +1250,7 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
             "processed_by": sc.get("processed_by", "tesseract"),
             "purchaser": sc.get("purchaser"),
             "card_last4": sc.get("card_last4"),
+            "currency": sc.get("currency", "USD"),
             "items": sc.get("items"),
             "tier": sc.get("tier", "ok"),
         }
@@ -1865,6 +1869,8 @@ def _cmd_correct(args: argparse.Namespace, settings: dict) -> None:
         updates["certifications"] = receipt_certifications_to_dicts(manual_certs)
     if args.clear_certifications:
         updates["certifications"] = []
+    if getattr(args, "currency", None) is not None:
+        updates["currency"] = args.currency.strip().upper()
 
     if not updates:
         print("ERROR: no changes requested. Pass at least one field to correct.", file=sys.stderr)
@@ -3112,6 +3118,11 @@ def main() -> None:
         "--clear-card-last4",
         action="store_true",
         help="Clear the stored card_last4 value",
+    )
+    p_cor.add_argument(
+        "--currency",
+        metavar="CODE",
+        help="Corrected ISO-4217 currency code (e.g. USD, CAD, EUR, JPY)",
     )
     p_cor.add_argument(
         "--certification",

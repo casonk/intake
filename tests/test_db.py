@@ -444,3 +444,90 @@ def test_query_flagged_adds_total_guard_threshold_reasons(tmp_path):
         "total_over_750",
         "total_over_1000",
     ]
+
+
+def test_currency_stored_and_retrieved(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260401_1000.pdf",
+            "scan_date": "2026-04-01",
+            "merchant": "canadian tire",
+            "total": 47.23,
+            "category": "auto",
+            "receipt_dir": "auto/20260401_1000.pdf",
+            "raw_text": "Canadian Tire\nTotal: 47.23 CAD",
+            "processed_by": "tesseract",
+            "currency": "CAD",
+        },
+    )
+    row = get_receipt(conn, "20260401_1000.pdf")
+    assert row is not None
+    assert row["currency"] == "CAD"
+
+
+def test_currency_not_usd_flagged_in_review(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260401_1000.pdf",
+            "scan_date": "2026-04-01",
+            "merchant": "canadian tire",
+            "total": 47.23,
+            "category": "auto",
+            "receipt_dir": "auto/20260401_1000.pdf",
+            "raw_text": "",
+            "processed_by": "tesseract",
+            "currency": "CAD",
+        },
+    )
+    flagged = {row["filename"]: row for row in query_flagged(conn)}
+    assert "20260401_1000.pdf" in flagged
+    assert any("currency_not_usd" in r for r in flagged["20260401_1000.pdf"]["review_reasons"])
+
+
+def test_currency_usd_not_flagged_for_currency(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260401_1000.pdf",
+            "scan_date": "2026-04-01",
+            "merchant": "target",
+            "total": 23.50,
+            "category": "grocery",
+            "receipt_dir": "grocery/20260401_1000.pdf",
+            "raw_text": "",
+            "processed_by": "tesseract",
+            "currency": "USD",
+        },
+    )
+    flagged = {row["filename"]: row for row in query_flagged(conn)}
+    if "20260401_1000.pdf" in flagged:
+        reasons = flagged["20260401_1000.pdf"]["review_reasons"]
+        assert not any("currency_not_usd" in r for r in reasons)
+
+
+def test_currency_can_be_corrected(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260401_1000.pdf",
+            "scan_date": "2026-04-01",
+            "merchant": "some shop",
+            "total": 30.00,
+            "category": "general",
+            "receipt_dir": "general/20260401_1000.pdf",
+            "raw_text": "",
+            "processed_by": "tesseract",
+            "currency": "CAD",
+        },
+    )
+    updated, changes = update_receipt_fields(
+        conn, "20260401_1000.pdf", {"currency": "USD"}, source="manual-correct"
+    )
+    assert updated["currency"] == "USD"
+    assert "currency" in changes

@@ -68,6 +68,7 @@ _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN items_json TEXT",
     "ALTER TABLE receipts ADD COLUMN certifications_json TEXT",
     "CREATE INDEX IF NOT EXISTS idx_receipts_file_hash ON receipts(file_hash)",
+    "ALTER TABLE receipts ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'",
 ]
 
 
@@ -167,10 +168,12 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
         """
         INSERT INTO receipts
             (filename, scan_date, merchant, total, category, receipt_dir, file_hash,
-             raw_text, items_json, certifications_json, processed_by, purchaser, card_last4, processed_at)
+             raw_text, items_json, certifications_json, processed_by, purchaser, card_last4,
+             currency, processed_at)
         VALUES
             (:filename, :scan_date, :merchant, :total, :category, :receipt_dir, :file_hash,
-             :raw_text, :items_json, :certifications_json, :processed_by, :purchaser, :card_last4, :processed_at)
+             :raw_text, :items_json, :certifications_json, :processed_by, :purchaser, :card_last4,
+             :currency, :processed_at)
         ON CONFLICT(filename) DO UPDATE SET
             scan_date    = excluded.scan_date,
             merchant     = excluded.merchant,
@@ -184,12 +187,14 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             processed_by = excluded.processed_by,
             purchaser    = excluded.purchaser,
             card_last4   = excluded.card_last4,
+            currency     = excluded.currency,
             processed_at = excluded.processed_at
         """,
         {
             "processed_by": "tesseract",
             "purchaser": None,
             "card_last4": None,
+            "currency": "USD",
             "file_hash": None,
             "items_json": items_json,
             "certifications_json": certifications_json,
@@ -205,7 +210,8 @@ def get_receipt(conn: sqlite3.Connection, filename: str) -> dict | None:
     row = conn.execute(
         """
         SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
-               raw_text, items_json, certifications_json, processed_by, purchaser, card_last4, processed_at, reviewed_at
+               raw_text, items_json, certifications_json, processed_by, purchaser, card_last4,
+               currency, processed_at, reviewed_at
         FROM receipts
         WHERE filename = ?
         """,
@@ -229,7 +235,8 @@ def get_receipt_by_file_hash(
     row = conn.execute(
         f"""
         SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
-               raw_text, items_json, certifications_json, processed_by, purchaser, card_last4, processed_at, reviewed_at
+               raw_text, items_json, certifications_json, processed_by, purchaser, card_last4,
+               currency, processed_at, reviewed_at
         FROM receipts
         {where}
         ORDER BY processed_at ASC, filename ASC
@@ -326,6 +333,7 @@ def update_receipt_fields(
         "processed_by",
         "purchaser",
         "card_last4",
+        "currency",
         "items",
         "certifications",
         "reviewed_at",
@@ -578,6 +586,7 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
             category,
             purchaser,
             card_last4,
+            currency,
             processed_by,
             processed_at,
             reviewed_at
@@ -618,6 +627,7 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
         merchant = str(row.get("merchant") or "").strip()
         merchant_norm = merchant.casefold()
         card_last4 = str(row.get("card_last4") or "").strip()
+        currency = str(row.get("currency") or "USD").strip().upper()
         total = row.get("total")
         scan_date = _parse_scan_date(row.get("scan_date"))
         novelty_allowed = (
@@ -640,6 +650,8 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
             for threshold in total_guard_thresholds:
                 if float(total) > threshold:
                     total_guard_reasons.append(f"total_over_{int(threshold)}")
+        if currency != "USD":
+            quality_reasons.append(f"currency_not_usd ({currency})")
 
         reasons.extend(quality_reasons)
         reasons.extend(total_guard_reasons)
