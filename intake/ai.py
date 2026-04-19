@@ -47,6 +47,7 @@ def extract_with_openai(
                 '  "receipt_time"  — time printed on the receipt in HH:MM 24-hr format (string)\n'
                 '  "purchaser"     — cardholder or customer name if visible (string)\n'
                 '  "card_last4"    — last 4 digits of the payment card if visible (string)\n'
+                '  "currency"       — ISO-4217 currency code (e.g. "USD", "CAD", "EUR", "JPY"); default "USD" if not shown\n'
                 '  "items"         — array of itemized line objects with keys '
                 '"description", "amount", "quantity", "unit_price" (null when unknown)\n'
                 '  "certifications" — array of certification objects with keys '
@@ -134,6 +135,10 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
     certifications = receipt_certifications_from_dicts(ai.get("certifications"))
     if certifications:
         kwargs["certifications"] = merge_certifications(receipt.certifications, certifications)
+
+    currency = ai.get("currency")
+    if currency and isinstance(currency, str) and re.fullmatch(r"[A-Z]{3}", currency.upper()):
+        kwargs["currency"] = currency.upper()
 
     total = ai.get("total")
     if total is not None:

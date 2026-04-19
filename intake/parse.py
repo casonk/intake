@@ -35,6 +35,7 @@ class Receipt:
     raw_text: str
     purchaser: str | None = None  # cardholder name if found on receipt
     card_last4: str | None = None  # last 4 digits of payment card if found
+    currency: str = "USD"  # ISO-4217 currency code detected from OCR text
     items: list[ReceiptItem] = field(default_factory=list)
     certifications: list[ReceiptCertification] = field(default_factory=list)
 
@@ -62,6 +63,7 @@ def parse_receipt(filename: str, raw_text: str, pdf_path: Path | None = None) ->
     receipt_date, receipt_time = _parse_receipt_datetime(raw_text)
     purchaser = _parse_purchaser(raw_text)
     card_last4 = _parse_card_last4(raw_text)
+    currency = _parse_currency(raw_text)
     items = _parse_items(raw_text)
     certifications = extract_certifications(raw_text)
     return Receipt(
@@ -74,9 +76,103 @@ def parse_receipt(filename: str, raw_text: str, pdf_path: Path | None = None) ->
         raw_text=raw_text,
         purchaser=purchaser,
         card_last4=card_last4,
+        currency=currency,
         items=items,
         certifications=certifications,
     )
+
+
+# ── currency ──────────────────────────────────────────────────────────────────
+
+# Unambiguous Unicode currency symbols. CNY characters checked before ¥ so that
+# receipts showing both 元 and ¥ resolve to CNY rather than JPY.
+_CURRENCY_SYMBOL_MAP: dict[str, str] = {
+    "元": "CNY", "圆": "CNY", "圓": "CNY",
+    "€": "EUR",
+    "£": "GBP",
+    "₹": "INR",
+    "₩": "KRW",
+    "₽": "RUB",
+    "₺": "TRY",
+    "฿": "THB",
+    "₫": "VND",
+    "₪": "ILS",
+    "₦": "NGN",
+    "₱": "PHP",
+    "₴": "UAH",
+    "₸": "KZT",
+    "₼": "AZN",
+    "₾": "GEL",
+    "¥": "JPY",
+    "円": "JPY",
+}
+
+# Non-ISO-4217 text aliases that unambiguously name a single currency.
+_CURRENCY_TEXT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"CDN\$?|CA\$|\bC\$|\bCanadian\s+dollar", re.IGNORECASE), "CAD"),
+    (re.compile(r"\bEuro\b", re.IGNORECASE), "EUR"),
+    (re.compile(r"\bYen\b", re.IGNORECASE), "JPY"),
+    (re.compile(r"\bPound\s+Sterling\b|\bSterling\b", re.IGNORECASE), "GBP"),
+    (re.compile(r"\bYuan\b|\bRenminbi\b", re.IGNORECASE), "CNY"),
+]
+
+# Complete set of active ISO-4217 alphabetic codes (ISO 4217:2015 + amendments).
+# Used to validate 3-letter tokens found near amounts.
+_ISO_4217_CODES: frozenset[str] = frozenset({
+    "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN",
+    "BAM", "BBD", "BDT", "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL",
+    "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHF", "CLP", "CNY",
+    "COP", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP",
+    "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD",
+    "GNF", "GTQ", "GYD", "HKD", "HNL", "HRK", "HTG", "HUF", "IDR", "ILS",
+    "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR",
+    "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD",
+    "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU",
+    "MUR", "MVR", "MWK", "MXN", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK",
+    "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG",
+    "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK",
+    "SGD", "SHP", "SOS", "SRD", "SSP", "STN", "SYP", "SZL", "THB", "TJS",
+    "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD",
+    "UYU", "UZS", "VES", "VND", "VUV", "WST", "XAF", "XCD", "XOF", "XPF",
+    "YER", "ZAR", "ZMW", "ZWL",
+})
+
+# Explicit "Currency: EUR" label on a receipt.
+_CURRENCY_LABEL_RE = re.compile(r"\bcurrency\s*[:\-]?\s*([A-Z]{3})\b", re.IGNORECASE)
+
+# Uppercase ISO-4217 code immediately after or before an amount.
+# Requires uppercase to avoid matching English words like "all", "cop", "top".
+_AMOUNT_CODE_RE = re.compile(
+    r"\b\d{1,6}(?:[.,]\d{1,2})?\s+([A-Z]{3})\b"   # "47.23 CAD"
+    r"|\b([A-Z]{3})\s+\d{1,6}(?:[.,]\d{1,2})\b",   # "CAD 47.23"
+)
+
+
+def _parse_currency(raw_text: str) -> str:
+    """Detect receipt currency from OCR text; returns ISO-4217 code.
+
+    Detection order (highest → lowest confidence):
+    1. Unambiguous Unicode currency symbols (€, £, ¥, ₹, …)
+    2. Non-ISO text aliases (CDN$, CA$, "Canadian dollar", "Yen", …)
+    3. Explicit "Currency: EUR" label
+    4. Uppercase ISO-4217 code adjacent to an amount ("47.23 EUR")
+    """
+    for symbol, code in _CURRENCY_SYMBOL_MAP.items():
+        if symbol in raw_text:
+            return code
+    for pattern, code in _CURRENCY_TEXT_PATTERNS:
+        if pattern.search(raw_text):
+            return code
+    m = _CURRENCY_LABEL_RE.search(raw_text)
+    if m:
+        code = m.group(1).upper()
+        if code in _ISO_4217_CODES:
+            return code
+    for m in _AMOUNT_CODE_RE.finditer(raw_text):
+        code = (m.group(1) or m.group(2) or "").upper()
+        if code in _ISO_4217_CODES:
+            return code
+    return "USD"
 
 
 def _coerce_item_number(value: object | None) -> float | None:

@@ -645,6 +645,7 @@ def _upsert_html_receipt(
                             "Extract receipt fields from this email body and return ONLY valid JSON "
                             'with keys: "merchant", "total" (float), "receipt_date" (YYYY-MM-DD), '
                             '"receipt_time" (HH:MM), "purchaser", "card_last4", '
+                            '"currency" (ISO-4217 code e.g. "USD", "CAD", "EUR", "JPY"; default "USD"), '
                             '"items" (array of {"description","amount","quantity","unit_price"}), '
                             '"certifications" (array of {"issuer","label","source_text"}). '
                             "Use null for missing values and [] when no itemized lines are visible.\n\n"
@@ -686,6 +687,7 @@ def _upsert_html_receipt(
             "processed_by": processed_by,
             "purchaser": receipt.purchaser,
             "card_last4": receipt.card_last4,
+            "currency": receipt.currency,
             "items": receipt.items,
             "certifications": receipt.certifications,
         },
