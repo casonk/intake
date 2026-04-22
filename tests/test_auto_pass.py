@@ -1,10 +1,29 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 from pathlib import Path
 
-DYNO_LAB_SRC = Path(__file__).resolve().parents[2] / "dyno-lab" / "src"
+
+def _resolve_dyno_lab_src() -> Path:
+    worktree_guess = Path(__file__).resolve().parents[2] / "dyno-lab" / "src"
+    if worktree_guess.exists():
+        return worktree_guess
+
+    common_dir = subprocess.check_output(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=Path(__file__).resolve().parent,
+        text=True,
+    ).strip()
+    for parent in Path(common_dir).resolve().parent.parents:
+        candidate = parent / "util-repos" / "dyno-lab" / "src"
+        if (candidate / "dyno_lab" / "__init__.py").exists():
+            return candidate
+    return worktree_guess
+
+
+DYNO_LAB_SRC = _resolve_dyno_lab_src()
 if str(DYNO_LAB_SRC) not in sys.path:
     sys.path.insert(0, str(DYNO_LAB_SRC))
 for module_name in [
