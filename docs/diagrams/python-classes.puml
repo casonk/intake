@@ -11,6 +11,7 @@ class "FetchResult" as intake.email.FetchResult {
 class "Receipt" as intake.parse.Receipt {
   card_last4 : str | None
   certifications : list[ReceiptCertification]
+  currency : str
   filename : str
   items : list[ReceiptItem]
   merchant : str
