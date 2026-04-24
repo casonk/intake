@@ -486,20 +486,10 @@ _REPLY_CLEAR_RE = re.compile(
 )
 
 
-def _intake_subject_prefix(settings: dict) -> str:
-    """Return the configured Gmail subject prefix for intake notifications."""
-    gmail_cfg = settings.get("gmail", {})
-    raw = gmail_cfg.get("subject_prefix", "[intake] ")
-    if raw is None:
-        return ""
-    prefix = str(raw)
-    return prefix if prefix.strip() else ""
-
-
 def _intake_processed_subject_fragment(settings: dict) -> str:
     """Return the stable subject fragment used for processed-receipt emails."""
-    prefix = _intake_subject_prefix(settings)
-    return f"{prefix}Receipt processed:" if prefix else "Receipt processed:"
+    del settings
+    return "Receipt processed"
 
 
 def _is_intake_reply_message(msg, settings: dict) -> bool:
