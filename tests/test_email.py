@@ -9,6 +9,7 @@ import pytest
 from intake.db import (
     get_receipt,
     init_db,
+    is_email_message_id_processed,
     is_email_processed,
     query_flagged,
     query_receipt_updates,
@@ -393,6 +394,20 @@ def test_record_and_check_email_processed(db):
         attachment_count=1,
     )
     assert is_email_processed(db, uid=12345, mailbox="INBOX") is True
+
+
+def test_is_email_message_id_processed_matches_across_mailboxes(db):
+    record_email_receipt(
+        db,
+        uid=12345,
+        mailbox="INBOX",
+        message_id="<abc@mail.example.com>",
+        subject="Your receipt",
+        sender="shop@example.com",
+        received_at="Thu, 01 Jan 2026 12:00:00 +0000",
+        attachment_count=1,
+    )
+    assert is_email_message_id_processed(db, "<abc@mail.example.com>") is True
 
 
 def test_different_uid_not_processed(db):

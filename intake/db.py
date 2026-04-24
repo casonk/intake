@@ -729,6 +729,18 @@ def is_email_processed(conn: sqlite3.Connection, uid: int, mailbox: str) -> bool
     return row is not None
 
 
+def is_email_message_id_processed(conn: sqlite3.Connection, message_id: str) -> bool:
+    """Return True if *message_id* has already been recorded in email_receipts."""
+    cleaned = str(message_id or "").strip()
+    if not cleaned:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM email_receipts WHERE message_id = ? LIMIT 1",
+        (cleaned,),
+    ).fetchone()
+    return row is not None
+
+
 def record_email_receipt(
     conn: sqlite3.Connection,
     uid: int,
