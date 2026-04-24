@@ -27,6 +27,7 @@ from intake.email import (
     _extract_reply_updates,
     _is_internal_intake_notification,
     _looks_like_receipt,
+    _mailbox_select_candidates,
     _preferred_payment_category,
     _safe_save,
     _safe_save_receipt_pdf,
@@ -314,6 +315,13 @@ def test_extract_reply_updates_parses_safe_structured_fields():
         "currency": "USD",
     }
     assert remaining == "Please review"
+
+
+def test_mailbox_select_candidates_include_quoted_variant_for_spaces():
+    assert _mailbox_select_candidates("[Gmail]/Sent Mail") == [
+        "[Gmail]/Sent Mail",
+        '"[Gmail]/Sent Mail"',
+    ]
 
 
 # ── _safe_save ────────────────────────────────────────────────────────────────
