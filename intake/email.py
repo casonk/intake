@@ -20,6 +20,7 @@ from pathlib import Path
 from intake.db import (
     get_receipt,
     infer_purchaser_from_card_last4,
+    is_email_message_id_processed,
     is_email_processed,
     record_email_receipt,
     record_receipt_update,
@@ -923,6 +924,12 @@ def _process_reply_messages(
                 message_id = sr.decode_mime_header(msg.get("Message-ID"))
                 date_str = str(msg.get("Date", "") or "").strip()
 
+                if is_email_message_id_processed(db_conn, message_id):
+                    if verbose:
+                        print(f"    skip (reply message-id already processed): {subject!r}")
+                    result.skipped += 1
+                    continue
+
                 if is_email_processed(db_conn, uid, mailbox):
                     if verbose:
                         print(f"    skip (reply already processed): {subject!r}")
@@ -1007,6 +1014,9 @@ def _process_reply_messages(
                 result.errors += 1
                 if verbose:
                     print(f"    ERROR reply uid={uid} mailbox={mailbox}: {exc}")
+
+        if "all mail" in mailbox.lower():
+            break
 
 
 def _looks_like_receipt(text: str) -> bool:
