@@ -195,18 +195,22 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
     assert sent == 1
     assert len(calls) == 1
     cmd, capture_output, text = calls[0]
-    assert cmd[:7] == [
+    assert cmd[:11] == [
         sys.executable,
         str(send_script),
         "--header",
         "X-Portfolio-Service: intake",
         "--header",
         "X-Crew-Chief-Intent: notify",
+        "--header",
+        "X-Intake-Receipt-Filename: 20260318_1834.pdf",
+        "--header",
+        "X-Intake-Receipt-Dir: grocery/supermarket/20260318_1834.pdf",
         "me@example.com",
     ]
-    assert cmd[7] == "[intake] Receipt processed: kroger $4.33"
-    assert "Receipt processed" in cmd[8]
-    assert cmd[9:] == ["--config", str(config_path)]
+    assert cmd[11] == "[intake] Receipt processed: kroger $4.33"
+    assert "Receipt processed" in cmd[12]
+    assert cmd[13:] == ["--config", str(config_path)]
     assert capture_output is True
     assert text is True
 

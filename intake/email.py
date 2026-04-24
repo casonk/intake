@@ -17,11 +17,29 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
-from intake.db import infer_purchaser_from_card_last4, is_email_processed, record_email_receipt
+from intake.db import (
+    get_receipt,
+    infer_purchaser_from_card_last4,
+    is_email_processed,
+    record_email_receipt,
+    record_receipt_update,
+    update_receipt_fields,
+)
 from intake.naming import allocate_canonical_path
 from intake.purchaser import normalize_purchaser
 
 _DEFAULT_RECEIPT_SENDER_HINTS = ("service@paypal.com",)
+_DEFAULT_REPLY_MAILBOXES = (
+    "[Gmail]/Sent Mail",
+    "[GoogleMail]/Sent Mail",
+    "Sent",
+    "Sent Mail",
+    "Sent Items",
+)
+_INTAKE_REPLY_SOURCE = "email-reply"
+_INTAKE_REPLY_NOTE_SOURCE = "email-reply-note"
+_INTAKE_RECEIPT_FILENAME_HEADER = "X-Intake-Receipt-Filename"
+_INTAKE_RECEIPT_DIR_HEADER = "X-Intake-Receipt-Dir"
 
 # ── HTML → plain text ─────────────────────────────────────────────────────────
 
@@ -92,6 +110,9 @@ class FetchResult:
         self.skipped = 0
         self.attachments_saved = 0
         self.html_processed = 0
+        self.reply_processed = 0
+        self.reply_applied = 0
+        self.reply_unmatched = 0
         self.errors = 0
         self.saved_files: list[Path] = []
 
@@ -99,6 +120,8 @@ class FetchResult:
         return (
             f"FetchResult(found={self.found}, skipped={self.skipped}, "
             f"attachments={self.attachments_saved}, html={self.html_processed}, "
+            f"reply_processed={self.reply_processed}, reply_applied={self.reply_applied}, "
+            f"reply_unmatched={self.reply_unmatched}, "
             f"errors={self.errors})"
         )
 
@@ -280,6 +303,17 @@ def fetch_receipts(
             if to_expunge:
                 conn.expunge()
 
+            _process_reply_messages(
+                conn,
+                config,
+                settings,
+                db_conn,
+                result,
+                since_days=since_days,
+                limit=limit,
+                verbose=verbose,
+            )
+
     except Exception as exc:
         raise RuntimeError(f"Email fetch failed: {exc}") from exc
 
@@ -326,6 +360,12 @@ def _configured_receipt_sender_hints(email_cfg: dict) -> list[str]:
     """Return sender fragments that should be searched as receipt candidates."""
     configured = [str(value).strip() for value in email_cfg.get("receipt_senders", [])]
     return list(dict.fromkeys([*configured, *_DEFAULT_RECEIPT_SENDER_HINTS]))
+
+
+def _configured_reply_mailboxes(email_cfg: dict) -> list[str]:
+    """Return mailboxes that may contain replies to intake notification emails."""
+    configured = [str(value).strip() for value in email_cfg.get("reply_mailboxes", [])]
+    return list(dict.fromkeys([*configured, *_DEFAULT_REPLY_MAILBOXES]))
 
 
 def _email_was_handled(saved_count: int, inline_processed: bool) -> bool:
@@ -429,6 +469,480 @@ _PAYPAL_YOU_PAID_RE = re.compile(
     r"\byou paid\s+\$?\s*(\d+(?:\.\d{2})?)\s+[A-Z]{3}\s+to\s+(.+)$",
     re.IGNORECASE | re.MULTILINE,
 )
+_QUOTED_REPLY_SPLIT_RE = re.compile(
+    r"(?im)^\s*(?:on .+wrote:|from:\s.+|sent:\s.+|subject:\s.+|-----original message-----)\s*$"
+)
+_REPLY_SUBJECT_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd)\s*:\s*", re.IGNORECASE)
+_REPLY_MESSAGE_ID_RE = re.compile(r"<[^>]+>")
+_REPLY_FILENAME_RE = re.compile(r"(?im)^\s*filename\s*:\s*(\S+)\s*$")
+_REPLY_FILE_RE = re.compile(r"(?im)^\s*file\s*:\s*(.+?)\s*$")
+_REPLY_UPDATE_RE = re.compile(
+    r"^\s*(merchant|total|purchaser|card(?:\s+last4)?|card_last4|currency)\s*(?::|=|->)\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+_REPLY_CLEAR_RE = re.compile(
+    r"^\s*clear\s+(purchaser|card(?:\s+last4)?|card_last4)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _intake_subject_prefix(settings: dict) -> str:
+    """Return the configured Gmail subject prefix for intake notifications."""
+    gmail_cfg = settings.get("gmail", {})
+    raw = gmail_cfg.get("subject_prefix", "[intake] ")
+    if raw is None:
+        return ""
+    prefix = str(raw)
+    return prefix if prefix.strip() else ""
+
+
+def _intake_processed_subject_fragment(settings: dict) -> str:
+    """Return the stable subject fragment used for processed-receipt emails."""
+    prefix = _intake_subject_prefix(settings)
+    return f"{prefix}Receipt processed:" if prefix else "Receipt processed:"
+
+
+def _is_intake_reply_message(msg, settings: dict) -> bool:
+    """Return True when *msg* is a reply to an intake processed-receipt email."""
+    subject = str(msg.get("Subject", "") or "")
+    subject_lower = subject.strip().lower()
+    fragment = _intake_processed_subject_fragment(settings).lower()
+    if fragment not in subject_lower:
+        return False
+    if _REPLY_SUBJECT_PREFIX_RE.match(subject):
+        return True
+    return bool(msg.get("In-Reply-To") or msg.get("References"))
+
+
+def _message_text(msg, sr) -> str:
+    """Return the best plain-text body for *msg*."""
+    plain_text, html_body = sr.extract_message_bodies(msg)
+    parts = [
+        part.strip() for part in (plain_text, html_to_text(html_body)) if part and part.strip()
+    ]
+    return "\n\n".join(parts).strip()
+
+
+def _trim_reply_note_text(text: str) -> str:
+    """Trim the user's new reply text from quoted original content."""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    if not normalized.strip():
+        return ""
+
+    lines: list[str] = []
+    for raw_line in normalized.split("\n"):
+        stripped = raw_line.strip()
+        if _QUOTED_REPLY_SPLIT_RE.match(stripped):
+            break
+        if stripped.startswith(">"):
+            break
+        lines.append(stripped)
+
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+def _extract_receipt_filename_from_text(text: str) -> str | None:
+    """Extract the tracked receipt filename from notification body text."""
+    match = _REPLY_FILENAME_RE.search(text)
+    if match:
+        return Path(match.group(1).strip()).name or None
+
+    match = _REPLY_FILE_RE.search(text)
+    if not match:
+        return None
+    candidate = Path(match.group(1).strip()).name
+    if not candidate:
+        return None
+    if "." not in candidate:
+        return None
+    return candidate
+
+
+def _extract_receipt_filename_from_message(msg, sr) -> str | None:
+    """Resolve the receipt filename from intake notification headers or body."""
+    header_value = sr.decode_mime_header(msg.get(_INTAKE_RECEIPT_FILENAME_HEADER))
+    if header_value:
+        return Path(header_value.strip()).name or None
+
+    receipt_dir = sr.decode_mime_header(msg.get(_INTAKE_RECEIPT_DIR_HEADER))
+    if receipt_dir:
+        candidate = Path(receipt_dir.strip()).name
+        if candidate and "." in candidate:
+            return candidate
+
+    return _extract_receipt_filename_from_text(_message_text(msg, sr))
+
+
+def _extract_reply_message_ids(msg) -> list[str]:
+    """Return normalized message-id values referenced by a reply message."""
+    seen: set[str] = set()
+    values: list[str] = []
+    for header_name in ("In-Reply-To", "References"):
+        raw_value = str(msg.get(header_name, "") or "")
+        for match in _REPLY_MESSAGE_ID_RE.findall(raw_value):
+            if match in seen:
+                continue
+            seen.add(match)
+            values.append(match)
+    return values
+
+
+def _fetch_message_by_uid(conn, mailbox: str, uid: int, *, readonly: bool) -> object:
+    """Select *mailbox* and fetch the RFC822 payload for *uid*."""
+    status, _ = conn.select(mailbox, readonly=readonly)
+    if status != "OK":
+        raise RuntimeError(f"Cannot select mailbox {mailbox!r}")
+
+    fetch_status, msg_data = conn.uid("fetch", str(uid), "(RFC822)")
+    if fetch_status != "OK":
+        raise RuntimeError(f"Cannot fetch uid {uid} from {mailbox!r}")
+    return msg_data
+
+
+def _resolve_reply_receipt_filename(
+    conn, config, sr, settings: dict, msg, full_text: str
+) -> str | None:
+    """Resolve the tracked receipt filename targeted by a reply email."""
+    filename = _extract_receipt_filename_from_text(full_text)
+    if filename:
+        return filename
+
+    reply_mailboxes = _configured_reply_mailboxes(settings.get("email", {}))
+    recent_limit = max(10, min(100, int(settings.get("email", {}).get("limit", 500))))
+    for message_id in _extract_reply_message_ids(msg):
+        original = sr.find_message_in_mailboxes(
+            conn,
+            reply_mailboxes,
+            message_id,
+            recent_limit=recent_limit,
+            search_charset=config.imap.search_charset,
+        )
+        if not original:
+            continue
+        original_data = _fetch_message_by_uid(
+            conn,
+            original["mailbox"],
+            int(original["uid"]),
+            readonly=True,
+        )
+        payload = sr.extract_fetch_payload(original_data)
+        if not payload:
+            continue
+        original_msg = message_from_bytes(payload, policy=default_policy)
+        filename = _extract_receipt_filename_from_message(original_msg, sr)
+        if filename:
+            return filename
+    return None
+
+
+def _normalize_reply_field(field: str) -> str:
+    """Normalize a free-form field label from a reply note."""
+    lowered = field.strip().lower().replace("_", " ")
+    if lowered in {"card last4", "card"}:
+        return "card_last4"
+    return lowered.replace(" ", "_")
+
+
+def _parse_reply_update_value(field: str, value: str):
+    """Parse a structured field value from an intake reply line."""
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+
+    none_markers = {"none", "null", "clear", "blank", "empty"}
+    if field in {"purchaser", "card_last4"} and cleaned.lower() in none_markers:
+        return None
+    if field == "merchant":
+        return cleaned.lower()
+    if field == "total":
+        match = re.search(r"-?\d+(?:\.\d{2})?", cleaned.replace(",", ""))
+        return float(match.group(0)) if match else ...
+    if field == "purchaser":
+        return cleaned
+    if field == "card_last4":
+        digits = re.sub(r"\D", "", cleaned)
+        return digits if len(digits) == 4 else ...
+    if field == "currency":
+        letters = re.sub(r"[^A-Za-z]", "", cleaned).upper()
+        return letters if len(letters) == 3 else ...
+    return ...
+
+
+def _extract_reply_updates(note_text: str) -> tuple[dict[str, object | None], str]:
+    """Parse safe structured updates from a reply note and return remaining free text."""
+    updates: dict[str, object | None] = {}
+    remaining_lines: list[str] = []
+    for raw_line in note_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            if remaining_lines and remaining_lines[-1] != "":
+                remaining_lines.append("")
+            continue
+
+        clear_match = _REPLY_CLEAR_RE.match(raw_line)
+        if clear_match:
+            updates[_normalize_reply_field(clear_match.group(1))] = None
+            continue
+
+        update_match = _REPLY_UPDATE_RE.match(raw_line)
+        if update_match:
+            field = _normalize_reply_field(update_match.group(1))
+            parsed = _parse_reply_update_value(field, update_match.group(2))
+            if parsed is not ...:
+                updates[field] = parsed
+                continue
+
+        remaining_lines.append(raw_line.rstrip())
+
+    while remaining_lines and remaining_lines[0] == "":
+        remaining_lines.pop(0)
+    while remaining_lines and remaining_lines[-1] == "":
+        remaining_lines.pop()
+    return updates, "\n".join(remaining_lines).strip()
+
+
+def _sync_updated_sidecar(settings: dict, row: dict) -> None:
+    """Best-effort sidecar sync for reply-applied updates."""
+    receipt_root_value = str(settings.get("receipt_dir") or "").strip()
+    if not receipt_root_value:
+        return
+    receipt_root = Path(receipt_root_value).expanduser()
+    if not receipt_root.exists():
+        return
+    try:
+        from intake.cli import _sync_receipt_sidecar  # noqa: PLC0415
+    except Exception:
+        return
+    try:
+        _sync_receipt_sidecar(receipt_root, row)
+    except Exception:
+        return
+
+
+def _record_reply_note(
+    db_conn,
+    *,
+    filename: str,
+    note_text: str,
+    requested_updates: dict[str, object | None] | None = None,
+) -> None:
+    """Record a reply note as an auditable receipt update event."""
+    changes: dict[str, dict[str, object | None]] = {}
+    if note_text:
+        changes["email_reply"] = {"old": None, "new": note_text}
+    if requested_updates:
+        changes["requested_updates"] = {"old": None, "new": requested_updates}
+    if not changes:
+        return
+    record_receipt_update(
+        db_conn,
+        filename,
+        source=_INTAKE_REPLY_NOTE_SOURCE,
+        changes=changes,
+        note=note_text or None,
+    )
+
+
+def _apply_reply_to_receipt(
+    db_conn,
+    settings: dict,
+    *,
+    filename: str,
+    note_text: str,
+) -> str:
+    """Apply safe reply updates to *filename* and audit the remainder."""
+    if get_receipt(db_conn, filename) is None:
+        raise KeyError(filename)
+
+    structured_updates, remaining_note = _extract_reply_updates(note_text)
+    applied_changes: dict[str, dict[str, object | None]] = {}
+    if structured_updates:
+        updated_row, applied_changes = update_receipt_fields(
+            db_conn,
+            filename,
+            structured_updates,
+            source=_INTAKE_REPLY_SOURCE,
+            note=None,
+        )
+        if applied_changes:
+            _sync_updated_sidecar(settings, updated_row)
+
+    if remaining_note or (structured_updates and not applied_changes):
+        _record_reply_note(
+            db_conn,
+            filename=filename,
+            note_text=remaining_note,
+            requested_updates=structured_updates or None,
+        )
+
+    if applied_changes:
+        return "reply-applied"
+    if remaining_note or structured_updates:
+        return "reply-recorded"
+    return "reply-empty"
+
+
+def _search_reply_uids(
+    conn,
+    config,
+    *,
+    subject_fragment: str,
+    since_days: int,
+    limit: int,
+) -> list[int]:
+    """Search the selected mailbox for replies to intake processed-receipt emails."""
+    from common import build_search_terms, parse_int_uid_list  # noqa: PLC0415
+
+    terms = build_search_terms(subject_contains=subject_fragment, since_days=since_days)
+    charset = config.imap.search_charset
+    status, data = conn.uid("search", charset, *terms)
+    if status != "OK":
+        return []
+    return sorted(parse_int_uid_list(data), reverse=True)[:limit]
+
+
+def _process_reply_messages(
+    conn,
+    config,
+    settings: dict,
+    db_conn,
+    result: FetchResult,
+    *,
+    since_days: int,
+    limit: int,
+    verbose: bool,
+) -> None:
+    """Process replies to intake processed-receipt notifications."""
+    email_cfg = settings.get("email", {})
+    subject_fragment = _intake_processed_subject_fragment(settings)
+    reply_mailboxes = _configured_reply_mailboxes(email_cfg)
+    sr = _load_shock_relay(str(email_cfg.get("shock_relay_config", "")))
+
+    for mailbox in reply_mailboxes:
+        try:
+            status, _ = conn.select(mailbox, readonly=True)
+        except Exception:
+            continue
+        if status != "OK":
+            continue
+
+        uids = _search_reply_uids(
+            conn,
+            config,
+            subject_fragment=subject_fragment,
+            since_days=since_days,
+            limit=limit,
+        )
+        if not uids:
+            continue
+        if verbose:
+            print(f"  Found {len(uids)} reply candidate(s) in {mailbox}")
+
+        for uid in uids:
+            try:
+                msg_data = _fetch_message_by_uid(conn, mailbox, uid, readonly=True)
+                payload = sr.extract_fetch_payload(msg_data)
+                if not payload:
+                    result.skipped += 1
+                    continue
+
+                msg = message_from_bytes(payload, policy=default_policy)
+                if not _is_intake_reply_message(msg, settings):
+                    continue
+
+                subject = sr.decode_mime_header(msg.get("Subject"))
+                sender = sr.decode_mime_header(msg.get("From"))
+                message_id = sr.decode_mime_header(msg.get("Message-ID"))
+                date_str = str(msg.get("Date", "") or "").strip()
+
+                if is_email_processed(db_conn, uid, mailbox):
+                    if verbose:
+                        print(f"    skip (reply already processed): {subject!r}")
+                    result.skipped += 1
+                    continue
+
+                full_text = _message_text(msg, sr)
+                note_text = _trim_reply_note_text(full_text)
+                receipt_filename = _resolve_reply_receipt_filename(
+                    conn,
+                    config,
+                    sr,
+                    settings,
+                    msg,
+                    full_text,
+                )
+
+                if verbose:
+                    print(f"  Processing reply: {subject!r}  from={sender}")
+
+                if not receipt_filename:
+                    if verbose:
+                        print("    reply skipped: could not resolve receipt filename")
+                    record_email_receipt(
+                        db_conn,
+                        uid=uid,
+                        mailbox=mailbox,
+                        message_id=message_id,
+                        subject=subject,
+                        sender=sender,
+                        received_at=date_str,
+                        attachment_count=0,
+                        status="reply-unmatched",
+                    )
+                    result.reply_unmatched += 1
+                    continue
+
+                try:
+                    status_name = _apply_reply_to_receipt(
+                        db_conn,
+                        settings,
+                        filename=receipt_filename,
+                        note_text=note_text,
+                    )
+                except KeyError:
+                    if verbose:
+                        print(f"    reply skipped: receipt not found in DB: {receipt_filename}")
+                    record_email_receipt(
+                        db_conn,
+                        uid=uid,
+                        mailbox=mailbox,
+                        message_id=message_id,
+                        subject=subject,
+                        sender=sender,
+                        received_at=date_str,
+                        attachment_count=0,
+                        status="reply-unmatched",
+                    )
+                    result.reply_unmatched += 1
+                    continue
+
+                record_email_receipt(
+                    db_conn,
+                    uid=uid,
+                    mailbox=mailbox,
+                    message_id=message_id,
+                    subject=subject,
+                    sender=sender,
+                    received_at=date_str,
+                    attachment_count=0,
+                    status=status_name,
+                )
+                if status_name == "reply-applied":
+                    result.reply_applied += 1
+                if status_name in {"reply-applied", "reply-recorded"}:
+                    result.reply_processed += 1
+                elif status_name == "reply-unmatched":
+                    result.reply_unmatched += 1
+                if verbose:
+                    print(f"    reply → {status_name} for {receipt_filename}")
+            except Exception as exc:
+                result.errors += 1
+                if verbose:
+                    print(f"    ERROR reply uid={uid} mailbox={mailbox}: {exc}")
 
 
 def _looks_like_receipt(text: str) -> bool:

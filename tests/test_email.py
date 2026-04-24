@@ -6,19 +6,31 @@ from datetime import date
 
 import pytest
 
-from intake.db import init_db, is_email_processed, record_email_receipt
+from intake.db import (
+    get_receipt,
+    init_db,
+    is_email_processed,
+    query_flagged,
+    query_receipt_updates,
+    record_email_receipt,
+    upsert_receipt,
+)
 from intake.email import (
     FetchResult,
+    _apply_reply_to_receipt,
     _configured_receipt_sender_hints,
     _email_was_handled,
     _extract_credit_card_payment_email,
     _extract_paypal_receipt_email,
     _extract_progressive_payment_email,
+    _extract_receipt_filename_from_text,
+    _extract_reply_updates,
     _is_internal_intake_notification,
     _looks_like_receipt,
     _preferred_payment_category,
     _safe_save,
     _safe_save_receipt_pdf,
+    _trim_reply_note_text,
     html_to_text,
 )
 
@@ -265,6 +277,45 @@ def test_internal_intake_notification_is_skipped():
     )
 
 
+def test_extract_receipt_filename_from_text_prefers_explicit_filename():
+    text = """
+    Receipt processed
+    File: email/general
+    Filename: email_30999_INBOX.txt
+    """
+    assert _extract_receipt_filename_from_text(text) == "email_30999_INBOX.txt"
+
+
+def test_extract_receipt_filename_from_text_falls_back_to_file_basename():
+    text = "Receipt processed\nFile: grocery/supermarket/20260409_1707.pdf"
+    assert _extract_receipt_filename_from_text(text) == "20260409_1707.pdf"
+
+
+def test_trim_reply_note_text_drops_quoted_original_message():
+    text = """
+    Merchant is invalid
+    Please attach the OCR and Image
+
+    On Thu, Apr 24, 2026 at 1:12 PM wrote:
+    > Receipt processed
+    > Filename: email_30999_INBOX.txt
+    """
+    assert _trim_reply_note_text(text) == "Merchant is invalid\nPlease attach the OCR and Image"
+
+
+def test_extract_reply_updates_parses_safe_structured_fields():
+    updates, remaining = _extract_reply_updates(
+        "merchant: Spotify USA Inc\nTOTAL = $12.99\ncard last4: 5653\ncurrency: usd\nPlease review"
+    )
+    assert updates == {
+        "merchant": "spotify usa inc",
+        "total": 12.99,
+        "card_last4": "5653",
+        "currency": "USD",
+    }
+    assert remaining == "Please review"
+
+
 # ── _safe_save ────────────────────────────────────────────────────────────────
 
 
@@ -379,6 +430,74 @@ def test_duplicate_record_does_not_raise(db):
     assert is_email_processed(db, uid=12345, mailbox="INBOX") is True
 
 
+def test_apply_reply_to_receipt_applies_structured_updates(db, tmp_path):
+    upsert_receipt(
+        db,
+        {
+            "filename": "email_30999_INBOX.txt",
+            "scan_date": "2026-04-24",
+            "merchant": "oooo rr rr or rk ee ff",
+            "total": 66.00,
+            "category": "general",
+            "receipt_dir": "email/general",
+            "raw_text": "raw",
+            "processed_by": "email-parse",
+        },
+    )
+
+    status = _apply_reply_to_receipt(
+        db,
+        {"receipt_dir": str(tmp_path / "receipt-root")},
+        filename="email_30999_INBOX.txt",
+        note_text="merchant: rock creek liquor\ntotal: 66.40",
+    )
+
+    row = get_receipt(db, "email_30999_INBOX.txt")
+    history = query_receipt_updates(db, filename="email_30999_INBOX.txt")
+
+    assert status == "reply-applied"
+    assert row is not None
+    assert row["merchant"] == "rock creek liquor"
+    assert row["total"] == 66.40
+    assert history[0]["source"] == "email-reply"
+    assert history[0]["changes"]["merchant"] == {
+        "old": "oooo rr rr or rk ee ff",
+        "new": "rock creek liquor",
+    }
+
+
+def test_apply_reply_to_receipt_records_freeform_note_and_flags_review(db, tmp_path):
+    upsert_receipt(
+        db,
+        {
+            "filename": "email_30999_INBOX.txt",
+            "scan_date": "2026-04-24",
+            "merchant": "spotify usa inc",
+            "total": 12.99,
+            "category": "general",
+            "receipt_dir": "email/general",
+            "raw_text": "raw",
+            "processed_by": "email-parse",
+        },
+    )
+
+    status = _apply_reply_to_receipt(
+        db,
+        {"receipt_dir": str(tmp_path / "receipt-root")},
+        filename="email_30999_INBOX.txt",
+        note_text="Merchant is invalid\nPlease attach the OCR and Image",
+    )
+
+    history = query_receipt_updates(db, filename="email_30999_INBOX.txt")
+    flagged = {row["filename"]: row for row in query_flagged(db)}
+
+    assert status == "reply-recorded"
+    assert history[0]["source"] == "email-reply-note"
+    assert history[0]["note"] == "Merchant is invalid\nPlease attach the OCR and Image"
+    assert "email_30999_INBOX.txt" in flagged
+    assert "email_reply_request" in flagged["email_30999_INBOX.txt"]["review_reason_summary"]
+
+
 # ── FetchResult ───────────────────────────────────────────────────────────────
 
 
@@ -388,5 +507,8 @@ def test_fetch_result_defaults():
     assert r.skipped == 0
     assert r.attachments_saved == 0
     assert r.html_processed == 0
+    assert r.reply_processed == 0
+    assert r.reply_applied == 0
+    assert r.reply_unmatched == 0
     assert r.errors == 0
     assert r.saved_files == []
