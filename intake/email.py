@@ -21,6 +21,8 @@ from intake.db import infer_purchaser_from_card_last4, is_email_processed, recor
 from intake.naming import allocate_canonical_path
 from intake.purchaser import normalize_purchaser
 
+_DEFAULT_RECEIPT_SENDER_HINTS = ("service@paypal.com",)
+
 # ── HTML → plain text ─────────────────────────────────────────────────────────
 
 
@@ -148,6 +150,7 @@ def fetch_receipts(
             ]
         )
     )
+    sender_hints = _configured_receipt_sender_hints(email_cfg)
 
     result = FetchResult()
 
@@ -161,7 +164,14 @@ def fetch_receipts(
             if status != "OK":
                 raise RuntimeError(f"Cannot select mailbox {mailbox!r}")
 
-            uids = _search_receipt_uids(conn, config, subjects, since_days, limit)
+            uids = _search_receipt_uids(
+                conn,
+                config,
+                subjects,
+                sender_hints=sender_hints,
+                since_days=since_days,
+                limit=limit,
+            )
             result.found = len(uids)
 
             if verbose:
@@ -206,6 +216,7 @@ def fetch_receipts(
                     ]
 
                     saved_count = 0
+                    inline_processed = False
                     if not dry_run:
                         for filename, _ct, data in pdf_attachments:
                             dest = _safe_save_receipt_pdf(
@@ -237,10 +248,16 @@ def fetch_receipts(
                                 settings,
                             )
                             result.html_processed += 1
+                            inline_processed = True
                             if verbose:
                                 print("    inline receipt → processed via AI")
 
                     if not dry_run:
+                        if not _email_was_handled(saved_count, inline_processed):
+                            if verbose:
+                                print(f"    skip (no receipt content matched): {subject!r}")
+                            result.skipped += 1
+                            continue
                         record_email_receipt(
                             db_conn,
                             uid=uid,
@@ -273,9 +290,15 @@ def fetch_receipts(
 
 
 def _search_receipt_uids(
-    conn, config, subjects: list[str], since_days: int, limit: int
+    conn,
+    config,
+    subjects: list[str],
+    *,
+    sender_hints: list[str],
+    since_days: int,
+    limit: int,
 ) -> list[int]:
-    """Search the selected mailbox for messages matching any receipt subject."""
+    """Search the selected mailbox for messages matching receipt subjects or senders."""
     from common import build_search_terms, parse_int_uid_list  # noqa: PLC0415
 
     seen: set[int] = set()
@@ -287,8 +310,27 @@ def _search_receipt_uids(
             continue
         for uid in parse_int_uid_list(data):
             seen.add(uid)
+    for sender_hint in sender_hints:
+        terms = build_search_terms(from_contains=sender_hint, since_days=since_days)
+        charset = config.imap.search_charset
+        status, data = conn.uid("search", charset, *terms)
+        if status != "OK":
+            continue
+        for uid in parse_int_uid_list(data):
+            seen.add(uid)
     # Return most-recent first, capped at limit
     return sorted(seen, reverse=True)[:limit]
+
+
+def _configured_receipt_sender_hints(email_cfg: dict) -> list[str]:
+    """Return sender fragments that should be searched as receipt candidates."""
+    configured = [str(value).strip() for value in email_cfg.get("receipt_senders", [])]
+    return list(dict.fromkeys([*configured, *_DEFAULT_RECEIPT_SENDER_HINTS]))
+
+
+def _email_was_handled(saved_count: int, inline_processed: bool) -> bool:
+    """Return True when the message yielded at least one intake artifact."""
+    return saved_count > 0 or inline_processed
 
 
 def _safe_save(dest_dir: Path, filename: str, data: bytes) -> Path:
@@ -381,6 +423,12 @@ _DUE_ON_DATE_RE = re.compile(r"\bdue\s+on\s+(\d{2}/\d{2}/\d{4})\b", re.IGNORECAS
 _CAPITAL_ONE_SENDER_HINT = "capitalone@notification.capitalone.com"
 _DISCOVER_SENDER_HINT = "discover@services.discover.com"
 _PROGRESSIVE_SENDER_HINT = "customerservice@e.progressive.com"
+_PAYPAL_SENDER_HINT = "service@paypal.com"
+_PAYPAL_SUBJECT_AMOUNT_RE = re.compile(r":\s*\$?\s*(\d+(?:\.\d{2})?)\s+[A-Z]{3}\b")
+_PAYPAL_YOU_PAID_RE = re.compile(
+    r"\byou paid\s+\$?\s*(\d+(?:\.\d{2})?)\s+[A-Z]{3}\s+to\s+(.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _looks_like_receipt(text: str) -> bool:
@@ -564,11 +612,56 @@ def _extract_progressive_payment_email(subject: str, sender: str, plain_text: st
     }
 
 
+def _extract_paypal_receipt_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Return structured fields for PayPal merchant receipt emails."""
+    if _PAYPAL_SENDER_HINT not in sender.lower():
+        return None
+    if "you paid" not in plain_text.lower():
+        return None
+
+    merchant = _extract_labeled_block_value(plain_text, ("merchant",))
+    if not merchant and ":" in subject:
+        merchant = subject.split(":", 1)[0].strip()
+    if not merchant:
+        match = _PAYPAL_YOU_PAID_RE.search(plain_text)
+        if match:
+            merchant = match.group(2).strip()
+
+    total = None
+    total_value = _extract_labeled_block_value(plain_text, ("total",))
+    if total_value:
+        match = re.search(r"\$?\s*(\d+(?:\.\d{2})?)", total_value)
+        if match:
+            total = float(match.group(1))
+    if total is None:
+        match = _PAYPAL_YOU_PAID_RE.search(plain_text)
+        if match:
+            total = float(match.group(1))
+        else:
+            match = _PAYPAL_SUBJECT_AMOUNT_RE.search(subject)
+            if match:
+                total = float(match.group(1))
+
+    date_value = _extract_labeled_block_value(plain_text, ("transaction date",))
+    receipt_date = _parse_payment_date_text(date_value) if date_value else None
+
+    return {
+        "merchant": merchant,
+        "total": total,
+        "receipt_date": receipt_date,
+        "purchaser": _extract_payment_purchaser(plain_text),
+        "card_last4": None,
+        "category": None,
+    }
+
+
 def _extract_structured_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
     """Return structured fields for known payment-notification email formats."""
-    return _extract_credit_card_payment_email(
-        subject, sender, plain_text
-    ) or _extract_progressive_payment_email(subject, sender, plain_text)
+    return (
+        _extract_credit_card_payment_email(subject, sender, plain_text)
+        or _extract_progressive_payment_email(subject, sender, plain_text)
+        or _extract_paypal_receipt_email(subject, sender, plain_text)
+    )
 
 
 def _is_internal_intake_notification(subject: str, sender: str, settings: dict) -> bool:
@@ -619,7 +712,7 @@ def _upsert_html_receipt(
             category = _preferred_payment_category(rules)
         else:
             category = classify(receipt.merchant or "", rules, full_text=plain_text)
-        processed_by = "email-payment"
+        processed_by = "email-payment" if preferred_category else "email-parse"
     else:
         receipt = replace(
             receipt, merchant=consolidate_merchant(receipt.merchant, merchant_aliases)
