@@ -584,9 +584,39 @@ def _extract_reply_message_ids(msg) -> list[str]:
     return values
 
 
+def _mailbox_select_candidates(mailbox: str) -> list[str]:
+    """Return raw and quoted mailbox names for IMAP select/examine calls."""
+    cleaned = str(mailbox or "").strip()
+    if not cleaned:
+        return []
+    candidates = [cleaned]
+    if " " in cleaned and not cleaned.startswith('"'):
+        candidates.append(f'"{cleaned}"')
+    return candidates
+
+
+def _select_mailbox(conn, mailbox: str, *, readonly: bool) -> tuple[str, object]:
+    """Select *mailbox*, retrying with IMAP-safe quoting when needed."""
+    last_status = "NO"
+    last_data = []
+    last_exc: Exception | None = None
+    for candidate in _mailbox_select_candidates(mailbox):
+        try:
+            status, data = conn.select(candidate, readonly=readonly)
+        except Exception as exc:
+            last_exc = exc
+            continue
+        if status == "OK":
+            return status, data
+        last_status, last_data = status, data
+    if last_exc is not None:
+        raise last_exc
+    return last_status, last_data
+
+
 def _fetch_message_by_uid(conn, mailbox: str, uid: int, *, readonly: bool) -> object:
     """Select *mailbox* and fetch the RFC822 payload for *uid*."""
-    status, _ = conn.select(mailbox, readonly=readonly)
+    status, _ = _select_mailbox(conn, mailbox, readonly=readonly)
     if status != "OK":
         raise RuntimeError(f"Cannot select mailbox {mailbox!r}")
 
@@ -594,6 +624,46 @@ def _fetch_message_by_uid(conn, mailbox: str, uid: int, *, readonly: bool) -> ob
     if fetch_status != "OK":
         raise RuntimeError(f"Cannot fetch uid {uid} from {mailbox!r}")
     return msg_data
+
+
+def _find_message_in_mailboxes(
+    conn,
+    sr,
+    mailboxes: list[str],
+    message_id: str,
+    *,
+    recent_limit: int,
+    search_charset,
+) -> dict[str, object] | None:
+    """Locate *message_id* across candidate mailboxes with quoted-select fallback."""
+    canonical_message_id = sr.normalize_message_id_header(message_id)
+    for mailbox in mailboxes:
+        try:
+            status, _ = _select_mailbox(conn, mailbox, readonly=True)
+        except Exception:
+            continue
+        if status != "OK":
+            continue
+        status, data = conn.uid("search", search_charset, "ALL")
+        if status != "OK":
+            continue
+        uids = sr.parse_int_uid_list(data)
+        if not uids:
+            continue
+        for uid in reversed(uids[-recent_limit:]):
+            msg_data = _fetch_message_by_uid(conn, mailbox, uid, readonly=True)
+            payload = sr.extract_fetch_payload(msg_data)
+            if not payload:
+                continue
+            normalized = sr.normalize_message(mailbox, uid, payload)
+            if sr.normalize_message_id_header(normalized.get("message_id")) != canonical_message_id:
+                continue
+            return {
+                "mailbox": mailbox,
+                "uid": uid,
+                "message_id": canonical_message_id,
+            }
+    return None
 
 
 def _resolve_reply_receipt_filename(
@@ -607,8 +677,9 @@ def _resolve_reply_receipt_filename(
     reply_mailboxes = _configured_reply_mailboxes(settings.get("email", {}))
     recent_limit = max(10, min(100, int(settings.get("email", {}).get("limit", 500))))
     for message_id in _extract_reply_message_ids(msg):
-        original = sr.find_message_in_mailboxes(
+        original = _find_message_in_mailboxes(
             conn,
+            sr,
             reply_mailboxes,
             message_id,
             recent_limit=recent_limit,
@@ -817,7 +888,7 @@ def _process_reply_messages(
 
     for mailbox in reply_mailboxes:
         try:
-            status, _ = conn.select(mailbox, readonly=True)
+            status, _ = _select_mailbox(conn, mailbox, readonly=True)
         except Exception:
             continue
         if status != "OK":
