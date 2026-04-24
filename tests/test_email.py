@@ -9,7 +9,10 @@ import pytest
 from intake.db import init_db, is_email_processed, record_email_receipt
 from intake.email import (
     FetchResult,
+    _configured_receipt_sender_hints,
+    _email_was_handled,
     _extract_credit_card_payment_email,
+    _extract_paypal_receipt_email,
     _extract_progressive_payment_email,
     _is_internal_intake_notification,
     _looks_like_receipt,
@@ -196,6 +199,58 @@ def test_extract_progressive_payment_email_renewal_reminder():
         "card_last4": None,
         "category": "auto/insurance",
     }
+
+
+def test_extract_paypal_receipt_email_transaction_receipt():
+    body = """
+    Hello, Cason Konzer
+
+    You paid $12.99 USD to Spotify USA Inc
+
+    Merchant
+    Spotify USA Inc
+    support@spotify.com
+
+    Transaction date
+    Apr 23, 2026
+
+    Total
+    $12.99 USD
+
+    Your payment was sent from casonkonzer@gmail.com
+    """
+    parsed = _extract_paypal_receipt_email(
+        "Spotify USA Inc: $12.99 USD",
+        "PayPal service@paypal.com",
+        body,
+    )
+    assert parsed == {
+        "merchant": "Spotify USA Inc",
+        "total": 12.99,
+        "receipt_date": date(2026, 4, 23),
+        "purchaser": "cason konzer",
+        "card_last4": None,
+        "category": None,
+    }
+
+
+def test_configured_receipt_sender_hints_include_paypal_default():
+    hints = _configured_receipt_sender_hints({"receipt_senders": ["merchant@example.com"]})
+    assert hints == ["merchant@example.com", "service@paypal.com"]
+
+
+@pytest.mark.parametrize(
+    ("saved_count", "inline_processed", "handled"),
+    [
+        (0, False, False),
+        (1, False, True),
+        (0, True, True),
+    ],
+)
+def test_email_was_handled_requires_attachment_or_inline_processing(
+    saved_count, inline_processed, handled
+):
+    assert _email_was_handled(saved_count, inline_processed) is handled
 
 
 def test_internal_intake_notification_is_skipped():

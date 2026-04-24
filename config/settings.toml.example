@@ -93,6 +93,12 @@ reports_dir = "reports"
 #   "policy renewal reminder",
 # ]
 #
+# # Optional sender fragments to search in addition to subject keywords.
+# # PayPal transaction receipts often have subjects like "Spotify USA Inc: $12.99 USD"
+# # that do not contain "receipt" or "invoice", so intake searches
+# # "service@paypal.com" by default even when this list is left unset.
+# # receipt_senders = ["service@paypal.com"]
+#
 # # How far back to search on each run (days)
 # since_days = 90
 #
