@@ -308,6 +308,13 @@ recipient = "you@example.com"
 # shock_relay_config = "/path/to/shock-relay/services/gmail-imap/config.local.yaml"
 ```
 
+Reply to those Gmail notifications to leave hints or correction requests on the
+receipt. Intake now records free-form reply notes in `receipt_updates` and
+surfaces them in `intake review` as `email_reply_request (...)`. Safe
+structured lines like `merchant: kroger`, `total: 88.05`, `purchaser: ...`,
+`card last4: 5653`, or `currency: usd` are applied automatically through the
+same audited update path.
+
 **Trigger personal-finance** after receipt ingestion by writing a batch JSON and
 running a downstream command:
 

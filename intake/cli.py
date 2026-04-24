@@ -1748,6 +1748,7 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
     print(
         "\nFlag reasons: missing/placeholder merchant · merchant_contains_email · "
         "short_merchant · missing/zero total · total_over_250/500/750/1000 · "
+        "email_reply_request · "
         "recent new_merchant/new_card_last4/new_merchant_card_pair · "
         "amount_outlier_for_merchant"
     )
@@ -1791,6 +1792,8 @@ def _cmd_review(args: argparse.Namespace, settings: dict) -> None:
             - Total guard flags (`total_over_250`, `total_over_500`, `total_over_750`,
               `total_over_1000`) are explicit parser-review thresholds. They do not
               auto-rewrite totals; they force human eyes on expensive receipts.
+            - `email_reply_request (...)` means intake recorded a reply email note or
+              request for that receipt. Inspect it with `intake history FILENAME`.
             - Novelty and amount-outlier flags are only applied to recent receipts
               that already have a plausible merchant and total, so `intake review`
               stays operational instead of flooding on old or obviously broken rows.

@@ -575,6 +575,20 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
     Rows with a ``reviewed_at`` timestamp are suppressed from results unless
     *include_suppressed* is True.
     """
+    reply_note_rows = conn.execute("""
+        SELECT filename, note
+        FROM receipt_updates
+        WHERE source = 'email-reply-note'
+        ORDER BY updated_at DESC, id DESC
+        """).fetchall()
+    latest_reply_notes: dict[str, str] = {}
+    for row in reply_note_rows:
+        filename = str(row["filename"] or "")
+        if not filename or filename in latest_reply_notes:
+            continue
+        note = " ".join(str(row["note"] or "").split())
+        latest_reply_notes[filename] = note
+
     cursor = conn.execute("""
         SELECT
             id,
@@ -684,8 +698,17 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
         if merchant_norm and card_last4:
             merchant_card_seen[(merchant_norm, card_last4)] += 1
 
+        reply_note = latest_reply_notes.get(str(row.get("filename") or ""))
+        if reply_note:
+            excerpt = reply_note[:80]
+            if len(reply_note) > 80:
+                excerpt += "..."
+            reasons.append(f"email_reply_request ({excerpt})")
+
         if reasons and (include_suppressed or row.get("reviewed_at") is None):
             enriched = dict(row)
+            if reply_note:
+                enriched["email_reply_note"] = reply_note
             enriched["review_reasons"] = reasons
             enriched["review_reason_summary"] = ", ".join(reasons)
             flagged.append(enriched)

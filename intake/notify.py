@@ -11,6 +11,8 @@ from intake.parse import Receipt
 
 _PORTFOLIO_SERVICE_HEADER = "X-Portfolio-Service: intake"
 _CREW_CHIEF_INTENT_HEADER = "X-Crew-Chief-Intent: notify"
+_INTAKE_FILENAME_HEADER = "X-Intake-Receipt-Filename"
+_INTAKE_RECEIPT_DIR_HEADER = "X-Intake-Receipt-Dir"
 _SIGNAL_SERVICE_META = "cc-service: intake"
 _SIGNAL_INTENT_META = "cc-intent: notify"
 
@@ -293,6 +295,10 @@ def send_processed_receipt_gmail_notification(
             _PORTFOLIO_SERVICE_HEADER,
             "--header",
             _CREW_CHIEF_INTENT_HEADER,
+            "--header",
+            f"{_INTAKE_FILENAME_HEADER}: {filename}",
+            "--header",
+            f"{_INTAKE_RECEIPT_DIR_HEADER}: {receipt_dir}",
             recipient,
             subject,
             message,
