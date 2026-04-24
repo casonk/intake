@@ -30,8 +30,11 @@ from intake.purchaser import normalize_purchaser
 
 _DEFAULT_RECEIPT_SENDER_HINTS = ("service@paypal.com",)
 _DEFAULT_REPLY_MAILBOXES = (
+    "[Gmail]/All Mail",
+    "[GoogleMail]/All Mail",
     "[Gmail]/Sent Mail",
     "[GoogleMail]/Sent Mail",
+    "All Mail",
     "Sent",
     "Sent Mail",
     "Sent Items",
