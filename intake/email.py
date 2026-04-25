@@ -800,18 +800,25 @@ def _reply_requests_file_link(note_text: str) -> bool:
     )
 
 
-def _reply_link_already_recorded(db_conn, filename: str, reply_token: str) -> bool:
+def _reply_link_already_recorded(
+    db_conn,
+    filename: str,
+    reply_token: str,
+    reply_message_id: str,
+) -> bool:
     """Return True when a Snowbridge-link response was already sent for this reply."""
-    if not reply_token:
+    tokens = [token for token in (reply_token, reply_message_id) if token]
+    if not tokens:
         return False
+    placeholders = ", ".join("?" for _ in tokens)
     row = db_conn.execute(
-        """
+        f"""
         SELECT 1
         FROM receipt_updates
-        WHERE filename = ? AND source = ? AND note = ?
+        WHERE filename = ? AND source = ? AND note IN ({placeholders})
         LIMIT 1
         """,
-        (filename, _INTAKE_REPLY_LINK_SOURCE, reply_token),
+        (filename, _INTAKE_REPLY_LINK_SOURCE, *tokens),
     ).fetchone()
     return row is not None
 
@@ -831,7 +838,7 @@ def _maybe_send_reply_link(
     """Send a Snowbridge-link follow-up when the reply note asks for file access."""
     if not _reply_requests_file_link(note_text):
         return None
-    if _reply_link_already_recorded(db_conn, filename, reply_token):
+    if _reply_link_already_recorded(db_conn, filename, reply_token, reply_message_id):
         return "link-already-sent"
 
     receipt_row = get_receipt(db_conn, filename)
