@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 from email.message import EmailMessage
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -36,6 +38,7 @@ from intake.email import (
     _safe_save,
     _safe_save_receipt_pdf,
     _trim_reply_note_text,
+    fetch_receipts,
     html_to_text,
 )
 
@@ -537,6 +540,44 @@ def test_apply_reply_to_receipt_records_freeform_note_and_flags_review(db, tmp_p
     assert history[0]["note"] == "Merchant is invalid\nPlease attach the OCR and Image"
     assert "email_30999_INBOX.txt" in flagged
     assert "email_reply_request" in flagged["email_30999_INBOX.txt"]["review_reason_summary"]
+
+
+class _NoopImapConnection:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def select(self, mailbox, readonly=False):
+        return ("OK", [b"0"])
+
+    def expunge(self):
+        return ("OK", [b"0"])
+
+
+def test_fetch_receipts_treats_reply_processing_as_best_effort(db, tmp_path):
+    settings = {
+        "receipt_dir": str(tmp_path / "receipts"),
+        "email": {"shock_relay_config": "/tmp/config.local.yaml"},
+    }
+    sr = SimpleNamespace(
+        load_config=lambda _path: SimpleNamespace(
+            imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None)
+        ),
+        validate_imap=lambda _config: None,
+        open_imap_connection=lambda _config: _NoopImapConnection(),
+    )
+
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[]),
+        patch("intake.email._process_reply_messages", side_effect=RuntimeError("reply degraded")),
+    ):
+        result = fetch_receipts(settings, db, dry_run=False, verbose=False)
+
+    assert result.found == 0
+    assert result.errors == 1
 
 
 # ── FetchResult ───────────────────────────────────────────────────────────────

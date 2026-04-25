@@ -308,19 +308,23 @@ def fetch_receipts(
             if to_expunge:
                 conn.expunge()
 
-            _process_reply_messages(
-                conn,
-                config,
-                settings,
-                db_conn,
-                result,
-                since_days=since_days,
-                limit=limit,
-                verbose=verbose,
-            )
-
     except Exception as exc:
         raise RuntimeError(f"Email fetch failed: {exc}") from exc
+
+    try:
+        _process_reply_messages(
+            config,
+            settings,
+            db_conn,
+            result,
+            since_days=since_days,
+            limit=limit,
+            verbose=verbose,
+        )
+    except Exception as exc:
+        result.errors += 1
+        if verbose:
+            print(f"  WARNING reply mailbox processing degraded: {exc}")
 
     return result
 
@@ -971,7 +975,6 @@ def _search_reply_uids(
 
 
 def _process_reply_messages(
-    conn,
     config,
     settings: dict,
     db_conn,
@@ -989,19 +992,22 @@ def _process_reply_messages(
 
     for mailbox in reply_mailboxes:
         try:
-            status, _ = _select_mailbox(conn, mailbox, readonly=True)
-        except Exception:
+            with sr.open_imap_connection(config) as search_conn:
+                status, _ = _select_mailbox(search_conn, mailbox, readonly=True)
+                if status != "OK":
+                    continue
+                uids = _search_reply_uids(
+                    search_conn,
+                    config,
+                    subject_fragment=subject_fragment,
+                    since_days=since_days,
+                    limit=limit,
+                )
+        except Exception as exc:
+            result.errors += 1
+            if verbose:
+                print(f"  WARNING reply mailbox {mailbox}: {exc}")
             continue
-        if status != "OK":
-            continue
-
-        uids = _search_reply_uids(
-            conn,
-            config,
-            subject_fragment=subject_fragment,
-            since_days=since_days,
-            limit=limit,
-        )
         if not uids:
             continue
         if verbose:
@@ -1009,57 +1015,114 @@ def _process_reply_messages(
 
         for uid in uids:
             try:
-                msg_data = _fetch_message_by_uid(conn, mailbox, uid, readonly=True)
-                payload = sr.extract_fetch_payload(msg_data)
-                if not payload:
-                    result.skipped += 1
-                    continue
+                with sr.open_imap_connection(config) as conn:
+                    msg_data = _fetch_message_by_uid(conn, mailbox, uid, readonly=True)
+                    payload = sr.extract_fetch_payload(msg_data)
+                    if not payload:
+                        result.skipped += 1
+                        continue
 
-                msg = message_from_bytes(payload, policy=default_policy)
-                if not _is_intake_reply_message(msg, settings):
-                    continue
+                    msg = message_from_bytes(payload, policy=default_policy)
+                    if not _is_intake_reply_message(msg, settings):
+                        continue
 
-                subject = sr.decode_mime_header(msg.get("Subject"))
-                sender = sr.decode_mime_header(msg.get("From"))
-                message_id = sr.decode_mime_header(msg.get("Message-ID"))
-                date_str = str(msg.get("Date", "") or "").strip()
+                    subject = sr.decode_mime_header(msg.get("Subject"))
+                    sender = sr.decode_mime_header(msg.get("From"))
+                    message_id = sr.decode_mime_header(msg.get("Message-ID"))
+                    date_str = str(msg.get("Date", "") or "").strip()
 
-                full_text = _message_text(msg, sr)
-                note_text = _trim_reply_note_text(full_text)
-                receipt_filename = _resolve_reply_receipt_filename(
-                    conn,
-                    config,
-                    sr,
-                    settings,
-                    msg,
-                    full_text,
-                )
-
-                if verbose:
-                    print(f"  Processing reply: {subject!r}  from={sender}")
-
-                if not receipt_filename:
-                    if verbose:
-                        print("    reply skipped: could not resolve receipt filename")
-                    record_email_receipt(
-                        db_conn,
-                        uid=uid,
-                        mailbox=mailbox,
-                        message_id=message_id,
-                        subject=subject,
-                        sender=sender,
-                        received_at=date_str,
-                        attachment_count=0,
-                        status="reply-unmatched",
+                    full_text = _message_text(msg, sr)
+                    note_text = _trim_reply_note_text(full_text)
+                    receipt_filename = _resolve_reply_receipt_filename(
+                        conn,
+                        config,
+                        sr,
+                        settings,
+                        msg,
+                        full_text,
                     )
-                    result.reply_unmatched += 1
-                    continue
 
-                references = _reply_references_header(msg)
-                reply_token = _reply_thread_token(msg, message_id)
+                    if verbose:
+                        print(f"  Processing reply: {subject!r}  from={sender}")
 
-                already_processed = is_email_message_id_processed(db_conn, message_id)
-                if already_processed:
+                    if not receipt_filename:
+                        if verbose:
+                            print("    reply skipped: could not resolve receipt filename")
+                        record_email_receipt(
+                            db_conn,
+                            uid=uid,
+                            mailbox=mailbox,
+                            message_id=message_id,
+                            subject=subject,
+                            sender=sender,
+                            received_at=date_str,
+                            attachment_count=0,
+                            status="reply-unmatched",
+                        )
+                        result.reply_unmatched += 1
+                        continue
+
+                    references = _reply_references_header(msg)
+                    reply_token = _reply_thread_token(msg, message_id)
+
+                    already_processed = is_email_message_id_processed(db_conn, message_id)
+                    if already_processed:
+                        link_action = None
+                        try:
+                            link_action = _maybe_send_reply_link(
+                                db_conn,
+                                settings,
+                                filename=receipt_filename,
+                                note_text=note_text,
+                                recipient=sender,
+                                subject=subject,
+                                reply_token=reply_token,
+                                reply_message_id=message_id,
+                                references=references,
+                            )
+                        except Exception as exc:
+                            result.errors += 1
+                            if verbose:
+                                print(f"    WARNING reply-link for {receipt_filename}: {exc}")
+                        if verbose and link_action == "link-sent":
+                            print(f"    reply → {link_action} for {receipt_filename}")
+                        if verbose and link_action == "link-already-sent":
+                            print(f"    skip (reply link already sent): {subject!r}")
+                        if verbose:
+                            print(f"    skip (reply message-id already processed): {subject!r}")
+                        result.skipped += 1
+                        continue
+
+                    if is_email_processed(db_conn, uid, mailbox):
+                        if verbose:
+                            print(f"    skip (reply already processed): {subject!r}")
+                        result.skipped += 1
+                        continue
+
+                    try:
+                        status_name = _apply_reply_to_receipt(
+                            db_conn,
+                            settings,
+                            filename=receipt_filename,
+                            note_text=note_text,
+                        )
+                    except KeyError:
+                        if verbose:
+                            print(f"    reply skipped: receipt not found in DB: {receipt_filename}")
+                        record_email_receipt(
+                            db_conn,
+                            uid=uid,
+                            mailbox=mailbox,
+                            message_id=message_id,
+                            subject=subject,
+                            sender=sender,
+                            received_at=date_str,
+                            attachment_count=0,
+                            status="reply-unmatched",
+                        )
+                        result.reply_unmatched += 1
+                        continue
+
                     link_action = None
                     try:
                         link_action = _maybe_send_reply_link(
@@ -1077,31 +1140,9 @@ def _process_reply_messages(
                         result.errors += 1
                         if verbose:
                             print(f"    WARNING reply-link for {receipt_filename}: {exc}")
-                    if verbose and link_action == "link-sent":
-                        print(f"    reply → {link_action} for {receipt_filename}")
-                    if verbose and link_action == "link-already-sent":
-                        print(f"    skip (reply link already sent): {subject!r}")
-                    if verbose:
-                        print(f"    skip (reply message-id already processed): {subject!r}")
-                    result.skipped += 1
-                    continue
+                    if link_action == "link-sent":
+                        status_name = f"{status_name}-link-sent"
 
-                if is_email_processed(db_conn, uid, mailbox):
-                    if verbose:
-                        print(f"    skip (reply already processed): {subject!r}")
-                    result.skipped += 1
-                    continue
-
-                try:
-                    status_name = _apply_reply_to_receipt(
-                        db_conn,
-                        settings,
-                        filename=receipt_filename,
-                        note_text=note_text,
-                    )
-                except KeyError:
-                    if verbose:
-                        print(f"    reply skipped: receipt not found in DB: {receipt_filename}")
                     record_email_receipt(
                         db_conn,
                         uid=uid,
@@ -1111,52 +1152,18 @@ def _process_reply_messages(
                         sender=sender,
                         received_at=date_str,
                         attachment_count=0,
-                        status="reply-unmatched",
+                        status=status_name,
                     )
-                    result.reply_unmatched += 1
-                    continue
-
-                link_action = None
-                try:
-                    link_action = _maybe_send_reply_link(
-                        db_conn,
-                        settings,
-                        filename=receipt_filename,
-                        note_text=note_text,
-                        recipient=sender,
-                        subject=subject,
-                        reply_token=reply_token,
-                        reply_message_id=message_id,
-                        references=references,
-                    )
-                except Exception as exc:
-                    result.errors += 1
+                    if status_name.startswith("reply-applied"):
+                        result.reply_applied += 1
+                    if status_name.startswith("reply-applied") or status_name.startswith(
+                        "reply-recorded"
+                    ):
+                        result.reply_processed += 1
+                    elif status_name == "reply-unmatched":
+                        result.reply_unmatched += 1
                     if verbose:
-                        print(f"    WARNING reply-link for {receipt_filename}: {exc}")
-                if link_action == "link-sent":
-                    status_name = f"{status_name}-link-sent"
-
-                record_email_receipt(
-                    db_conn,
-                    uid=uid,
-                    mailbox=mailbox,
-                    message_id=message_id,
-                    subject=subject,
-                    sender=sender,
-                    received_at=date_str,
-                    attachment_count=0,
-                    status=status_name,
-                )
-                if status_name.startswith("reply-applied"):
-                    result.reply_applied += 1
-                if status_name.startswith("reply-applied") or status_name.startswith(
-                    "reply-recorded"
-                ):
-                    result.reply_processed += 1
-                elif status_name == "reply-unmatched":
-                    result.reply_unmatched += 1
-                if verbose:
-                    print(f"    reply → {status_name} for {receipt_filename}")
+                        print(f"    reply → {status_name} for {receipt_filename}")
             except Exception as exc:
                 result.errors += 1
                 if verbose:
