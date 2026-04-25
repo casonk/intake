@@ -597,6 +597,14 @@ def _reply_references_header(msg) -> str | None:
     return references or None
 
 
+def _reply_thread_token(msg, message_id: str) -> str:
+    """Return a stable token for the replied-to thread."""
+    reply_ids = _extract_reply_message_ids(msg)
+    if reply_ids:
+        return reply_ids[0]
+    return message_id
+
+
 def _mailbox_select_candidates(mailbox: str) -> list[str]:
     """Return raw and quoted mailbox names for IMAP select/examine calls."""
     cleaned = str(mailbox or "").strip()
@@ -792,9 +800,9 @@ def _reply_requests_file_link(note_text: str) -> bool:
     )
 
 
-def _reply_link_already_recorded(db_conn, filename: str, reply_message_id: str) -> bool:
+def _reply_link_already_recorded(db_conn, filename: str, reply_token: str) -> bool:
     """Return True when a Snowbridge-link response was already sent for this reply."""
-    if not reply_message_id:
+    if not reply_token:
         return False
     row = db_conn.execute(
         """
@@ -803,7 +811,7 @@ def _reply_link_already_recorded(db_conn, filename: str, reply_message_id: str) 
         WHERE filename = ? AND source = ? AND note = ?
         LIMIT 1
         """,
-        (filename, _INTAKE_REPLY_LINK_SOURCE, reply_message_id),
+        (filename, _INTAKE_REPLY_LINK_SOURCE, reply_token),
     ).fetchone()
     return row is not None
 
@@ -816,13 +824,14 @@ def _maybe_send_reply_link(
     note_text: str,
     recipient: str,
     subject: str,
+    reply_token: str,
     reply_message_id: str,
     references: str | None,
 ) -> str | None:
     """Send a Snowbridge-link follow-up when the reply note asks for file access."""
     if not _reply_requests_file_link(note_text):
         return None
-    if _reply_link_already_recorded(db_conn, filename, reply_message_id):
+    if _reply_link_already_recorded(db_conn, filename, reply_token):
         return "link-already-sent"
 
     receipt_row = get_receipt(db_conn, filename)
@@ -843,11 +852,12 @@ def _maybe_send_reply_link(
         db_conn,
         filename,
         source=_INTAKE_REPLY_LINK_SOURCE,
-        note=reply_message_id or None,
+        note=reply_token or None,
         changes={
             "snowbridge_link": {"old": None, "new": link},
             "reply_to": {"old": None, "new": recipient},
             "reply_subject": {"old": None, "new": subject},
+            "reply_message_id": {"old": None, "new": reply_message_id},
         },
     )
     return "link-sent"
@@ -1039,6 +1049,7 @@ def _process_reply_messages(
                     continue
 
                 references = _reply_references_header(msg)
+                reply_token = _reply_thread_token(msg, message_id)
 
                 already_processed = is_email_message_id_processed(db_conn, message_id)
                 if already_processed:
@@ -1051,6 +1062,7 @@ def _process_reply_messages(
                             note_text=note_text,
                             recipient=sender,
                             subject=subject,
+                            reply_token=reply_token,
                             reply_message_id=message_id,
                             references=references,
                         )
@@ -1106,6 +1118,7 @@ def _process_reply_messages(
                         note_text=note_text,
                         recipient=sender,
                         subject=subject,
+                        reply_token=reply_token,
                         reply_message_id=message_id,
                         references=references,
                     )
