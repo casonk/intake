@@ -142,6 +142,8 @@ reports_dir = "reports"
 # # Reply to these notification emails with free-form notes or structured lines
 # # like `merchant: kroger` / `total: 88.05`. Intake records the reply in
 # # receipt history and applies the safe structured fields automatically.
+# # Requests like "attach the OCR and image" trigger a follow-up Gmail reply
+# # containing the Snowbridge File Browser link for the receipt artifact.
 #
 # # Optional explicit disable switch
 # # enabled = true

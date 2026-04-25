@@ -10,10 +10,13 @@ import pytest
 from intake.notify import (
     format_processed_receipt_message,
     format_processed_receipt_subject,
+    format_receipt_file_link_reply_message,
     gmail_notifications_enabled,
+    gmail_reply_available,
     send_processed_receipt_gmail_notification,
     send_processed_receipt_notification,
     send_processed_receipt_notifications,
+    send_receipt_file_link_gmail_reply,
     signal_notifications_enabled,
 )
 from intake.parse import Receipt
@@ -75,6 +78,15 @@ def test_gmail_notifications_disabled_without_recipient():
     assert gmail_notifications_enabled({"gmail": {"enabled": False}}) is False
 
 
+def test_gmail_reply_available_with_email_config_fallback():
+    settings = {
+        "email": {
+            "shock_relay_config": "/tmp/gmail-imap/config.local.yaml",
+        }
+    }
+    assert gmail_reply_available(settings) is True
+
+
 def test_format_processed_receipt_message_includes_key_fields():
     message = format_processed_receipt_message(
         _receipt(),
@@ -98,6 +110,22 @@ def test_format_processed_receipt_message_includes_key_fields():
 def test_format_processed_receipt_subject_includes_prefix_and_total():
     subject = format_processed_receipt_subject(_receipt(), subject_prefix="[intake] ")
     assert subject == "[intake] Receipt processed: kroger $4.33"
+
+
+def test_format_receipt_file_link_reply_message_includes_link():
+    message = format_receipt_file_link_reply_message(
+        {
+            "filename": "20260419_2018.jpg",
+            "merchant": "dewdney liquor store",
+            "total": 39.07,
+        },
+        snowbridge_link="https://files.snowbridge.internal/files/receipt/general/20260419_2018.jpg",
+    )
+    assert "Snowbridge receipt link requested" in message
+    assert "Receipt: 20260419_2018.jpg" in message
+    assert "Merchant: dewdney liquor store" in message
+    assert "Total: $39.07" in message
+    assert "https://files.snowbridge.internal/files/receipt/general/20260419_2018.jpg" in message
 
 
 def test_send_processed_receipt_notification_invokes_signal_sender(monkeypatch, tmp_path):
@@ -211,6 +239,78 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
     assert cmd[11] == "[intake] Receipt processed: kroger $4.33"
     assert "Receipt processed" in cmd[12]
     assert cmd[13:] == ["--config", str(config_path)]
+    assert capture_output is True
+    assert text is True
+
+
+def test_send_receipt_file_link_gmail_reply_invokes_sender(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.local.yaml"
+    config_path.write_text("imap:\n  username: me@example.com\n", encoding="utf-8")
+    send_script = tmp_path / "send_email.py"
+    send_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    receipt_root = tmp_path / "receipts"
+    receipt_file = receipt_root / "general" / "20260419_2018.jpg"
+    receipt_file.parent.mkdir(parents=True, exist_ok=True)
+    receipt_file.write_bytes(b"jpg")
+
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, capture_output, text):
+        calls.append((cmd, capture_output, text))
+        return Result()
+
+    monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
+
+    settings = {
+        "receipt_dir": str(receipt_root),
+        "email": {
+            "shock_relay_config": str(config_path),
+        },
+    }
+
+    link = send_receipt_file_link_gmail_reply(
+        settings,
+        recipient="Cason Konzer <casonkonzer@gmail.com>",
+        subject="Re: [intake] Receipt processed: dewdney liquor store $39.07",
+        receipt_row={
+            "filename": "20260419_2018.jpg",
+            "merchant": "dewdney liquor store",
+            "total": 39.07,
+            "receipt_dir": "general/20260419_2018.jpg",
+        },
+        in_reply_to="<reply@example.com>",
+        references="<orig@example.com> <reply@example.com>",
+    )
+
+    assert link == "https://files.snowbridge.internal/files/receipt/general/20260419_2018.jpg"
+    assert len(calls) == 1
+    cmd, capture_output, text = calls[0]
+    assert cmd[:15] == [
+        sys.executable,
+        str(send_script),
+        "--header",
+        "X-Portfolio-Service: intake",
+        "--header",
+        "X-Crew-Chief-Intent: reply-link",
+        "--header",
+        "X-Intake-Receipt-Filename: 20260419_2018.jpg",
+        "--header",
+        "X-Intake-Receipt-Dir: general/20260419_2018.jpg",
+        "--header",
+        "In-Reply-To: <reply@example.com>",
+        "--header",
+        "References: <orig@example.com> <reply@example.com>",
+        "casonkonzer@gmail.com",
+    ]
+    assert cmd[15] == "Re: [intake] Receipt processed: dewdney liquor store $39.07"
+    assert "https://files.snowbridge.internal/files/receipt/general/20260419_2018.jpg" in cmd[16]
+    assert cmd[17:] == ["--config", str(config_path)]
     assert capture_output is True
     assert text is True
 
