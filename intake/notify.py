@@ -154,6 +154,7 @@ def format_processed_receipt_message(
     receipt_dir: str,
     filename: str,
     processed_by: str,
+    snowbridge_link: str | None = None,
 ) -> str:
     """Build the notification body for a processed receipt."""
     total = f"${receipt.total:.2f}" if receipt.total is not None else "unknown"
@@ -176,6 +177,8 @@ def format_processed_receipt_message(
         lines.append(f"Card: ****{receipt.card_last4}")
     if filename != Path(receipt_dir).name:
         lines.append(f"Filename: {filename}")
+    if snowbridge_link:
+        lines.append(f"Link: {snowbridge_link}")
     return "\n".join(lines)
 
 
@@ -303,6 +306,15 @@ def send_processed_receipt_gmail_notification(
     if not send_script.exists():
         raise RuntimeError(f"Gmail sender script not found: {send_script}")
 
+    snowbridge_link = build_receipt_filebrowser_link(
+        settings,
+        {
+            "filename": filename,
+            "receipt_dir": receipt_dir,
+            "category": category,
+        },
+    )
+
     subject = format_processed_receipt_subject(
         receipt,
         subject_prefix=str(cfg.get("subject_prefix", "")),
@@ -313,6 +325,7 @@ def send_processed_receipt_gmail_notification(
         receipt_dir=receipt_dir,
         filename=filename,
         processed_by=processed_by,
+        snowbridge_link=snowbridge_link,
     )
 
     sent = 0

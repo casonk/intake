@@ -139,6 +139,9 @@ reports_dir = "reports"
 # # Optional subject prefix
 # # subject_prefix = "[intake] "
 #
+# # The initial "Receipt processed" email includes the Snowbridge File Browser
+# # link when the receipt path resolves under receipt_dir.
+#
 # # Reply to these notification emails with free-form notes or structured lines
 # # like `merchant: kroger` / `total: 88.05`. Intake records the reply in
 # # receipt history and applies the safe structured fields automatically.
