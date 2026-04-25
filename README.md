@@ -315,6 +315,9 @@ structured lines like `merchant: kroger`, `total: 88.05`, `purchaser: ...`,
 `card last4: 5653`, or `currency: usd` are applied automatically through the
 same audited update path.
 
+If the reply asks for the OCR/image/file itself, intake now sends a follow-up
+Gmail reply with the Snowbridge File Browser link for that receipt artifact.
+
 **Trigger personal-finance** after receipt ingestion by writing a batch JSON and
 running a downstream command:
 

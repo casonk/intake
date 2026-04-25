@@ -42,6 +42,7 @@ _DEFAULT_REPLY_MAILBOXES = (
 )
 _INTAKE_REPLY_SOURCE = "email-reply"
 _INTAKE_REPLY_NOTE_SOURCE = "email-reply-note"
+_INTAKE_REPLY_LINK_SOURCE = "email-reply-link"
 _INTAKE_RECEIPT_FILENAME_HEADER = "X-Intake-Receipt-Filename"
 _INTAKE_RECEIPT_DIR_HEADER = "X-Intake-Receipt-Dir"
 
@@ -488,6 +489,8 @@ _REPLY_CLEAR_RE = re.compile(
     r"^\s*clear\s+(purchaser|card(?:\s+last4)?|card_last4)\s*$",
     re.IGNORECASE,
 )
+_REPLY_LINK_ACTION_RE = re.compile(r"\b(attach|upload|send|share|link)\b", re.IGNORECASE)
+_REPLY_LINK_TARGET_RE = re.compile(r"\b(ocr|image|photo|file|receipt)\b", re.IGNORECASE)
 
 
 def _intake_processed_subject_fragment(settings: dict) -> str:
@@ -583,6 +586,15 @@ def _extract_reply_message_ids(msg) -> list[str]:
             seen.add(match)
             values.append(match)
     return values
+
+
+def _reply_references_header(msg) -> str | None:
+    """Return a References header that keeps follow-up replies threaded."""
+    message_id = str(msg.get("Message-ID", "") or "").strip()
+    references = " ".join(str(msg.get("References", "") or "").split()).strip()
+    if message_id and message_id not in references:
+        references = f"{references} {message_id}".strip() if references else message_id
+    return references or None
 
 
 def _mailbox_select_candidates(mailbox: str) -> list[str]:
@@ -770,6 +782,77 @@ def _extract_reply_updates(note_text: str) -> tuple[dict[str, object | None], st
     return updates, "\n".join(remaining_lines).strip()
 
 
+def _reply_requests_file_link(note_text: str) -> bool:
+    """Return True when a reply note is asking for OCR/image/file access."""
+    normalized = " ".join(str(note_text or "").split())
+    if not normalized:
+        return False
+    return bool(
+        _REPLY_LINK_ACTION_RE.search(normalized) and _REPLY_LINK_TARGET_RE.search(normalized)
+    )
+
+
+def _reply_link_already_recorded(db_conn, filename: str, reply_message_id: str) -> bool:
+    """Return True when a Snowbridge-link response was already sent for this reply."""
+    if not reply_message_id:
+        return False
+    row = db_conn.execute(
+        """
+        SELECT 1
+        FROM receipt_updates
+        WHERE filename = ? AND source = ? AND note = ?
+        LIMIT 1
+        """,
+        (filename, _INTAKE_REPLY_LINK_SOURCE, reply_message_id),
+    ).fetchone()
+    return row is not None
+
+
+def _maybe_send_reply_link(
+    db_conn,
+    settings: dict,
+    *,
+    filename: str,
+    note_text: str,
+    recipient: str,
+    subject: str,
+    reply_message_id: str,
+    references: str | None,
+) -> str | None:
+    """Send a Snowbridge-link follow-up when the reply note asks for file access."""
+    if not _reply_requests_file_link(note_text):
+        return None
+    if _reply_link_already_recorded(db_conn, filename, reply_message_id):
+        return "link-already-sent"
+
+    receipt_row = get_receipt(db_conn, filename)
+    if receipt_row is None:
+        raise KeyError(filename)
+
+    from intake.notify import send_receipt_file_link_gmail_reply  # noqa: PLC0415
+
+    link = send_receipt_file_link_gmail_reply(
+        settings,
+        recipient=recipient,
+        subject=subject,
+        receipt_row=receipt_row,
+        in_reply_to=reply_message_id or None,
+        references=references,
+    )
+    record_receipt_update(
+        db_conn,
+        filename,
+        source=_INTAKE_REPLY_LINK_SOURCE,
+        note=reply_message_id or None,
+        changes={
+            "snowbridge_link": {"old": None, "new": link},
+            "reply_to": {"old": None, "new": recipient},
+            "reply_subject": {"old": None, "new": subject},
+        },
+    )
+    return "link-sent"
+
+
 def _sync_updated_sidecar(settings: dict, row: dict) -> None:
     """Best-effort sidecar sync for reply-applied updates."""
     receipt_root_value = str(settings.get("receipt_dir") or "").strip()
@@ -924,18 +1007,6 @@ def _process_reply_messages(
                 message_id = sr.decode_mime_header(msg.get("Message-ID"))
                 date_str = str(msg.get("Date", "") or "").strip()
 
-                if is_email_message_id_processed(db_conn, message_id):
-                    if verbose:
-                        print(f"    skip (reply message-id already processed): {subject!r}")
-                    result.skipped += 1
-                    continue
-
-                if is_email_processed(db_conn, uid, mailbox):
-                    if verbose:
-                        print(f"    skip (reply already processed): {subject!r}")
-                    result.skipped += 1
-                    continue
-
                 full_text = _message_text(msg, sr)
                 note_text = _trim_reply_note_text(full_text)
                 receipt_filename = _resolve_reply_receipt_filename(
@@ -967,6 +1038,41 @@ def _process_reply_messages(
                     result.reply_unmatched += 1
                     continue
 
+                references = _reply_references_header(msg)
+
+                already_processed = is_email_message_id_processed(db_conn, message_id)
+                if already_processed:
+                    link_action = None
+                    try:
+                        link_action = _maybe_send_reply_link(
+                            db_conn,
+                            settings,
+                            filename=receipt_filename,
+                            note_text=note_text,
+                            recipient=sender,
+                            subject=subject,
+                            reply_message_id=message_id,
+                            references=references,
+                        )
+                    except Exception as exc:
+                        result.errors += 1
+                        if verbose:
+                            print(f"    WARNING reply-link for {receipt_filename}: {exc}")
+                    if verbose and link_action == "link-sent":
+                        print(f"    reply → {link_action} for {receipt_filename}")
+                    if verbose and link_action == "link-already-sent":
+                        print(f"    skip (reply link already sent): {subject!r}")
+                    if verbose:
+                        print(f"    skip (reply message-id already processed): {subject!r}")
+                    result.skipped += 1
+                    continue
+
+                if is_email_processed(db_conn, uid, mailbox):
+                    if verbose:
+                        print(f"    skip (reply already processed): {subject!r}")
+                    result.skipped += 1
+                    continue
+
                 try:
                     status_name = _apply_reply_to_receipt(
                         db_conn,
@@ -991,6 +1097,25 @@ def _process_reply_messages(
                     result.reply_unmatched += 1
                     continue
 
+                link_action = None
+                try:
+                    link_action = _maybe_send_reply_link(
+                        db_conn,
+                        settings,
+                        filename=receipt_filename,
+                        note_text=note_text,
+                        recipient=sender,
+                        subject=subject,
+                        reply_message_id=message_id,
+                        references=references,
+                    )
+                except Exception as exc:
+                    result.errors += 1
+                    if verbose:
+                        print(f"    WARNING reply-link for {receipt_filename}: {exc}")
+                if link_action == "link-sent":
+                    status_name = f"{status_name}-link-sent"
+
                 record_email_receipt(
                     db_conn,
                     uid=uid,
@@ -1002,9 +1127,11 @@ def _process_reply_messages(
                     attachment_count=0,
                     status=status_name,
                 )
-                if status_name == "reply-applied":
+                if status_name.startswith("reply-applied"):
                     result.reply_applied += 1
-                if status_name in {"reply-applied", "reply-recorded"}:
+                if status_name.startswith("reply-applied") or status_name.startswith(
+                    "reply-recorded"
+                ):
                     result.reply_processed += 1
                 elif status_name == "reply-unmatched":
                     result.reply_unmatched += 1

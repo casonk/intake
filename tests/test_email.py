@@ -30,6 +30,7 @@ from intake.email import (
     _looks_like_receipt,
     _mailbox_select_candidates,
     _preferred_payment_category,
+    _reply_requests_file_link,
     _safe_save,
     _safe_save_receipt_pdf,
     _trim_reply_note_text,
@@ -316,6 +317,14 @@ def test_extract_reply_updates_parses_safe_structured_fields():
         "currency": "USD",
     }
     assert remaining == "Please review"
+
+
+def test_reply_requests_file_link_matches_attach_ocr_image_note():
+    assert _reply_requests_file_link("Please attach the OCR and Image") is True
+
+
+def test_reply_requests_file_link_ignores_plain_correction_note():
+    assert _reply_requests_file_link("Merchant is invalid") is False
 
 
 def test_mailbox_select_candidates_include_quoted_variant_for_spaces():

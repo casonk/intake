@@ -5,14 +5,17 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from email.utils import parseaddr
 from pathlib import Path
 
+from intake.file_links import build_receipt_filebrowser_link
 from intake.parse import Receipt
 
 _PORTFOLIO_SERVICE_HEADER = "X-Portfolio-Service: intake"
 _CREW_CHIEF_INTENT_HEADER = "X-Crew-Chief-Intent: notify"
 _INTAKE_FILENAME_HEADER = "X-Intake-Receipt-Filename"
 _INTAKE_RECEIPT_DIR_HEADER = "X-Intake-Receipt-Dir"
+_INTAKE_REPLY_INTENT_HEADER = "X-Crew-Chief-Intent: reply-link"
 _SIGNAL_SERVICE_META = "cc-service: intake"
 _SIGNAL_INTENT_META = "cc-intent: notify"
 
@@ -139,6 +142,11 @@ def gmail_notifications_enabled(settings: dict) -> bool:
     return bool(_gmail_config_path(settings)) and bool(_gmail_recipients(settings))
 
 
+def gmail_reply_available(settings: dict) -> bool:
+    """Return True when Gmail reply sending is configured."""
+    return bool(_gmail_config_path(settings))
+
+
 def format_processed_receipt_message(
     receipt: Receipt,
     *,
@@ -180,6 +188,27 @@ def format_processed_receipt_subject(
     merchant = receipt.merchant or "unknown merchant"
     total = f"${receipt.total:.2f}" if receipt.total is not None else "unknown total"
     return f"{subject_prefix}Receipt processed: {merchant} {total}"
+
+
+def format_receipt_file_link_reply_message(
+    receipt_row: dict,
+    *,
+    snowbridge_link: str,
+) -> str:
+    """Build the reply body for a requested Snowbridge receipt link."""
+    filename = str(receipt_row.get("filename") or "unknown")
+    merchant = str(receipt_row.get("merchant") or "unknown")
+    total = receipt_row.get("total")
+    total_display = f"${float(total):.2f}" if total is not None else "unknown"
+    return "\n".join(
+        [
+            "Snowbridge receipt link requested",
+            f"Receipt: {filename}",
+            f"Merchant: {merchant}",
+            f"Total: {total_display}",
+            f"Link: {snowbridge_link}",
+        ]
+    )
 
 
 def send_processed_receipt_notification(
@@ -313,6 +342,82 @@ def send_processed_receipt_gmail_notification(
         sent += 1
 
     return sent
+
+
+def send_receipt_file_link_gmail_reply(
+    settings: dict,
+    *,
+    recipient: str,
+    subject: str,
+    receipt_row: dict,
+    in_reply_to: str | None = None,
+    references: str | None = None,
+) -> str:
+    """Send a Gmail reply containing the Snowbridge link for a tracked receipt."""
+    if not gmail_reply_available(settings):
+        raise RuntimeError("Gmail reply sending is not configured")
+
+    recipient_address = parseaddr(recipient)[1].strip()
+    if not recipient_address:
+        raise RuntimeError(f"Invalid reply recipient: {recipient!r}")
+
+    config_path = Path(_gmail_config_path(settings)).expanduser()
+    send_script = config_path.with_name("send_email.py")
+    if not config_path.exists():
+        raise RuntimeError(f"Gmail config not found: {config_path}")
+    if not send_script.exists():
+        raise RuntimeError(f"Gmail sender script not found: {send_script}")
+
+    snowbridge_link = build_receipt_filebrowser_link(settings, receipt_row)
+    if not snowbridge_link:
+        raise RuntimeError(
+            f"Could not resolve Snowbridge link for receipt {receipt_row.get('filename')!r}"
+        )
+
+    headers = [
+        _PORTFOLIO_SERVICE_HEADER,
+        _INTAKE_REPLY_INTENT_HEADER,
+    ]
+    filename = str(receipt_row.get("filename") or "").strip()
+    if filename:
+        headers.extend(["--header", f"{_INTAKE_FILENAME_HEADER}: {filename}"])
+    receipt_dir = str(receipt_row.get("receipt_dir") or "").strip()
+    if receipt_dir:
+        headers.extend(["--header", f"{_INTAKE_RECEIPT_DIR_HEADER}: {receipt_dir}"])
+    if in_reply_to:
+        headers.extend(["--header", f"In-Reply-To: {in_reply_to}"])
+    if references:
+        headers.extend(["--header", f"References: {references}"])
+
+    message = format_receipt_file_link_reply_message(
+        receipt_row,
+        snowbridge_link=snowbridge_link,
+    )
+    cmd = [
+        sys.executable,
+        str(send_script),
+        "--header",
+        headers[0],
+        "--header",
+        headers[1],
+    ]
+    cmd.extend(headers[2:])
+    cmd.extend(
+        [
+            recipient_address,
+            subject,
+            message,
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        error = (result.stderr or result.stdout or "").strip()
+        detail = f": {error}" if error else ""
+        raise RuntimeError(f"Gmail reply failed for {recipient_address}{detail}")
+    return snowbridge_link
 
 
 def send_processed_receipt_notifications(
