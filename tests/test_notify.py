@@ -107,6 +107,22 @@ def test_format_processed_receipt_message_includes_key_fields():
     assert "Card: ****4321" in message
 
 
+def test_format_processed_receipt_message_includes_optional_snowbridge_link():
+    message = format_processed_receipt_message(
+        _receipt(),
+        category="grocery/supermarket",
+        receipt_dir="grocery/supermarket/20260318_1834.pdf",
+        filename="20260318_1834.pdf",
+        processed_by="tesseract",
+        snowbridge_link="https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.pdf",
+    )
+
+    assert (
+        "Link: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.pdf"
+        in message
+    )
+
+
 def test_format_processed_receipt_subject_includes_prefix_and_total():
     subject = format_processed_receipt_subject(_receipt(), subject_prefix="[intake] ")
     assert subject == "[intake] Receipt processed: kroger $4.33"
@@ -187,6 +203,10 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
     config_path.write_text("imap:\n  username: me@example.com\n", encoding="utf-8")
     send_script = tmp_path / "send_email.py"
     send_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    receipt_root = tmp_path / "receipts"
+    receipt_file = receipt_root / "grocery" / "supermarket" / "20260318_1834.pdf"
+    receipt_file.parent.mkdir(parents=True, exist_ok=True)
+    receipt_file.write_bytes(b"%PDF-1.4")
 
     calls = []
 
@@ -202,6 +222,7 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
     monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
 
     settings = {
+        "receipt_dir": str(receipt_root),
         "email": {
             "shock_relay_config": str(config_path),
         },
@@ -238,6 +259,10 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
     ]
     assert cmd[11] == "[intake] Receipt processed: kroger $4.33"
     assert "Receipt processed" in cmd[12]
+    assert (
+        "Link: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.pdf"
+        in cmd[12]
+    )
     assert cmd[13:] == ["--config", str(config_path)]
     assert capture_output is True
     assert text is True
