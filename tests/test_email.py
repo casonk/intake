@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from email.message import EmailMessage
 
 import pytest
 
@@ -31,6 +32,7 @@ from intake.email import (
     _mailbox_select_candidates,
     _preferred_payment_category,
     _reply_requests_file_link,
+    _reply_thread_token,
     _safe_save,
     _safe_save_receipt_pdf,
     _trim_reply_note_text,
@@ -325,6 +327,13 @@ def test_reply_requests_file_link_matches_attach_ocr_image_note():
 
 def test_reply_requests_file_link_ignores_plain_correction_note():
     assert _reply_requests_file_link("Merchant is invalid") is False
+
+
+def test_reply_thread_token_prefers_in_reply_to_message_id():
+    message = EmailMessage()
+    message["Message-ID"] = "<reply@example.com>"
+    message["In-Reply-To"] = "<original@example.com>"
+    assert _reply_thread_token(message, "<reply@example.com>") == "<original@example.com>"
 
 
 def test_mailbox_select_candidates_include_quoted_variant_for_spaces():
