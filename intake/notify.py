@@ -237,12 +237,22 @@ def send_processed_receipt_notification(
     if not config_path.exists():
         raise RuntimeError(f"Signal config not found: {config_path}")
 
+    snowbridge_link = build_receipt_filebrowser_link(
+        settings,
+        {
+            "filename": filename,
+            "receipt_dir": receipt_dir,
+            "category": category,
+        },
+    )
+
     message = format_processed_receipt_message(
         receipt,
         category=category,
         receipt_dir=receipt_dir,
         filename=filename,
         processed_by=processed_by,
+        snowbridge_link=snowbridge_link,
     )
 
     recipients = _signal_recipients(settings)

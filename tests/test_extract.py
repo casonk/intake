@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from intake.extract import (
     DEFAULT_ESCALATION_PATTERNS,
+    DEFAULT_TOTAL_ESCALATION_THRESHOLD,
     OCR_MODEL,
     _compile_patterns,
     _extraction_tier,
@@ -148,6 +149,60 @@ def test_extract_receipt_no_ai_fallback_without_key(mock_parse, mock_ocr, tmp_pa
 
     receipt, model, tier = extract_receipt(pdf, openai_api_key=None)
     assert model == OCR_MODEL
+
+
+@patch("intake.extract.extract_text")
+@patch("intake.extract.parse_receipt")
+@patch("intake.ai.merge_ai_result")
+@patch("intake.ai.extract_with_openai")
+def test_extract_receipt_uses_high_model_for_suspicious_total(
+    mock_ai, mock_merge, mock_parse, mock_ocr, tmp_path
+):
+    good_text = _fake_good_text()
+    base_receipt = _receipt(merchant="Kroger", total=965.00, raw_text=good_text)
+    base_receipt.items = [ReceiptItem(description="Groceries", amount=32.96)]
+    improved = _receipt(merchant="Kroger", total=32.96, raw_text=good_text)
+    improved.items = base_receipt.items
+    mock_ocr.return_value = good_text
+    mock_parse.return_value = base_receipt
+    mock_ai.return_value = {"merchant": "Kroger", "total": 32.96}
+    mock_merge.return_value = improved
+
+    pdf = tmp_path / "20260401_1000.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    receipt, model, tier = extract_receipt(
+        pdf,
+        openai_api_key="sk-test",
+        openai_model_low="gpt-low",
+        openai_model_high="gpt-high",
+        total_escalation_threshold=DEFAULT_TOTAL_ESCALATION_THRESHOLD,
+    )
+
+    assert tier == "high"
+    assert model == "gpt-high"
+    mock_ai.assert_called_once_with(pdf, good_text, "sk-test", "gpt-high")
+    assert receipt.total == 32.96
+
+
+@patch("intake.extract.extract_text")
+@patch("intake.extract.parse_receipt")
+def test_extract_receipt_preserves_high_total_tier_without_key(mock_parse, mock_ocr, tmp_path):
+    good_text = _fake_good_text()
+    mock_ocr.return_value = good_text
+    mock_parse.return_value = _receipt(merchant="Kroger", total=965.00, raw_text=good_text)
+
+    pdf = tmp_path / "20260401_1000.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    _receipt_obj, model, tier = extract_receipt(
+        pdf,
+        openai_api_key=None,
+        total_escalation_threshold=DEFAULT_TOTAL_ESCALATION_THRESHOLD,
+    )
+
+    assert model == OCR_MODEL
+    assert tier == "high"
 
 
 # ── mid-tier upgrade ──────────────────────────────────────────────────────────
@@ -316,6 +371,18 @@ def test_extraction_tier_high_for_escalated_merchant():
     patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
     r = _receipt(merchant="03/15 Store")
     assert _extraction_tier(_fake_good_text(), r, patterns) == "high"
+
+
+def test_extraction_tier_high_for_suspicious_total():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    r = _receipt(merchant="Kroger", total=DEFAULT_TOTAL_ESCALATION_THRESHOLD + 0.01)
+    assert _extraction_tier(_fake_good_text(), r, patterns) == "high"
+
+
+def test_extraction_tier_does_not_escalate_total_when_disabled():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    r = _receipt(merchant="Kroger", total=965.00)
+    assert _extraction_tier(_fake_good_text(), r, patterns, total_escalation_threshold=0) == "ok"
 
 
 def test_extraction_tier_low_for_poor_quality():

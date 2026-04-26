@@ -354,7 +354,7 @@ def normalize_receipt_item(
     unit_price_val = _coerce_item_number(unit_price)
     if amount_val is None and quantity_val is None and unit_price_val is None:
         return None
-    if amount_val is not None and amount_val <= 0:
+    if amount_val == 0:
         return None
     if quantity_val is not None and quantity_val <= 0:
         quantity_val = None
