@@ -79,6 +79,22 @@ _KNOWN_PURCHASER_ALIASES: dict[str, tuple[str, ...]] = {
         "casonkonzer",
         "casonkonzer@gmail.com",
         "cason konzep",
+        "konzer / cason andrew",
+        "cason andrew konzer",
+        "konzer cason andrew",
+    ),
+    "Alaric g Thornwood": (
+        "Alaric g Thornwood",
+        "Al Thornwood",
+    ),
+    "Michael Harrington": (
+        "Michael Harrington",
+        "Mike Harrington",
+        "Mike Harringtonn",
+        "Michael Harrington jr",
+        "Michael j Harrington jr",
+        "Michael j. Harrington jr.",
+        "Michael Marcus Harrington jr",
     ),
 }
 
@@ -130,7 +146,18 @@ def is_probable_staff_name(text: str | None, raw_text: str | None) -> bool:
     if text is None or raw_text is None:
         return False
     cleaned = _collapse_spaces(text).lower()
-    if not cleaned or " " in cleaned:
+    if not cleaned:
+        return False
+    try:
+        from intake.staff import extract_staff  # noqa: PLC0415
+
+        for staff in extract_staff(raw_text):
+            staff_name = _collapse_spaces(staff.name).lower()
+            if staff_name == cleaned:
+                return True
+    except Exception:
+        pass
+    if " " in cleaned:
         return False
     for token in _staff_name_tokens(raw_text):
         if token == cleaned:

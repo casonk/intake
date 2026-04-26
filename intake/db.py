@@ -12,6 +12,7 @@ from statistics import median
 from intake.certification import receipt_certifications_from_dicts, receipt_certifications_to_dicts
 from intake.parse import receipt_items_from_dicts, receipt_items_to_dicts
 from intake.purchaser import normalize_purchaser
+from intake.staff import receipt_staff_from_dicts, receipt_staff_to_dicts
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS receipts (
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS receipts (
     raw_text        TEXT,
     items_json      TEXT,
     certifications_json TEXT,
+    staff_json      TEXT,
     processed_by    TEXT NOT NULL DEFAULT 'tesseract',
     processed_at    TEXT NOT NULL
 );
@@ -69,6 +71,7 @@ _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN certifications_json TEXT",
     "CREATE INDEX IF NOT EXISTS idx_receipts_file_hash ON receipts(file_hash)",
     "ALTER TABLE receipts ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'",
+    "ALTER TABLE receipts ADD COLUMN staff_json TEXT",
 ]
 
 
@@ -135,11 +138,30 @@ def _decode_certifications_json(certifications_json: str | None) -> list[dict] |
     return receipt_certifications_to_dicts(receipt_certifications_from_dicts(payload))
 
 
+def _serialize_staff(staff: object | None) -> str | None:
+    """Return a normalized JSON payload for receipt staff/service metadata."""
+    if staff is None:
+        return None
+    return json.dumps(receipt_staff_to_dicts(staff), ensure_ascii=True, sort_keys=True)
+
+
+def _decode_staff_json(staff_json: str | None) -> list[dict] | None:
+    """Decode stored staff JSON, preserving NULL as "not attempted/present"."""
+    if staff_json is None:
+        return None
+    try:
+        payload = json.loads(staff_json)
+    except json.JSONDecodeError:
+        return []
+    return receipt_staff_to_dicts(receipt_staff_from_dicts(payload))
+
+
 def _decode_receipt_row(row: sqlite3.Row) -> dict:
     """Return a JSON-friendly receipt row with decoded itemization."""
     item = dict(row)
     item["items"] = _decode_items_json(item.get("items_json"))
     item["certifications"] = _decode_certifications_json(item.get("certifications_json"))
+    item["staff"] = _decode_staff_json(item.get("staff_json"))
     return item
 
 
@@ -154,6 +176,8 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
     """
     processed_at = datetime.now(UTC).isoformat()
     normalized_data = dict(data)
+    if "merchant" in normalized_data and normalized_data.get("merchant") is not None:
+        normalized_data["merchant"] = str(normalized_data["merchant"]).strip().lower()[:120]
     if "purchaser" in normalized_data:
         normalized_data["purchaser"] = normalize_purchaser(normalized_data.get("purchaser"))
     items_json = _serialize_items(normalized_data.pop("items", None))
@@ -164,15 +188,18 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
         certifications_json = _serialize_certifications(
             _decode_certifications_json(normalized_data.pop("certifications_json"))
         )
+    staff_json = _serialize_staff(normalized_data.pop("staff", None))
+    if staff_json is None and "staff_json" in normalized_data:
+        staff_json = _serialize_staff(_decode_staff_json(normalized_data.pop("staff_json")))
     conn.execute(
         """
         INSERT INTO receipts
             (filename, scan_date, merchant, total, category, receipt_dir, file_hash,
-             raw_text, items_json, certifications_json, processed_by, purchaser, card_last4,
+             raw_text, items_json, certifications_json, staff_json, processed_by, purchaser, card_last4,
              currency, processed_at)
         VALUES
             (:filename, :scan_date, :merchant, :total, :category, :receipt_dir, :file_hash,
-             :raw_text, :items_json, :certifications_json, :processed_by, :purchaser, :card_last4,
+             :raw_text, :items_json, :certifications_json, :staff_json, :processed_by, :purchaser, :card_last4,
              :currency, :processed_at)
         ON CONFLICT(filename) DO UPDATE SET
             scan_date    = excluded.scan_date,
@@ -184,6 +211,7 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             raw_text     = excluded.raw_text,
             items_json   = COALESCE(excluded.items_json, receipts.items_json),
             certifications_json = COALESCE(excluded.certifications_json, receipts.certifications_json),
+            staff_json   = COALESCE(excluded.staff_json, receipts.staff_json),
             processed_by = excluded.processed_by,
             purchaser    = excluded.purchaser,
             card_last4   = excluded.card_last4,
@@ -198,6 +226,7 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             "file_hash": None,
             "items_json": items_json,
             "certifications_json": certifications_json,
+            "staff_json": staff_json,
             **normalized_data,
             "processed_at": processed_at,
         },
@@ -210,7 +239,7 @@ def get_receipt(conn: sqlite3.Connection, filename: str) -> dict | None:
     row = conn.execute(
         """
         SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
-               raw_text, items_json, certifications_json, processed_by, purchaser, card_last4,
+               raw_text, items_json, certifications_json, staff_json, processed_by, purchaser, card_last4,
                currency, processed_at, reviewed_at
         FROM receipts
         WHERE filename = ?
@@ -235,7 +264,7 @@ def get_receipt_by_file_hash(
     row = conn.execute(
         f"""
         SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
-               raw_text, items_json, certifications_json, processed_by, purchaser, card_last4,
+               raw_text, items_json, certifications_json, staff_json, processed_by, purchaser, card_last4,
                currency, processed_at, reviewed_at
         FROM receipts
         {where}
@@ -336,6 +365,7 @@ def update_receipt_fields(
         "currency",
         "items",
         "certifications",
+        "staff",
         "reviewed_at",
     }
     unknown_fields = sorted(set(updates) - allowed_fields)
@@ -360,6 +390,11 @@ def update_receipt_fields(
             new_value = _serialize_certifications(new_value)
             old_value = current.get("certifications")
             new_display_value = _decode_certifications_json(new_value)
+        elif field == "staff":
+            db_field = "staff_json"
+            new_value = _serialize_staff(new_value)
+            old_value = current.get("staff")
+            new_display_value = _decode_staff_json(new_value)
         else:
             old_value = current.get(field)
             new_display_value = new_value
@@ -512,7 +547,8 @@ def query_summary(conn: sqlite3.Connection) -> dict:
 
     recent = rows("""
         SELECT scan_date, merchant, category, total, filename, receipt_dir,
-               purchaser, card_last4, items_json, certifications_json, processed_by, processed_at
+               purchaser, card_last4, items_json, certifications_json, staff_json,
+               processed_by, processed_at
         FROM receipts
         ORDER BY scan_date DESC, processed_at DESC
         LIMIT 50
@@ -520,7 +556,8 @@ def query_summary(conn: sqlite3.Connection) -> dict:
 
     merchant_receipts = rows("""
         SELECT merchant, scan_date, category, total, filename, receipt_dir,
-               purchaser, card_last4, items_json, certifications_json, processed_by, processed_at
+               purchaser, card_last4, items_json, certifications_json, staff_json,
+               processed_by, processed_at
         FROM receipts
         ORDER BY COALESCE(merchant, ''), scan_date DESC, processed_at DESC, filename DESC
         """)
@@ -576,15 +613,27 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
     *include_suppressed* is True.
     """
     reply_note_rows = conn.execute("""
-        SELECT filename, note
+        SELECT filename, note, updated_at
         FROM receipt_updates
         WHERE source = 'email-reply-note'
         ORDER BY updated_at DESC, id DESC
         """).fetchall()
+    reply_resolution_rows = conn.execute("""
+        SELECT filename, MAX(updated_at) AS resolved_at
+        FROM receipt_updates
+        WHERE source IN ('manual-correct', 'email-reply', 'email-reply-link')
+        GROUP BY filename
+        """).fetchall()
+    reply_resolved_at = {
+        str(row["filename"] or ""): str(row["resolved_at"] or "") for row in reply_resolution_rows
+    }
     latest_reply_notes: dict[str, str] = {}
     for row in reply_note_rows:
         filename = str(row["filename"] or "")
         if not filename or filename in latest_reply_notes:
+            continue
+        resolved_at = reply_resolved_at.get(filename)
+        if resolved_at and str(row["updated_at"] or "") <= resolved_at:
             continue
         note = " ".join(str(row["note"] or "").split())
         latest_reply_notes[filename] = note

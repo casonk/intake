@@ -5,6 +5,9 @@ class "FetchResult" as intake.email.FetchResult {
   errors : int
   found : int
   html_processed : int
+  reply_applied : int
+  reply_processed : int
+  reply_unmatched : int
   saved_files : list[Path]
   skipped : int
 }
@@ -20,6 +23,7 @@ class "Receipt" as intake.parse.Receipt {
   receipt_date : date | None
   receipt_time : time | None
   scan_date : date
+  staff : list[ReceiptStaff]
   total : float | None
   suggested_filename() -> str
 }
@@ -33,6 +37,11 @@ class "ReceiptItem" as intake.parse.ReceiptItem {
   description : str
   quantity : float | None
   unit_price : float | None
+}
+class "ReceiptStaff" as intake.staff.ReceiptStaff {
+  name : str
+  role : str
+  source_text : str
 }
 class "_ReportHandler" as intake.web._ReportHandler {
   do_GET() -> None

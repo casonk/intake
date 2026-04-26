@@ -11,6 +11,7 @@ from pathlib import Path
 
 from intake.certification import receipt_certifications_to_dicts
 from intake.parse import Receipt, receipt_items_to_dicts
+from intake.staff import receipt_staff_to_dicts
 
 _INTAKE_REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -68,6 +69,7 @@ def build_receipt_event(
         "card_last4": receipt.card_last4,
         "items": receipt_items_to_dicts(receipt.items),
         "certifications": receipt_certifications_to_dicts(receipt.certifications),
+        "staff": receipt_staff_to_dicts(receipt.staff),
     }
 
 

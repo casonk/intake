@@ -17,6 +17,7 @@ from pathlib import Path
 from intake.certification import merge_certifications, receipt_certifications_from_dicts
 from intake.parse import Receipt, receipt_items_from_dicts
 from intake.purchaser import is_blacklisted_purchaser, is_probable_staff_name, normalize_purchaser
+from intake.staff import receipt_staff_from_dicts
 
 
 def extract_with_openai(
@@ -52,6 +53,8 @@ def extract_with_openai(
                 '"description", "amount", "quantity", "unit_price" (null when unknown)\n'
                 '  "certifications" — array of certification objects with keys '
                 '"issuer", "label", "source_text" for merchant or shop certifications (use [] when none visible)\n'
+                '  "staff"         — array of staff/service objects with keys '
+                '"role", "name", "source_text" for visible server, waitress, waiter, cashier, or clerk fields (use [] when none visible)\n'
                 "Output only the JSON object, no markdown, no explanation."
             ),
         },
@@ -135,6 +138,10 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
     certifications = receipt_certifications_from_dicts(ai.get("certifications"))
     if certifications:
         kwargs["certifications"] = merge_certifications(receipt.certifications, certifications)
+
+    staff = receipt_staff_from_dicts(ai.get("staff"))
+    if staff:
+        kwargs["staff"] = staff
 
     currency = ai.get("currency")
     if currency and isinstance(currency, str) and re.fullmatch(r"[A-Z]{3}", currency.upper()):

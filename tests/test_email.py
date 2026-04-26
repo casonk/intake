@@ -29,6 +29,7 @@ from intake.email import (
     _extract_progressive_payment_email,
     _extract_receipt_filename_from_text,
     _extract_reply_updates,
+    _is_intake_reply_message,
     _is_internal_intake_notification,
     _looks_like_receipt,
     _mailbox_select_candidates,
@@ -113,6 +114,22 @@ def test_looks_like_receipt_true(text):
     ],
 )
 def test_looks_like_receipt_false(text):
+    assert _looks_like_receipt(text) is False
+
+
+def test_looks_like_receipt_false_for_quoted_intake_notification():
+    text = """
+    Merchant is invalid
+
+    On Mon, Apr 20, 2026 at 07:48 wrote:
+    Receipt processed
+    Merchant: oooo rr rr or rk ee ff
+    Total: $66.00
+    Category: general
+    File: general/20260420_2202.jpg
+    Model: tesseract
+    """
+
     assert _looks_like_receipt(text) is False
 
 
@@ -283,6 +300,13 @@ def test_internal_intake_notification_is_skipped():
         )
         is True
     )
+
+
+def test_intake_reply_message_is_detected_from_re_subject():
+    msg = EmailMessage()
+    msg["Subject"] = "Re: [intake] Receipt processed: oooo rr rr or rk ee ff $66.00"
+
+    assert _is_intake_reply_message(msg, {}) is True
 
 
 def test_extract_receipt_filename_from_text_prefers_explicit_filename():

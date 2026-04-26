@@ -7,6 +7,7 @@ from intake.db import (
     init_db,
     query_flagged,
     query_receipt_updates,
+    record_receipt_update,
     update_receipt_fields,
     upsert_receipt,
 )
@@ -258,6 +259,31 @@ def test_upsert_receipt_round_trips_certifications(tmp_path):
     ]
 
 
+def test_upsert_receipt_round_trips_staff(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260421_1842.jpg",
+            "scan_date": "2026-04-21",
+            "merchant": "smokin outlaws bbq",
+            "total": 9.2,
+            "category": "dining",
+            "receipt_dir": "dining/20260421_1842.jpg",
+            "raw_text": "Server: Isabel J",
+            "processed_by": "gpt-4o-mini",
+            "staff": [{"role": "Server", "name": "Isabel J", "source_text": "Server: Isabel J"}],
+        },
+    )
+
+    row = get_receipt(conn, "20260421_1842.jpg")
+
+    assert row is not None
+    assert row["staff"] == [
+        {"role": "server", "name": "isabel j", "source_text": "Server: Isabel J"}
+    ]
+
+
 def test_update_receipt_fields_records_certification_changes(tmp_path):
     conn = init_db(tmp_path / "intake.db")
     upsert_receipt(
@@ -296,6 +322,39 @@ def test_update_receipt_fields_records_certification_changes(tmp_path):
     assert changes["certifications"] == {
         "old": None,
         "new": [{"issuer": "AAA", "label": "AAA certified", "source_text": "Certified by AAA"}],
+    }
+
+
+def test_update_receipt_fields_records_staff_changes(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260421_1842.jpg",
+            "scan_date": "2026-04-21",
+            "merchant": "smokin outlaws bbq",
+            "total": 9.2,
+            "category": "dining",
+            "receipt_dir": "dining/20260421_1842.jpg",
+            "raw_text": "",
+            "processed_by": "gpt-4o-mini",
+        },
+    )
+
+    updated, changes = update_receipt_fields(
+        conn,
+        "20260421_1842.jpg",
+        {"staff": [{"role": "server", "name": "Isabel J", "source_text": "Server: Isabel J"}]},
+        source="staff-backfill",
+        note="extract staff",
+    )
+
+    assert updated["staff"] == [
+        {"role": "server", "name": "isabel j", "source_text": "Server: Isabel J"}
+    ]
+    assert changes["staff"] == {
+        "old": None,
+        "new": [{"role": "server", "name": "isabel j", "source_text": "Server: Isabel J"}],
     }
 
 
@@ -444,6 +503,99 @@ def test_query_flagged_adds_total_guard_threshold_reasons(tmp_path):
         "total_over_750",
         "total_over_1000",
     ]
+
+
+def test_query_flagged_ignores_resolved_email_reply_note(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260401_1200.jpg",
+            "scan_date": "2026-04-01",
+            "merchant": "the keg restaurant",
+            "total": 44.0,
+            "category": "dining/sit-down",
+            "receipt_dir": "dining/sit-down/20260401_1200.jpg",
+            "raw_text": "",
+            "processed_by": "tesseract",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260420_2202.jpg",
+            "scan_date": "2026-04-20",
+            "merchant": "the keg",
+            "total": 66.0,
+            "category": "dining/sit-down",
+            "receipt_dir": "dining/sit-down/20260420_2202.jpg",
+            "raw_text": "",
+            "processed_by": "tesseract",
+        },
+    )
+    record_receipt_update(
+        conn,
+        "20260420_2202.jpg",
+        source="email-reply-note",
+        note="Merchant is invalid",
+        changes={"email_reply": {"old": None, "new": "Merchant is invalid"}},
+        updated_at="2026-04-24T23:46:03+00:00",
+    )
+    update_receipt_fields(
+        conn,
+        "20260420_2202.jpg",
+        {"merchant": "the keg restaurant"},
+        source="manual-correct",
+        note="resolved reply request",
+    )
+
+    flagged = {row["filename"]: row for row in query_flagged(conn)}
+
+    assert "20260420_2202.jpg" not in flagged
+
+
+def test_query_flagged_keeps_unresolved_email_reply_note(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260401_1200.jpg",
+            "scan_date": "2026-04-01",
+            "merchant": "the keg",
+            "total": 44.0,
+            "category": "dining/sit-down",
+            "receipt_dir": "dining/sit-down/20260401_1200.jpg",
+            "raw_text": "",
+            "processed_by": "tesseract",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260420_2202.jpg",
+            "scan_date": "2026-04-20",
+            "merchant": "the keg",
+            "total": 66.0,
+            "category": "dining/sit-down",
+            "receipt_dir": "dining/sit-down/20260420_2202.jpg",
+            "raw_text": "",
+            "processed_by": "tesseract",
+        },
+    )
+    record_receipt_update(
+        conn,
+        "20260420_2202.jpg",
+        source="email-reply-note",
+        note="Merchant is invalid",
+        changes={"email_reply": {"old": None, "new": "Merchant is invalid"}},
+    )
+
+    flagged = {row["filename"]: row for row in query_flagged(conn)}
+
+    assert (
+        "email_reply_request (Merchant is invalid)"
+        in flagged["20260420_2202.jpg"]["review_reasons"]
+    )
 
 
 def test_currency_stored_and_retrieved(tmp_path):
