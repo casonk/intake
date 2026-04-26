@@ -149,6 +149,10 @@ def test_send_processed_receipt_notification_invokes_signal_sender(monkeypatch, 
     config_path.write_text("signal_cli:\n  account: +15550001111\n", encoding="utf-8")
     send_script = tmp_path / "send_message.py"
     send_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    receipt_root = tmp_path / "receipts"
+    receipt_file = receipt_root / "grocery" / "supermarket" / "20260318_1834.pdf"
+    receipt_file.parent.mkdir(parents=True, exist_ok=True)
+    receipt_file.write_bytes(b"%PDF-1.4")
 
     calls = []
 
@@ -164,10 +168,11 @@ def test_send_processed_receipt_notification_invokes_signal_sender(monkeypatch, 
     monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
 
     settings = {
+        "receipt_dir": str(receipt_root),
         "signal": {
             "shock_relay_config": str(config_path),
             "recipient": "+15551234567",
-        }
+        },
     }
 
     sent = send_processed_receipt_notification(
@@ -194,6 +199,10 @@ def test_send_processed_receipt_notification_invokes_signal_sender(monkeypatch, 
     ]
     assert cmd[8] == "+15551234567"
     assert "Receipt processed" in cmd[9]
+    assert (
+        "Link: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.pdf"
+        in cmd[9]
+    )
     assert capture_output is True
     assert text is True
 

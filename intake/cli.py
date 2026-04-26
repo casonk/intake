@@ -29,6 +29,7 @@ _PROMOTED_TOP_LEVEL_SETTINGS = {
     "openai_model_high",
     "openai_model_low",
     "openai_model_mid",
+    "total_escalation_threshold",
 }
 
 
@@ -862,6 +863,11 @@ def _hydrate_missing_file_hashes(
 
 def _get_extract_kwargs(settings: dict) -> dict:
     """Build keyword arguments for extract_receipt() from settings."""
+    from intake.extract import DEFAULT_TOTAL_ESCALATION_THRESHOLD
+
+    total_escalation_threshold = settings.get(
+        "total_escalation_threshold", DEFAULT_TOTAL_ESCALATION_THRESHOLD
+    )
     return {
         "openai_api_key": settings.get("openai_api_key") or None,
         "openai_model_low": (
@@ -871,6 +877,9 @@ def _get_extract_kwargs(settings: dict) -> dict:
         "openai_model_high": settings.get("openai_model_high") or "gpt-4.1",
         "escalation_patterns": settings.get("escalation_patterns") or None,
         "fuzzy_threshold": float(settings.get("fuzzy_threshold", 0.82)),
+        "total_escalation_threshold": (
+            None if total_escalation_threshold is None else float(total_escalation_threshold)
+        ),
     }
 
 

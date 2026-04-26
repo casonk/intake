@@ -15,9 +15,9 @@ low   → Quality heuristics failed (short text, missing fields, high noise);
 mid   → Low-tier AI ran but returned a blacklisted purchaser value, suggesting
         there is cardholder text the cheaper model mis-read; retry with the
         mid-fidelity model (default: gpt-4o).
-high  → Merchant name matches an escalation pattern (date fragment, page
-        number, etc.) indicating OCR produced junk for the first line;
-        use the high-fidelity model (default: gpt-4.1).
+high  → Merchant name or filename matches an escalation pattern, or the parsed
+        total crosses the configured high-total guard; use the high-fidelity
+        model (default: gpt-4.1).
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from intake.ocr import extract_text
 from intake.parse import Receipt, parse_receipt
 
 OCR_MODEL = "tesseract"
+DEFAULT_TOTAL_ESCALATION_THRESHOLD = 250.0
 
 _MODEL_RANK: dict[str, int] = {
     "tesseract": 0,
@@ -119,11 +120,24 @@ def _filename_escalates(filename: str, patterns: list[re.Pattern]) -> bool:
     return any(p.search(stem) for p in patterns)
 
 
+def _total_escalates(total: float | None, threshold: float | None) -> bool:
+    """Return True if *total* crosses the configured high-total escalation threshold."""
+    if total is None or threshold is None:
+        return False
+    try:
+        total_value = float(total)
+        threshold_value = float(threshold)
+    except (TypeError, ValueError):
+        return False
+    return threshold_value > 0 and total_value > threshold_value
+
+
 def _extraction_tier(
     text: str,
     receipt: Receipt,
     escalation_compiled: list[re.Pattern],
     filename_escalation_compiled: list[re.Pattern] | None = None,
+    total_escalation_threshold: float | None = DEFAULT_TOTAL_ESCALATION_THRESHOLD,
 ) -> str:
     """Return ``'ok'``, ``'low'``, or ``'high'`` for the extraction tier needed."""
     if _merchant_escalates(receipt.merchant, escalation_compiled):
@@ -131,6 +145,8 @@ def _extraction_tier(
     if filename_escalation_compiled and _filename_escalates(
         receipt.filename, filename_escalation_compiled
     ):
+        return "high"
+    if _total_escalates(receipt.total, total_escalation_threshold):
         return "high"
     if not _ocr_quality_ok(text, receipt):
         return "low"
@@ -150,6 +166,7 @@ def extract_receipt(
     fuzzy_rules: dict | None = None,
     fuzzy_threshold: float = 0.82,
     merchant_aliases: dict[str, list[str]] | None = None,
+    total_escalation_threshold: float | None = DEFAULT_TOTAL_ESCALATION_THRESHOLD,
 ) -> tuple[Receipt, str, str]:
     """Extract a Receipt from *receipt_path*, with optional tiered AI fallback.
 
@@ -202,7 +219,13 @@ def extract_receipt(
         escalation_patterns if escalation_patterns is not None else DEFAULT_ESCALATION_PATTERNS
     )
     filename_patterns = _compile_patterns(DEFAULT_FILENAME_ESCALATION_PATTERNS)
-    tier = _extraction_tier(raw_text, receipt, patterns, filename_patterns)
+    tier = _extraction_tier(
+        raw_text,
+        receipt,
+        patterns,
+        filename_patterns,
+        total_escalation_threshold=total_escalation_threshold,
+    )
     if tier == "ok" and not receipt.items and openai_api_key:
         tier = "low"
 

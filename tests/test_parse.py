@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from intake.parse import _parse_scan_date, parse_receipt
+from intake.parse import _parse_scan_date, parse_receipt, receipt_items_from_dicts
 
 
 def test_scan_date_from_filename():
@@ -344,6 +344,18 @@ def test_itemization_ignores_total_and_tender_lines():
     r = parse_receipt("20260401_0900.pdf", text)
     assert len(r.items) == 1
     assert r.items[0].description == "Apples"
+
+
+def test_itemization_preserves_ai_negative_adjustments():
+    items = receipt_items_from_dicts(
+        [
+            {"description": "Bottle Refund", "amount": -1.50},
+            {"description": "Change", "amount": 0.00},
+        ]
+    )
+    assert len(items) == 1
+    assert items[0].description == "Bottle Refund"
+    assert items[0].amount == pytest.approx(-1.50)
 
 
 def test_card_last4_from_visa():
