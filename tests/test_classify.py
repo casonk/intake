@@ -41,7 +41,11 @@ def test_newegg_is_pc():
 
 
 def test_steam_is_sw():
-    assert classify("Steam Game Purchase", _RULES) == "sw"
+    assert classify("Steam Game Purchase", _RULES) == "sw/gaming"
+
+
+def test_spotify_is_sw_subscription():
+    assert classify("Spotify USA Inc", _RULES) == "sw/subscription"
 
 
 def test_mcdonalds_is_dining_fast_food():
@@ -50,6 +54,20 @@ def test_mcdonalds_is_dining_fast_food():
 
 def test_chick_fil_a_is_dining_fast_food():
     assert classify("Chick-fil-A #1234", _RULES) == "dining/fast-food"
+
+
+def test_restaurant_card_terminal_text_does_not_become_finance():
+    assert (
+        classify("Rogers Tavern", _RULES, "MASTERCARD CAPITAL ONE Purchase 5653")
+        == "dining/sit-down"
+    )
+
+
+def test_explicit_payment_notice_is_finance():
+    assert (
+        classify("Capital One", _RULES, "scheduled payment received your payment")
+        == "finance/credit-card-payment"
+    )
 
 
 def test_empty_merchant_is_general():

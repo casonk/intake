@@ -423,6 +423,61 @@ def test_cmd_correct_moves_receipt_when_category_changes(tmp_path):
     }
 
 
+def test_cmd_correct_recategorizes_email_receipt_without_file_move(tmp_path):
+    receipt_root = tmp_path / "receipts"
+    receipt_root.mkdir()
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "email_30999_INBOX.txt",
+            "scan_date": "2026-04-23",
+            "merchant": "Spotify USA Inc",
+            "total": 12.99,
+            "category": "general",
+            "receipt_dir": "email/general",
+            "raw_text": "",
+            "processed_by": "email-parse",
+        },
+    )
+    conn.close()
+
+    cli._cmd_correct(
+        Namespace(
+            filename="email_30999_INBOX.txt",
+            receipt_dir=str(receipt_root),
+            db=str(db_path),
+            merchant="spotify usa inc",
+            total=None,
+            category="sw/subscription",
+            purchaser=None,
+            clear_purchaser=False,
+            card_last4=None,
+            clear_card_last4=False,
+            certification=None,
+            clear_certifications=False,
+            note="normalize subscription email",
+            currency=None,
+        ),
+        {},
+    )
+
+    conn = init_db(db_path)
+    row = get_receipt(conn, "email_30999_INBOX.txt")
+    history = query_receipt_updates(conn, filename="email_30999_INBOX.txt")
+    conn.close()
+
+    assert row is not None
+    assert row["merchant"] == "spotify usa inc"
+    assert row["category"] == "sw/subscription"
+    assert row["receipt_dir"] == "email/sw/subscription"
+    assert history[0]["changes"]["receipt_dir"] == {
+        "old": "email/general",
+        "new": "email/sw/subscription",
+    }
+
+
 def test_cmd_correct_updates_certifications_in_db_and_sidecar(tmp_path):
     receipt_root = tmp_path / "receipts"
     pdf = receipt_root / "auto" / "heritage-collision" / "20110830_1149.pdf"
@@ -1428,3 +1483,194 @@ def test_cmd_certify_backfills_certifications_into_db_and_sidecar(tmp_path, monk
 
     out = capsys.readouterr().out
     assert "Certified 20110830_1149.pdf: AAA certified" in out
+
+
+def test_cmd_staff_backfills_staff_and_fixes_staff_purchaser(tmp_path, monkeypatch, capsys):
+    receipt_root = tmp_path / "receipts"
+    pdf = receipt_root / "dining" / "20260421_1842.jpg"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"jpg")
+
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260401_1200.pdf",
+            "scan_date": "2026-04-01",
+            "merchant": "known shop",
+            "total": 1.0,
+            "category": "general",
+            "receipt_dir": "general/20260401_1200.pdf",
+            "raw_text": "",
+            "processed_by": "tesseract",
+            "purchaser": "cason konzer",
+            "card_last4": "5653",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": pdf.name,
+            "scan_date": "2026-04-21",
+            "merchant": "smokin outlaws bbq",
+            "total": 9.2,
+            "category": "dining",
+            "receipt_dir": "dining/20260421_1842.jpg",
+            "raw_text": "Server: Isabel J\nTotal 9.20",
+            "processed_by": "gpt-4o-mini",
+            "purchaser": "isabel j",
+            "card_last4": "5653",
+        },
+    )
+    conn.close()
+    write_sidecar(
+        pdf,
+        {
+            "filename": pdf.name,
+            "scan_date": "2026-04-21",
+            "merchant": "smokin outlaws bbq",
+            "total": 9.2,
+            "category": "dining",
+            "receipt_dir": "dining/20260421_1842.jpg",
+            "processed_by": "gpt-4o-mini",
+            "purchaser": "isabel j",
+            "card_last4": "5653",
+            "tier": "ok",
+        },
+    )
+    monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+
+    cli._cmd_staff(
+        Namespace(
+            receipt_dir=str(receipt_root),
+            db=str(db_path),
+            dry_run=False,
+            force=False,
+            limit=None,
+        ),
+        {},
+    )
+
+    conn = init_db(db_path)
+    row = get_receipt(conn, pdf.name)
+    history = query_receipt_updates(conn, filename=pdf.name)
+    conn.close()
+    sidecar = read_sidecar(pdf)
+
+    assert row is not None
+    assert row["staff"] == [
+        {"role": "server", "name": "isabel j", "source_text": "Server: Isabel J"}
+    ]
+    assert row["purchaser"] == "cason konzer"
+    assert sidecar is not None
+    assert sidecar["staff"] == row["staff"]
+    assert sidecar["purchaser"] == "cason konzer"
+    assert history[0]["source"] == "staff-backfill"
+
+    out = capsys.readouterr().out
+    assert "Staff 20260421_1842.jpg: server: isabel j" in out
+
+
+def test_find_duplicate_groups_hash_only_skips_heuristic_matches():
+    rows = [
+        {
+            "filename": "a.pdf",
+            "merchant": "kroger",
+            "total": 10.0,
+            "scan_date": "2026-04-01",
+            "file_hash": "same",
+            "processed_at": "1",
+        },
+        {
+            "filename": "b.pdf",
+            "merchant": "kroger",
+            "total": 10.0,
+            "scan_date": "2026-04-02",
+            "file_hash": "same",
+            "processed_at": "2",
+        },
+        {
+            "filename": "c.pdf",
+            "merchant": "shell",
+            "total": 20.0,
+            "scan_date": "2026-04-01",
+            "file_hash": None,
+            "processed_at": "3",
+        },
+        {
+            "filename": "d.pdf",
+            "merchant": "shell",
+            "total": 20.0,
+            "scan_date": "2026-04-02",
+            "file_hash": None,
+            "processed_at": "4",
+        },
+    ]
+
+    groups = cli._find_duplicate_groups(rows, 3, hash_only=True)
+
+    assert [[row["filename"] for row in group] for group in groups] == [["a.pdf", "b.pdf"]]
+
+
+def test_cmd_normalize_purchasers_updates_db_and_sidecar(tmp_path, capsys):
+    receipt_root = tmp_path / "receipts"
+    pdf = receipt_root / "general" / "20260422_1000.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": pdf.name,
+            "scan_date": "2026-04-22",
+            "merchant": "fcm travel",
+            "total": 274.37,
+            "category": "general",
+            "receipt_dir": "general/20260422_1000.pdf",
+            "raw_text": "",
+            "processed_by": "gpt-4.1",
+            "purchaser": "cason konzer",
+        },
+    )
+    conn.execute(
+        "UPDATE receipts SET purchaser = ? WHERE filename = ?",
+        ("konzer / cason andrew", pdf.name),
+    )
+    conn.commit()
+    conn.close()
+    write_sidecar(
+        pdf,
+        {
+            "filename": pdf.name,
+            "scan_date": "2026-04-22",
+            "merchant": "fcm travel",
+            "total": 274.37,
+            "category": "general",
+            "receipt_dir": "general/20260422_1000.pdf",
+            "processed_by": "gpt-4.1",
+            "purchaser": "konzer / cason andrew",
+        },
+    )
+
+    cli._cmd_normalize_purchasers(
+        Namespace(receipt_dir=str(receipt_root), db=str(db_path), dry_run=False),
+        {},
+    )
+
+    conn = init_db(db_path)
+    row = get_receipt(conn, pdf.name)
+    history = query_receipt_updates(conn, filename=pdf.name)
+    conn.close()
+    sidecar = read_sidecar(pdf)
+
+    assert row is not None
+    assert row["purchaser"] == "cason konzer"
+    assert sidecar is not None
+    assert sidecar["purchaser"] == "cason konzer"
+    assert history[0]["source"] == "purchaser-normalize"
+
+    out = capsys.readouterr().out
+    assert "Purchaser 20260422_1000.pdf" in out

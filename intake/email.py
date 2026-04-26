@@ -233,6 +233,12 @@ def fetch_receipts(
                         result.skipped += 1
                         continue
 
+                    if _is_intake_reply_message(msg, settings):
+                        if verbose:
+                            print(f"    skip (intake reply; handled by reply scan): {subject!r}")
+                        result.skipped += 1
+                        continue
+
                     if verbose:
                         print(f"  Processing: {subject!r}  from={sender}")
 
@@ -513,6 +519,19 @@ def _is_intake_reply_message(msg, settings: dict) -> bool:
     if _REPLY_SUBJECT_PREFIX_RE.match(subject):
         return True
     return bool(msg.get("In-Reply-To") or msg.get("References"))
+
+
+def _contains_intake_notification_quote(text: str) -> bool:
+    """Return True when body text contains a quoted intake notification."""
+    normalized = str(text or "")
+    if not normalized.strip():
+        return False
+    if _intake_processed_subject_fragment({}).lower() not in normalized.lower():
+        return False
+    return bool(
+        _extract_receipt_filename_from_text(normalized)
+        or re.search(r"(?im)^\s*(merchant|total|category|model)\s*:", normalized)
+    )
 
 
 def _message_text(msg, sr) -> str:
@@ -1175,6 +1194,8 @@ def _process_reply_messages(
 
 def _looks_like_receipt(text: str) -> bool:
     """Heuristic: does this email body text resemble a receipt?"""
+    if _contains_intake_notification_quote(text):
+        return False
     return bool(_RECEIPT_PATTERNS.search(text) or _PAYMENT_EMAIL_PATTERNS.search(text))
 
 
@@ -1482,7 +1503,8 @@ def _upsert_html_receipt(
                             '"receipt_time" (HH:MM), "purchaser", "card_last4", '
                             '"currency" (ISO-4217 code e.g. "USD", "CAD", "EUR", "JPY"; default "USD"), '
                             '"items" (array of {"description","amount","quantity","unit_price"}), '
-                            '"certifications" (array of {"issuer","label","source_text"}). '
+                            '"certifications" (array of {"issuer","label","source_text"}), '
+                            '"staff" (array of {"role","name","source_text"} for server, waitress, waiter, cashier, or clerk fields). '
                             "Use null for missing values and [] when no itemized lines are visible.\n\n"
                             f"Subject: {subject}\nFrom: {sender}\n\n{plain_text[:3000]}"
                         ),
@@ -1525,6 +1547,7 @@ def _upsert_html_receipt(
             "currency": receipt.currency,
             "items": receipt.items,
             "certifications": receipt.certifications,
+            "staff": receipt.staff,
         },
     )
     _, errors = send_processed_receipt_notifications(

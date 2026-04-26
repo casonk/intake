@@ -7,6 +7,13 @@ def test_normalize_purchaser_canonicalizes_known_aliases():
     assert normalize_purchaser("cason") == "cason konzer"
     assert normalize_purchaser("Cason Konzer") == "cason konzer"
     assert normalize_purchaser("casonkonzer@gmail.com") == "cason konzer"
+    assert normalize_purchaser("Konzer / Cason Andrew") == "cason konzer"
+
+
+def test_normalize_purchaser_canonicalizes_family_aliases():
+    assert normalize_purchaser("Al Thornwood") == "Alaric g Thornwood"
+    assert normalize_purchaser("Michael J. Harrington Jr.") == "Michael Harrington"
+    assert normalize_purchaser("Mike Harringtonn") == "Michael Harrington"
 
 
 def test_normalize_purchaser_reorders_comma_name():

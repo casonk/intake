@@ -122,7 +122,9 @@ top merchants and an exact merchant-month breakdown table so you can review
 historical spend over time by vendor. It also writes a static merchant
 directory under `reports/merchants/` plus one detail page per merchant, so the
 served site can drill from the summary into merchant-specific monthly history
-and receipt-level detail.
+and receipt-level detail. Recent receipt tables and merchant detail pages also
+show extracted staff/service fields such as server, waiter, waitress, cashier,
+clerk, and counter identifiers when the receipt exposes them.
 
 **Generate a manual-review queue** for suspicious or novel receipts:
 
@@ -257,6 +259,7 @@ sync.
 
 ```bash
 intake dedup
+intake dedup --hash-only
 intake dedup --merge
 intake dedup --remove
 ```
@@ -269,7 +272,21 @@ in `receipt_updates` before deleting the duplicate DB row.
 PDF-based ingest now computes a SHA-256 `file_hash` for every tracked receipt.
 `intake dedup` uses exact hash matches first, then falls back to the older
 merchant + total + scan-date window heuristic for rows that do not yet have a
-stored hash.
+stored hash. Use `--hash-only` when you want a conservative exact-duplicate
+sweep without treating repeated same-merchant/same-total purchases as duplicate
+candidates.
+
+**Backfill staff/service fields** from stored OCR into historical rows:
+
+```bash
+intake staff
+intake staff --dry-run
+intake staff --force
+```
+
+The command stores `staff` metadata in the DB and sidecars and also clears a
+purchaser value when it exactly matches an extracted staff name, falling back to
+card-history purchaser inference when possible.
 
 New inbox duplicates are short-circuited at ingest: if a PDF arriving in
 `receipt/intake/` matches the `file_hash` of an already-tracked receipt,

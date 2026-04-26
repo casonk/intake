@@ -351,6 +351,7 @@ def _sync_receipt_sidecar(receipt_root: Path, row: dict) -> Path | None:
             "card_last4": row.get("card_last4"),
             "items": row.get("items"),
             "certifications": row.get("certifications"),
+            "staff": row.get("staff"),
             "processed_at": row["processed_at"],
         }
     )
@@ -545,6 +546,7 @@ def _receipt_row_from_receipt(
     """Serialize a Receipt into the DB/sidecar row shape."""
     from intake.certification import receipt_certifications_to_dicts
     from intake.parse import receipt_items_to_dicts
+    from intake.staff import receipt_staff_to_dicts
 
     return {
         "filename": filename,
@@ -561,6 +563,7 @@ def _receipt_row_from_receipt(
         "currency": receipt.currency,
         "items": receipt_items_to_dicts(receipt.items),
         "certifications": receipt_certifications_to_dicts(receipt.certifications),
+        "staff": receipt_staff_to_dicts(receipt.staff),
         "tier": tier,
     }
 
@@ -582,6 +585,7 @@ def _receipt_event_from_row(row: dict, *, tier: str) -> dict:
         "card_last4": row.get("card_last4"),
         "items": row.get("items") or [],
         "certifications": row.get("certifications") or [],
+        "staff": row.get("staff") or [],
     }
 
 
@@ -1252,6 +1256,8 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
             "card_last4": sc.get("card_last4"),
             "currency": sc.get("currency", "USD"),
             "items": sc.get("items"),
+            "certifications": sc.get("certifications"),
+            "staff": sc.get("staff"),
             "tier": sc.get("tier", "ok"),
         }
         row = _backfill_row_purchaser_from_card(conn, row)
@@ -1601,6 +1607,174 @@ def _cmd_certify(args: argparse.Namespace, settings: dict) -> None:
     )
 
 
+def _cmd_staff(args: argparse.Namespace, settings: dict) -> None:
+    """Attempt staff/server/cashier extraction for existing receipt rows."""
+    from intake.db import infer_purchaser_from_card_last4, init_db, update_receipt_fields
+    from intake.sidecar import ocr_debug_path
+    from intake.staff import extract_staff, receipt_staff_to_dicts
+
+    receipt_root = None
+    if args.receipt_dir or settings.get("receipt_dir"):
+        receipt_root = _require_receipt_dir(settings, args.receipt_dir)
+
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
+    conn = init_db(db_path)
+    row_cursor = conn.execute("""
+            SELECT filename, scan_date, merchant, total, category, receipt_dir, raw_text,
+                   staff_json, processed_by, purchaser, card_last4, processed_at
+            FROM receipts
+            ORDER BY scan_date DESC, processed_at DESC, filename DESC
+            """)
+    rows = [dict(row) for row in row_cursor.fetchall()]
+    if args.limit is not None:
+        rows = rows[: args.limit]
+
+    updated = skipped = failed = 0
+    with_staff = 0
+    purchaser_fixes = 0
+    pf_events: list[dict] = []
+
+    for row in rows:
+        if row.get("staff_json") is not None and not args.force:
+            skipped += 1
+            continue
+
+        receipt_dir_rel = str(row.get("receipt_dir") or "")
+        receipt_path = None
+        if (
+            receipt_root is not None
+            and receipt_dir_rel
+            and not receipt_dir_rel.startswith("email/")
+        ):
+            candidate = receipt_root / receipt_dir_rel
+            if candidate.exists():
+                receipt_path = candidate
+
+        try:
+            raw_text = row.get("raw_text") or ""
+            note_parts: list[str] = []
+            if raw_text:
+                note_parts.append("stored OCR")
+            if not raw_text and receipt_path is not None:
+                debug_path = ocr_debug_path(receipt_path)
+                if debug_path.exists():
+                    raw_text = debug_path.read_text(encoding="utf-8", errors="replace")
+                    note_parts.append("OCR debug artifact")
+
+            staff = receipt_staff_to_dicts(extract_staff(raw_text)) if raw_text else []
+            labels = (
+                ", ".join(f"{item['role']}: {item['name']}" for item in staff if item.get("name"))
+                or "0"
+            )
+
+            updates: dict[str, object | None] = {"staff": staff}
+            purchaser = str(row.get("purchaser") or "").strip().lower()
+            staff_names = {str(item.get("name") or "").strip().lower() for item in staff}
+            if purchaser and purchaser in staff_names:
+                inferred = (
+                    infer_purchaser_from_card_last4(
+                        conn,
+                        row.get("card_last4"),
+                        exclude_filename=row["filename"],
+                    )
+                    if row.get("card_last4")
+                    else None
+                )
+                updates["purchaser"] = inferred
+                purchaser_fixes += 1
+
+            if args.dry_run:
+                extra = ""
+                if "purchaser" in updates:
+                    extra = f"; purchaser -> {updates['purchaser'] or 'cleared'}"
+                print(f"  [dry-run] {row['filename']}: {labels}{extra}")
+                continue
+
+            note = (
+                "attempted staff/service extraction via " + " + ".join(note_parts)
+                if note_parts
+                else "attempted staff/service extraction with no OCR text or debug artifact available"
+            )
+            updated_row, changes = update_receipt_fields(
+                conn,
+                row["filename"],
+                updates,
+                source="staff-backfill",
+                note=note,
+            )
+            if not changes:
+                skipped += 1
+                continue
+
+            if receipt_root is not None:
+                _sync_receipt_sidecar(receipt_root, updated_row)
+            if updated_row.get("staff"):
+                with_staff += 1
+            pf_events.append(_receipt_event_from_row(updated_row, tier="staff-backfill"))
+            updated += 1
+            print(f"  Staff {row['filename']}: {labels}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ERROR extracting staff for {row['filename']}: {exc}", file=sys.stderr)
+            failed += 1
+
+    conn.close()
+    _trigger_personal_finance(settings, pf_events, trigger="staff")
+    print(
+        f"\nStaff extraction complete: {updated} updated, {skipped} skipped, "
+        f"{failed} error(s), {with_staff} with staff, {purchaser_fixes} purchaser fix(es)."
+    )
+
+
+def _cmd_normalize_purchasers(args: argparse.Namespace, settings: dict) -> None:
+    """Normalize existing purchaser aliases through the audited update path."""
+    from intake.db import init_db, update_receipt_fields
+    from intake.purchaser import normalize_purchaser
+
+    receipt_root = None
+    if args.receipt_dir or settings.get("receipt_dir"):
+        receipt_root = _require_receipt_dir(settings, args.receipt_dir)
+
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
+    conn = init_db(db_path)
+    purchaser_rows = conn.execute("""
+            SELECT filename, purchaser
+            FROM receipts
+            WHERE purchaser IS NOT NULL AND TRIM(purchaser) != ''
+            ORDER BY filename
+            """).fetchall()
+    rows = [dict(row) for row in purchaser_rows]
+
+    updated = skipped = 0
+    for row in rows:
+        normalized = normalize_purchaser(row.get("purchaser"))
+        if normalized == row.get("purchaser"):
+            skipped += 1
+            continue
+        if args.dry_run:
+            print(f"  [dry-run] {row['filename']}: {row['purchaser']!r} -> {normalized!r}")
+            continue
+        updated_row, changes = update_receipt_fields(
+            conn,
+            row["filename"],
+            {"purchaser": normalized},
+            source="purchaser-normalize",
+            note="normalized purchaser alias",
+        )
+        if not changes:
+            skipped += 1
+            continue
+        if receipt_root is not None:
+            _sync_receipt_sidecar(receipt_root, updated_row)
+        updated += 1
+        print(f"  Purchaser {row['filename']}: {row['purchaser']!r} -> {normalized!r}")
+
+    conn.close()
+    if args.dry_run:
+        print(f"\nPurchaser normalization dry-run complete: {len(rows) - skipped} change(s).")
+    else:
+        print(f"\nPurchaser normalization complete: {updated} updated, {skipped} skipped.")
+
+
 # Keywords in merchant names that suggest product docs rather than receipts
 _EXHAUST_MERCHANT_KEYWORDS = frozenset(
     [
@@ -1891,12 +2065,15 @@ def _cmd_correct(args: argparse.Namespace, settings: dict) -> None:
 
     if "category" in updates:
         current_rel = row["receipt_dir"] or ""
-        new_rel = _relocate_receipt_artifacts(
-            receipt_root,
-            current_relpath=current_rel,
-            category=str(updates["category"]),
-            filename=args.filename,
-        )
+        if current_rel.startswith("email/"):
+            new_rel = f"email/{updates['category']}"
+        else:
+            new_rel = _relocate_receipt_artifacts(
+                receipt_root,
+                current_relpath=current_rel,
+                category=str(updates["category"]),
+                filename=args.filename,
+            )
         updates["receipt_dir"] = new_rel
 
     updated_row, changes = update_receipt_fields(
@@ -2525,7 +2702,7 @@ def _install_web_unit() -> None:
     )
 
 
-def _find_duplicate_groups(rows: list, window_days: int) -> list[list]:
+def _find_duplicate_groups(rows: list, window_days: int, *, hash_only: bool = False) -> list[list]:
     """Return clusters of rows that likely represent the same transaction.
 
     Exact file-hash matches are treated as duplicates first. Remaining rows
@@ -2557,6 +2734,9 @@ def _find_duplicate_groups(rows: list, window_days: int) -> list[list]:
         )
         groups.append(bucket_rows)
         exact_filenames.update(r["filename"] for r in bucket_rows)
+
+    if hash_only:
+        return groups
 
     # Group by (merchant, rounded total).
     buckets: dict[tuple, list] = {}
@@ -2683,7 +2863,7 @@ def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
     ]
     rows = _hydrate_missing_file_hashes(conn, rows, receipt_root=receipt_root)
 
-    groups = _find_duplicate_groups(rows, window)
+    groups = _find_duplicate_groups(rows, window, hash_only=getattr(args, "hash_only", False))
 
     if not groups:
         print(f"No duplicates found (merchant+total, within {window}-day window).")
@@ -2727,7 +2907,8 @@ def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
             row.get("file_hash") == keeper.get("file_hash") for row in group
         )
         label = "hash match" if exact_hash else "merchant+total window"
-        print(f"  Group {i} — {merchant!r}  ${total_amt:.2f}  ({len(group)} copies, {label})")
+        total_label = f"${total_amt:.2f}" if total_amt is not None else "total unknown"
+        print(f"  Group {i} — {merchant!r}  {total_label}  ({len(group)} copies, {label})")
         for row in group:
             tag = " [KEEP]" if row["filename"] == keeper["filename"] else ""
             extras = []
@@ -3039,6 +3220,35 @@ def main() -> None:
         help="Process only the most recent N receipt rows",
     )
 
+    # staff
+    p_stf = sub.add_parser(
+        "staff",
+        help="Extract server/cashier/clerk metadata for historical receipts",
+    )
+    p_stf.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_stf.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_stf.add_argument("--dry-run", action="store_true", help="Preview staff changes only")
+    p_stf.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-attempt staff extraction even when a receipt already has stored staff_json",
+    )
+    p_stf.add_argument(
+        "--limit",
+        metavar="N",
+        type=int,
+        help="Process only the most recent N receipt rows",
+    )
+
+    # normalize-purchasers
+    p_np = sub.add_parser(
+        "normalize-purchasers",
+        help="Normalize purchaser aliases in existing DB rows and sidecars",
+    )
+    p_np.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_np.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_np.add_argument("--dry-run", action="store_true", help="Preview purchaser changes only")
+
     # merge
     p_mrg = sub.add_parser(
         "merge",
@@ -3187,6 +3397,11 @@ def main() -> None:
         action="store_true",
         help="Implies --merge; move duplicate artifacts to exhaust/duplicates and audit removal",
     )
+    p_ded.add_argument(
+        "--hash-only",
+        action="store_true",
+        help="Only consider exact file-hash duplicate groups",
+    )
 
     # consolidate
     p_con = sub.add_parser(
@@ -3262,6 +3477,10 @@ def main() -> None:
         _cmd_itemize(args, settings)
     elif args.command == "certify":
         _cmd_certify(args, settings)
+    elif args.command == "staff":
+        _cmd_staff(args, settings)
+    elif args.command == "normalize-purchasers":
+        _cmd_normalize_purchasers(args, settings)
     elif args.command == "merge":
         _cmd_merge(args, settings)
     elif args.command == "exhaust":

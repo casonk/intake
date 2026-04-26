@@ -25,6 +25,10 @@ keywords = []
 label    = "Fast Food"
 keywords = ["mcdonald's", "mcdonalds", "chick-fil-a", "chick fil a", "chickfila"]
 
+[categories.dining.sit-down]
+label    = "Sit-Down Restaurants"
+keywords = ["tavern", "brewhouse", "brew pub", "sushi", "bar"]
+
 [categories.pharmacy]
 label    = "Pharmacy & Drug Stores"
 keywords = ["cvs", "walgreens", "rite aid"]
@@ -47,7 +51,15 @@ keywords = ["newegg"]
 
 [categories.sw]
 label    = "Software & Dev Tools"
+keywords = []
+
+[categories.sw.gaming]
+label    = "Gaming Platforms"
 keywords = ["steam"]
+
+[categories.sw.subscription]
+label    = "Software Subscriptions"
+keywords = ["spotify"]
 
 [categories.finance]
 label    = "Finance & Transfers"
@@ -55,7 +67,7 @@ keywords = []
 
 [categories.finance.credit-card-payment]
 label    = "Credit Card Payments"
-keywords = ["capital one", "ventureone", "discover card", "scheduled payment", "received your payment"]
+keywords = ["scheduled payment", "received your payment"]
 
 [categories.general]
 label    = "General / Uncategorized"

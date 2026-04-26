@@ -148,6 +148,17 @@ def test_merge_ai_result_skips_probable_cashier_name_from_counter_line():
     assert r.purchaser is None
 
 
+def test_merge_ai_result_merges_staff():
+    r = merge_ai_result(
+        _receipt(),
+        {"staff": [{"role": "Server", "name": "Isabel J", "source_text": "Server: Isabel J"}]},
+    )
+
+    assert len(r.staff) == 1
+    assert r.staff[0].role == "server"
+    assert r.staff[0].name == "isabel j"
+
+
 def test_merge_ai_result_clears_unpaid_notice_total():
     r = merge_ai_result(
         _receipt(

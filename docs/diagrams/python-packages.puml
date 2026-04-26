@@ -3,7 +3,7 @@ set namespaceSeparator none
 top to bottom direction
 skinparam componentStyle rectangle
 rectangle "conftest\n1 python file" as conftest
-rectangle "intake\n0 child pkg, 19 modules\n20 python files\nexamples: ai, certification, classify" as intake
+rectangle "intake\n0 child pkg, 21 modules\n22 python files\nexamples: ai, certification, classify" as intake
 rectangle "intake.ai\n1 python file" as intake.ai
 rectangle "intake.certification\n1 python file" as intake.certification
 rectangle "intake.classify\n1 python file" as intake.classify
@@ -11,6 +11,7 @@ rectangle "intake.cli\n1 python file" as intake.cli
 rectangle "intake.db\n1 python file" as intake.db
 rectangle "intake.email\n1 python file" as intake.email
 rectangle "intake.extract\n1 python file" as intake.extract
+rectangle "intake.file_links\n1 python file" as intake.file_links
 rectangle "intake.fingerprint\n1 python file" as intake.fingerprint
 rectangle "intake.media\n1 python file" as intake.media
 rectangle "intake.merchant\n1 python file" as intake.merchant
@@ -22,11 +23,13 @@ rectangle "intake.personal_finance\n1 python file" as intake.personal_finance
 rectangle "intake.purchaser\n1 python file" as intake.purchaser
 rectangle "intake.report\n1 python file" as intake.report
 rectangle "intake.sidecar\n1 python file" as intake.sidecar
+rectangle "intake.staff\n1 python file" as intake.staff
 rectangle "intake.web\n1 python file" as intake.web
 intake.ai --> intake.certification
 intake.ai --> intake.ocr
 intake.ai --> intake.parse
 intake.ai --> intake.purchaser
+intake.ai --> intake.staff
 intake.cli --> intake.certification
 intake.cli --> intake.classify
 intake.cli --> intake.db
@@ -42,12 +45,15 @@ intake.cli --> intake.personal_finance
 intake.cli --> intake.purchaser
 intake.cli --> intake.report
 intake.cli --> intake.sidecar
+intake.cli --> intake.staff
 intake.cli --> intake.web
 intake.db --> intake.certification
 intake.db --> intake.parse
 intake.db --> intake.purchaser
+intake.db --> intake.staff
 intake.email --> intake.ai
 intake.email --> intake.classify
+intake.email --> intake.cli
 intake.email --> intake.db
 intake.email --> intake.email
 intake.email --> intake.merchant
@@ -60,16 +66,22 @@ intake.extract --> intake.ai
 intake.extract --> intake.merchant
 intake.extract --> intake.ocr
 intake.extract --> intake.parse
+intake.file_links --> intake.media
+intake.notify --> intake.file_links
 intake.notify --> intake.parse
 intake.ocr --> intake.media
 intake.parse --> intake.certification
 intake.parse --> intake.merchant
 intake.parse --> intake.naming
 intake.parse --> intake.purchaser
+intake.parse --> intake.staff
 intake.personal_finance --> intake.certification
 intake.personal_finance --> intake.parse
+intake.personal_finance --> intake.staff
+intake.purchaser --> intake.staff
 intake.report --> intake.certification
 intake.report --> intake.db
 intake.report --> intake.media
 intake.report --> intake.parse
+intake.report --> intake.staff
 @enduml

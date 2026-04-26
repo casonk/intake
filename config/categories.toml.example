@@ -103,7 +103,7 @@ keywords = ["burger-hut", "taco-town", "mcdonald's", "mcdonalds", "chick-fil-a",
 
 [categories.dining.sit-down]
 label    = "Sit-Down Restaurants"
-keywords = ["the-grill", "main-street-bistro"]
+keywords = ["the-grill", "main-street-bistro", "tavern", "brewhouse", "brew pub", "sushi", "bar"]
 
 [categories.edu]
 label    = "Education"
@@ -135,7 +135,7 @@ keywords = []
 
 [categories.finance.credit-card-payment]
 label    = "Credit Card Payments"
-keywords = ["capital one", "ventureone", "discover card", "scheduled payment", "received your payment"]
+keywords = ["scheduled payment", "received your payment"]
 
 [categories.general]
 label    = "General / Uncategorized"

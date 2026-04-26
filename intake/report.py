@@ -14,6 +14,7 @@ from jinja2 import BaseLoader, Environment
 
 from intake.certification import receipt_certifications_from_dicts, receipt_certifications_to_dicts
 from intake.parse import receipt_items_from_dicts, receipt_items_to_dicts
+from intake.staff import receipt_staff_from_dicts, receipt_staff_to_dicts
 
 _DEFAULT_FILEBROWSER_BASE_URL = "https://files.snowbridge.internal"
 _DEFAULT_FILEBROWSER_RECEIPT_ROOT = "receipt"
@@ -90,10 +91,10 @@ _MD_TEMPLATE = """\
 
 ## Recent Receipts (last 50)
 
-| Date | Merchant | Category | Total | Purchaser | Card | Items | File | Folder | Model | Processed At |
-|---|---|---|---|---|---|---|---|---|---|---|
+| Date | Merchant | Category | Total | Purchaser | Card | Staff | Items | File | Folder | Model | Processed At |
+|---|---|---|---|---|---|---|---|---|---|---|---|
 {% for row in data.recent -%}
-| {{ row.scan_date }} | {{ row.merchant_markdown }} | {{ row.category_markdown }} | {% if row.total is not none %}{{ row.total_display }}{% else %}—{% endif %} | {{ row.purchaser or "—" }} | {{ row.card_last4 or "—" }} | {{ row.items_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
+| {{ row.scan_date }} | {{ row.merchant_markdown }} | {{ row.category_markdown }} | {% if row.total is not none %}{{ row.total_display }}{% else %}—{% endif %} | {{ row.purchaser or "—" }} | {{ row.card_last4 or "—" }} | {{ row.staff_markdown }} | {{ row.items_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
 {% endfor %}
 """
 
@@ -748,7 +749,7 @@ _HTML_TEMPLATE = """\
 
   <h3 id="recent-receipts">Recent Receipts (last 50)</h3>
   <table class="detail-table">
-    <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Total</th><th>Purchaser</th><th>Card</th><th>Items</th><th>File</th><th>Folder</th><th>Model</th><th>Processed At</th></tr></thead>
+    <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Total</th><th>Purchaser</th><th>Card</th><th>Staff</th><th>Items</th><th>File</th><th>Folder</th><th>Model</th><th>Processed At</th></tr></thead>
     <tbody>
     {% for row in data.recent %}
     <tr>
@@ -758,6 +759,7 @@ _HTML_TEMPLATE = """\
       <td>{% if row.total is not none %}{{ row.total_display }}{% else %}—{% endif %}</td>
       <td>{{ row.purchaser or "—" }}</td>
       <td>{{ "···· " + row.card_last4 if row.card_last4 else "—" }}</td>
+      <td>{{ row.staff_label }}</td>
       <td>{{ row.items_label }}</td>
       <td>{% if row.file_link_uri %}<a href="{{ row.file_link_uri }}">{{ row.filename }}</a>{% else %}{{ row.filename }}{% endif %}</td>
       <td>{% if row.folder_uri %}<a href="{{ row.folder_uri }}">{{ row.folder_name }}</a>{% else %}—{% endif %}</td>
@@ -1065,10 +1067,10 @@ No certifications recorded yet.
 ## Receipts
 
 {% if data.receipts -%}
-| Date | Category | Total | Purchaser | Card | Items | Certifications | File | Folder | Model | Processed At |
-|---|---|---|---|---|---|---|---|---|---|---|
+| Date | Category | Total | Purchaser | Card | Staff | Items | Certifications | File | Folder | Model | Processed At |
+|---|---|---|---|---|---|---|---|---|---|---|---|
 {% for row in data.receipts -%}
-| {{ row.scan_date }} | {{ row.category_markdown }} | {{ row.total_display }} | {{ row.purchaser or "—" }} | {{ row.card_last4 or "—" }} | {{ row.items_markdown }} | {{ row.certifications_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
+| {{ row.scan_date }} | {{ row.category_markdown }} | {{ row.total_display }} | {{ row.purchaser or "—" }} | {{ row.card_last4 or "—" }} | {{ row.staff_markdown }} | {{ row.items_markdown }} | {{ row.certifications_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
 {% endfor %}
 {% else -%}
 No receipt rows yet.
@@ -1361,7 +1363,7 @@ _MERCHANT_DETAIL_HTML_TEMPLATE = """\
     <p>Every tracked receipt for this merchant bucket.</p>
     {% if data.receipts %}
     <table>
-      <thead><tr><th>Date</th><th>Category</th><th>Total</th><th>Purchaser</th><th>Card</th><th>Items</th><th>Certifications</th><th>File</th><th>Folder</th><th>Model</th><th>Processed At</th></tr></thead>
+      <thead><tr><th>Date</th><th>Category</th><th>Total</th><th>Purchaser</th><th>Card</th><th>Staff</th><th>Items</th><th>Certifications</th><th>File</th><th>Folder</th><th>Model</th><th>Processed At</th></tr></thead>
       <tbody>
         {% for row in data.receipts %}
         <tr>
@@ -1370,6 +1372,7 @@ _MERCHANT_DETAIL_HTML_TEMPLATE = """\
           <td>{{ row.total_display }}</td>
           <td>{{ row.purchaser or "—" }}</td>
           <td>{{ "···· " + row.card_last4 if row.card_last4 else "—" }}</td>
+          <td>{{ row.staff_label }}</td>
           <td>{{ row.items_label }}</td>
           <td>{{ row.certifications_label }}</td>
           <td>{% if row.file_link_uri %}<a href="{{ row.file_link_uri }}">{{ row.filename }}</a>{% else %}{{ row.filename }}{% endif %}</td>
@@ -1840,6 +1843,16 @@ def _decode_recent_certifications(certifications_json: object) -> list[dict] | N
     return receipt_certifications_to_dicts(receipt_certifications_from_dicts(payload))
 
 
+def _decode_recent_staff(staff_json: object) -> list[dict] | None:
+    if staff_json is None:
+        return None
+    try:
+        payload = json.loads(staff_json) if isinstance(staff_json, str) else staff_json
+    except json.JSONDecodeError:
+        return []
+    return receipt_staff_to_dicts(receipt_staff_from_dicts(payload))
+
+
 def _format_item_summary(items: list[dict] | None) -> tuple[str, str]:
     if items is None:
         return "—", "—"
@@ -1860,6 +1873,22 @@ def _format_certification_summary(certifications: list[dict] | None) -> tuple[st
         return "—", "—"
     labels = ", ".join(cert["label"] for cert in certifications if cert.get("label"))
     summary = labels or str(len(certifications))
+    return summary, summary.replace("|", "/")
+
+
+def _format_staff_summary(staff: list[dict] | None) -> tuple[str, str]:
+    if staff is None:
+        return "—", "—"
+    if not staff:
+        return "—", "—"
+    labels = []
+    for entry in staff[:3]:
+        role = str(entry.get("role") or "staff").strip()
+        name = str(entry.get("name") or "").strip()
+        labels.append(f"{role}: {name}" if name else role)
+    if len(staff) > 3:
+        labels.append("...")
+    summary = ", ".join(labels)
     return summary, summary.replace("|", "/")
 
 
@@ -1896,6 +1925,9 @@ def _prepare_recent(
         item["certifications_label"], item["certifications_markdown"] = (
             _format_certification_summary(certifications)
         )
+        staff = _decode_recent_staff(item.get("staff_json"))
+        item["staff"] = staff
+        item["staff_label"], item["staff_markdown"] = _format_staff_summary(staff)
         category = _safe_label(item.get("category"), "General")
         category_path = _category_folder_path(receipt_root, category)
         category_uri = _filebrowser_uri_for_local_path(

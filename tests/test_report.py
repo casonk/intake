@@ -33,6 +33,9 @@ def _seed_receipts(db_path: Path) -> None:
             "processed_by": "tesseract",
             "purchaser": "john",
             "card_last4": "1111",
+            "staff": [
+                {"role": "cashier", "name": "chec 510", "source_text": "Your cashier was CHEC 510"}
+            ],
             "items": [
                 {"description": "Bananas", "amount": 2.99},
                 {"description": "Whole Milk", "amount": 4.39},
@@ -188,6 +191,8 @@ def test_generate_reports_renders_chart_sections(tmp_path):
     assert f"[receipt/intake/]({_browser_uri('intake', is_dir=True)})" in md
     assert "2: Bananas, Whole Milk" in md
     assert "2: Bananas, Whole Milk" in html
+    assert "cashier: chec 510" in md
+    assert "cashier: chec 510" in html
     assert "Jan 2026 $45.67 (1); Mar 2026 $53.81 (1)" in md
     assert "Jan 2026 $45.67 (1)<br>Mar 2026 $53.81 (1)" in html
     assert "| [kroger](merchants/kroger.md) | Jan 2026 | 1 | $45.67 |" in md

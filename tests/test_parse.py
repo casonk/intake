@@ -189,6 +189,54 @@ def test_payment_tender_total_beats_balance_line():
     assert r.total == pytest.approx(88.05)
 
 
+def test_masked_card_last4_is_not_payment_tender_total():
+    text = "\n".join(
+        [
+            "Rogers Tavern",
+            "Subtotal $8.00",
+            "GST $0.40",
+            "LCT $0.80",
+            "Tip $1.84",
+            "Total $11.04",
+            "MASTERCARD XXXXXXXX5653",
+        ]
+    )
+    r = parse_receipt("20260413_0547.jpg", text)
+    assert r.total == pytest.approx(11.04)
+
+
+def test_ocr_noisy_total_label_beats_masked_card_fragment():
+    text = "\n".join(
+        [
+            "Rogers Tavern",
+            "Subtotal $8.00",
+            "GST $0.40",
+            "LCT $0.80",
+            "Tip $1.84",
+            "Tota| $11.04",
+            "MASTERCARD XXXXXXXXHH53",
+        ]
+    )
+    r = parse_receipt("20260413_0548.jpg", text)
+    assert r.total == pytest.approx(11.04)
+
+
+def test_masked_card_ocr_fragment_does_not_override_clean_total():
+    text = "\n".join(
+        [
+            "Rogers Tavern",
+            "subtota | $10.00",
+            "GST $0.50",
+            "LCT $1.00",
+            "Tip $2.30",
+            "Total $13.80",
+            "Mastercard XXXXXXXXH9BH3",
+        ]
+    )
+    r = parse_receipt("20260416_0929.jpg", text)
+    assert r.total == pytest.approx(13.80)
+
+
 def test_unpaid_notice_total_is_not_treated_as_spend():
     text = "\n".join(
         [
@@ -410,6 +458,26 @@ def test_counter_staff_name_not_treated_as_purchaser():
     text = "Store\nCounter #: 862305 Sal\nCardholder: Sam\nMC 5653 42.38\nTotal $42.38"
     r = parse_receipt("20260226_0730.pdf", text)
     assert r.purchaser is None
+
+
+def test_staff_is_extracted_from_receipt_text():
+    r = parse_receipt(
+        "20260421_1842.jpg",
+        "Smokin Outlaws BBQ\nServer: Isabel J\nTotal 9.20",
+    )
+
+    assert [staff.role for staff in r.staff] == ["server"]
+    assert [staff.name for staff in r.staff] == ["isabel j"]
+
+
+def test_two_word_staff_name_not_treated_as_purchaser():
+    r = parse_receipt(
+        "20260418_2158.jpg",
+        "Rogers Tavern\nserver: Patricia W\nName: Patricia W\nTotal 13.80",
+    )
+
+    assert r.purchaser is None
+    assert r.staff[0].name == "patricia w"
 
 
 def test_certification_extracted_from_aaa_line():

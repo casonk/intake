@@ -12,6 +12,7 @@ from intake.certification import (
     extract_certifications,
 )
 from intake.purchaser import is_probable_staff_name, normalize_purchaser
+from intake.staff import ReceiptStaff, extract_staff
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class Receipt:
     currency: str = "USD"  # ISO-4217 currency code detected from OCR text
     items: list[ReceiptItem] = field(default_factory=list)
     certifications: list[ReceiptCertification] = field(default_factory=list)
+    staff: list[ReceiptStaff] = field(default_factory=list)
 
     def suggested_filename(self, *, source_path: Path | None = None, suffix: str = ".pdf") -> str:
         """Return a canonical ``YYYYMMDD_HHMM.EXT`` filename for this receipt."""
@@ -66,6 +68,7 @@ def parse_receipt(filename: str, raw_text: str, pdf_path: Path | None = None) ->
     currency = _parse_currency(raw_text)
     items = _parse_items(raw_text)
     certifications = extract_certifications(raw_text)
+    staff = extract_staff(raw_text)
     return Receipt(
         filename=filename,
         scan_date=scan_date,
@@ -79,6 +82,7 @@ def parse_receipt(filename: str, raw_text: str, pdf_path: Path | None = None) ->
         currency=currency,
         items=items,
         certifications=certifications,
+        staff=staff,
     )
 
 
@@ -663,7 +667,13 @@ def _iter_labeled_amounts(raw_text: str) -> list[tuple[str, float]]:
         amount = _parse_amount(match.group("amount"))
         if amount is None:
             continue
-        label = " ".join(match.group("label").strip().lower().split())
+        label = " ".join(
+            match.group("label").replace("|", "l").replace("]", "l").strip().lower().split()
+        )
+        if any(term in label for term in _PAYMENT_TOTAL_TERMS) and re.search(
+            r"[xX*]{2,}|[hH]{2,}", match.group("label")
+        ):
+            continue
         if label:
             entries.append((label, amount))
     return entries
