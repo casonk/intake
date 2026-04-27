@@ -91,16 +91,52 @@ def _parse_body_excerpt(raw_text: str) -> str:
 # ── category classification ───────────────────────────────────────────────────
 
 _LEGAL_TERMS = frozenset(
-    {"hereby", "pursuant", "defendant", "plaintiff", "attorney", "counsel",
-     "court", "subpoena", "lawsuit", "litigation", "deposition", "affidavit"}
+    {
+        "hereby",
+        "pursuant",
+        "defendant",
+        "plaintiff",
+        "attorney",
+        "counsel",
+        "court",
+        "subpoena",
+        "lawsuit",
+        "litigation",
+        "deposition",
+        "affidavit",
+    }
 )
 _MEDICAL_TERMS = frozenset(
-    {"diagnosis", "prescription", "patient", "physician", "hospital", "clinic",
-     "treatment", "medication", "referral", "copay", "healthcare"}
+    {
+        "diagnosis",
+        "prescription",
+        "patient",
+        "physician",
+        "hospital",
+        "clinic",
+        "treatment",
+        "medication",
+        "referral",
+        "copay",
+        "healthcare",
+    }
 )
 _FINANCIAL_TERMS = frozenset(
-    {"account", "statement", "balance", "mortgage", "loan", "tax", "refund",
-     "credit", "debit", "investment", "portfolio", "dividend", "escrow"}
+    {
+        "account",
+        "statement",
+        "balance",
+        "mortgage",
+        "loan",
+        "tax",
+        "refund",
+        "credit",
+        "debit",
+        "investment",
+        "portfolio",
+        "dividend",
+        "escrow",
+    }
 )
 
 
