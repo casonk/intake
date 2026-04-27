@@ -28,6 +28,8 @@ from pathlib import Path
 
 from intake.ocr import extract_text
 from intake.parse import Receipt, parse_receipt
+from intake.parse_card import Card
+from intake.parse_letter import Letter
 
 OCR_MODEL = "tesseract"
 DEFAULT_TOTAL_ESCALATION_THRESHOLD = 250.0
