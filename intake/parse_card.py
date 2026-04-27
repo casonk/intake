@@ -23,10 +23,21 @@ class Card:
 _OCCASION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bhappy\s+birthday\b", re.IGNORECASE), "birthday"),
     (re.compile(r"\bcongratulations?\b", re.IGNORECASE), "congratulations"),
-    (re.compile(r"\b(merry\s+christmas|happy\s+holidays?|season.?s\s+greetings|happy\s+new\s+year)\b", re.IGNORECASE), "holiday"),
+    (
+        re.compile(
+            r"\b(merry\s+christmas|happy\s+holidays?|season.?s\s+greetings|happy\s+new\s+year)\b",
+            re.IGNORECASE,
+        ),
+        "holiday",
+    ),
     (re.compile(r"\bhappy\s+anniversary\b", re.IGNORECASE), "anniversary"),
     (re.compile(r"\bget\s+well\s+soon\b", re.IGNORECASE), "get-well"),
-    (re.compile(r"\b(with\s+sympathy|thinking\s+of\s+you|our\s+deepest\s+sympathy)\b", re.IGNORECASE), "sympathy"),
+    (
+        re.compile(
+            r"\b(with\s+sympathy|thinking\s+of\s+you|our\s+deepest\s+sympathy)\b", re.IGNORECASE
+        ),
+        "sympathy",
+    ),
     (re.compile(r"\bthank\s+you\b", re.IGNORECASE), "thank-you"),
     (re.compile(r"\bbon\s+voyage\b", re.IGNORECASE), "farewell"),
 ]
