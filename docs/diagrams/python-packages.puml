@@ -3,12 +3,15 @@ set namespaceSeparator none
 top to bottom direction
 skinparam componentStyle rectangle
 rectangle "conftest\n1 python file" as conftest
-rectangle "intake\n0 child pkg, 21 modules\n22 python files\nexamples: ai, certification, classify" as intake
+rectangle "intake\n0 child pkg, 26 modules\n27 python files\nexamples: ai, ai_card, ai_letter" as intake
 rectangle "intake.ai\n1 python file" as intake.ai
+rectangle "intake.ai_card\n1 python file" as intake.ai_card
+rectangle "intake.ai_letter\n1 python file" as intake.ai_letter
 rectangle "intake.certification\n1 python file" as intake.certification
 rectangle "intake.classify\n1 python file" as intake.classify
 rectangle "intake.cli\n1 python file" as intake.cli
 rectangle "intake.db\n1 python file" as intake.db
+rectangle "intake.document_type\n1 python file" as intake.document_type
 rectangle "intake.email\n1 python file" as intake.email
 rectangle "intake.extract\n1 python file" as intake.extract
 rectangle "intake.file_links\n1 python file" as intake.file_links
@@ -19,6 +22,8 @@ rectangle "intake.naming\n1 python file" as intake.naming
 rectangle "intake.notify\n1 python file" as intake.notify
 rectangle "intake.ocr\n1 python file" as intake.ocr
 rectangle "intake.parse\n1 python file" as intake.parse
+rectangle "intake.parse_card\n1 python file" as intake.parse_card
+rectangle "intake.parse_letter\n1 python file" as intake.parse_letter
 rectangle "intake.personal_finance\n1 python file" as intake.personal_finance
 rectangle "intake.purchaser\n1 python file" as intake.purchaser
 rectangle "intake.report\n1 python file" as intake.report
@@ -30,9 +35,14 @@ intake.ai --> intake.ocr
 intake.ai --> intake.parse
 intake.ai --> intake.purchaser
 intake.ai --> intake.staff
+intake.ai_card --> intake.ai
+intake.ai_card --> intake.parse_card
+intake.ai_letter --> intake.ai
+intake.ai_letter --> intake.parse_letter
 intake.cli --> intake.certification
 intake.cli --> intake.classify
 intake.cli --> intake.db
+intake.cli --> intake.document_type
 intake.cli --> intake.email
 intake.cli --> intake.extract
 intake.cli --> intake.fingerprint
@@ -40,7 +50,10 @@ intake.cli --> intake.media
 intake.cli --> intake.merchant
 intake.cli --> intake.naming
 intake.cli --> intake.notify
+intake.cli --> intake.ocr
 intake.cli --> intake.parse
+intake.cli --> intake.parse_card
+intake.cli --> intake.parse_letter
 intake.cli --> intake.personal_finance
 intake.cli --> intake.purchaser
 intake.cli --> intake.report
@@ -63,9 +76,13 @@ intake.email --> intake.parse
 intake.email --> intake.personal_finance
 intake.email --> intake.purchaser
 intake.extract --> intake.ai
+intake.extract --> intake.ai_card
+intake.extract --> intake.ai_letter
 intake.extract --> intake.merchant
 intake.extract --> intake.ocr
 intake.extract --> intake.parse
+intake.extract --> intake.parse_card
+intake.extract --> intake.parse_letter
 intake.file_links --> intake.media
 intake.notify --> intake.file_links
 intake.notify --> intake.parse
@@ -75,6 +92,8 @@ intake.parse --> intake.merchant
 intake.parse --> intake.naming
 intake.parse --> intake.purchaser
 intake.parse --> intake.staff
+intake.parse_card --> intake.parse
+intake.parse_letter --> intake.parse
 intake.personal_finance --> intake.certification
 intake.personal_finance --> intake.parse
 intake.personal_finance --> intake.staff

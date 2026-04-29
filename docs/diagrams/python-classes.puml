@@ -1,5 +1,15 @@
 @startuml classes_intake
 set namespaceSeparator none
+class "Card" as intake.parse_card.Card {
+  card_date : date | None
+  filename : str
+  message_excerpt : str
+  occasion : str | None
+  raw_text : str
+  recipient : str | None
+  scan_date : date
+  sender : str | None
+}
 class "FetchResult" as intake.email.FetchResult {
   attachments_saved : int
   errors : int
@@ -10,6 +20,17 @@ class "FetchResult" as intake.email.FetchResult {
   reply_unmatched : int
   saved_files : list[Path]
   skipped : int
+}
+class "Letter" as intake.parse_letter.Letter {
+  body_excerpt : str
+  filename : str
+  letter_date : date | None
+  raw_text : str
+  recipient : str | None
+  salutation : str | None
+  scan_date : date
+  sender : str | None
+  subject : str | None
 }
 class "Receipt" as intake.parse.Receipt {
   card_last4 : str | None
