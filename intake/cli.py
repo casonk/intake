@@ -438,6 +438,31 @@ def _canonical_receipt_destination(
     )
 
 
+def _canonical_document_destination(
+    dest_dir: Path,
+    *,
+    source_path: Path,
+    document_date,
+    reserved_paths: set[Path] | None = None,
+) -> Path:
+    """Return the canonical destination path for any document artifact (letter, card)."""
+    from intake.naming import allocate_canonical_path, infer_artifact_datetime
+
+    preferred_dt = infer_artifact_datetime(
+        filename=source_path.name,
+        path=source_path,
+        default_date=document_date,
+        default_time=None,
+    )
+    return allocate_canonical_path(
+        dest_dir,
+        base_dt=preferred_dt,
+        suffix=source_path.suffix or ".pdf",
+        existing_path=source_path,
+        reserved_paths=reserved_paths,
+    )
+
+
 def _canonical_existing_receipt_path(
     pdf: Path,
     *,
@@ -566,6 +591,59 @@ def _receipt_row_from_receipt(
         "certifications": receipt_certifications_to_dicts(receipt.certifications),
         "staff": receipt_staff_to_dicts(receipt.staff),
         "tier": tier,
+    }
+
+
+def _letter_row_from_letter(
+    letter,
+    *,
+    filename: str,
+    category: str,
+    receipt_dir: str,
+    file_hash: str | None,
+    processed_by: str,
+) -> dict:
+    """Serialize a Letter into the DB/sidecar row shape."""
+    return {
+        "filename": filename,
+        "scan_date": letter.scan_date.isoformat(),
+        "letter_date": letter.letter_date.isoformat() if letter.letter_date else None,
+        "sender": letter.sender,
+        "recipient": letter.recipient,
+        "subject": letter.subject,
+        "salutation": letter.salutation,
+        "body_excerpt": letter.body_excerpt,
+        "category": category,
+        "receipt_dir": receipt_dir,
+        "file_hash": file_hash,
+        "raw_text": letter.raw_text,
+        "processed_by": processed_by,
+    }
+
+
+def _card_row_from_card(
+    card,
+    *,
+    filename: str,
+    category: str,
+    receipt_dir: str,
+    file_hash: str | None,
+    processed_by: str,
+) -> dict:
+    """Serialize a Card into the DB/sidecar row shape."""
+    return {
+        "filename": filename,
+        "scan_date": card.scan_date.isoformat(),
+        "card_date": card.card_date.isoformat() if card.card_date else None,
+        "occasion": card.occasion,
+        "sender": card.sender,
+        "recipient": card.recipient,
+        "message_excerpt": card.message_excerpt,
+        "category": category,
+        "receipt_dir": receipt_dir,
+        "file_hash": file_hash,
+        "raw_text": card.raw_text,
+        "processed_by": processed_by,
     }
 
 
@@ -946,8 +1024,20 @@ def _skip_sidecar(sc: dict, settings: dict, pdf_path: Path | None = None) -> boo
 
 def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
     from intake.classify import classify, load_merchant_aliases, load_rules
-    from intake.db import get_receipt_by_file_hash, init_db, upsert_receipt
-    from intake.extract import extract_receipt
+    from intake.db import (
+        get_card_by_file_hash,
+        get_letter_by_file_hash,
+        get_receipt_by_file_hash,
+        init_db,
+        upsert_card,
+        upsert_letter,
+        upsert_receipt,
+    )
+    from intake.document_type import classify_document_type
+    from intake.extract import extract_card, extract_letter, extract_receipt
+    from intake.ocr import extract_text
+    from intake.parse_card import classify_card
+    from intake.parse_letter import classify_letter
     from intake.personal_finance import build_receipt_event
     from intake.sidecar import write_sidecar
 
@@ -961,7 +1051,7 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
 
     receipt_files = _intake_receipt_files(intake_dir)
     if not receipt_files:
-        print("No receipt files found in intake.")
+        print("No files found in intake.")
         return
 
     rules = load_rules()
@@ -986,7 +1076,11 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
 
         try:
             file_hash = _file_hash(pdf)
-            existing = get_receipt_by_file_hash(conn, file_hash)
+            existing = (
+                get_receipt_by_file_hash(conn, file_hash)
+                or get_letter_by_file_hash(conn, file_hash)
+                or get_card_by_file_hash(conn, file_hash)
+            )
             if existing is not None:
                 dest = _exhaust_hash_duplicate(
                     receipt_dir,
@@ -1002,8 +1096,95 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
                 )
                 continue
 
+            raw_text = extract_text(pdf)
+            doc_type = classify_document_type(raw_text, pdf.name)
+
+            if doc_type == "letter":
+                letter, model = extract_letter(
+                    pdf,
+                    raw_text,
+                    openai_api_key=settings.get("openai_api_key") or None,
+                    openai_model=settings.get("openai_model_low") or "gpt-4o-mini",
+                )
+                category = classify_letter(letter)
+                dest_dir = receipt_dir / category
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = _canonical_document_destination(
+                    dest_dir,
+                    source_path=pdf,
+                    document_date=letter.letter_date or letter.scan_date,
+                    reserved_paths=reserved_paths,
+                )
+                shutil.move(str(pdf), dest)
+                renamed = f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
+                row = _letter_row_from_letter(
+                    letter,
+                    filename=dest.name,
+                    category=category,
+                    receipt_dir=str(dest.relative_to(receipt_dir)),
+                    file_hash=file_hash,
+                    processed_by=model,
+                )
+                upsert_letter(conn, row)
+                write_sidecar(
+                    dest,
+                    {
+                        **{k: v for k, v in row.items() if k != "raw_text"},
+                        "document_type": "letter",
+                        "tier": "ok",
+                    },
+                )
+                print(
+                    f"    -> {category}/{dest.name} [letter]"
+                    f" sender={letter.sender!r} model={model}{renamed}"
+                )
+                continue
+
+            if doc_type == "card":
+                card, model = extract_card(
+                    pdf,
+                    raw_text,
+                    openai_api_key=settings.get("openai_api_key") or None,
+                    openai_model=settings.get("openai_model_low") or "gpt-4o-mini",
+                )
+                category = classify_card(card)
+                dest_dir = receipt_dir / category
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = _canonical_document_destination(
+                    dest_dir,
+                    source_path=pdf,
+                    document_date=card.card_date or card.scan_date,
+                    reserved_paths=reserved_paths,
+                )
+                shutil.move(str(pdf), dest)
+                renamed = f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
+                row = _card_row_from_card(
+                    card,
+                    filename=dest.name,
+                    category=category,
+                    receipt_dir=str(dest.relative_to(receipt_dir)),
+                    file_hash=file_hash,
+                    processed_by=model,
+                )
+                upsert_card(conn, row)
+                write_sidecar(
+                    dest,
+                    {
+                        **{k: v for k, v in row.items() if k != "raw_text"},
+                        "document_type": "card",
+                        "tier": "ok",
+                    },
+                )
+                print(
+                    f"    -> {category}/{dest.name} [card]"
+                    f" occasion={card.occasion!r} model={model}{renamed}"
+                )
+                continue
+
+            # receipt (or unknown — fall through to receipt pipeline)
             receipt, model, tier = extract_receipt(
                 pdf,
+                raw_text=raw_text,
                 **_get_extract_kwargs(settings),
                 fuzzy_rules=rules,
                 merchant_aliases=merchant_aliases,
@@ -2476,14 +2657,26 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
 
 
 def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
-    """Process all supported receipt files currently in the intake inbox folder.
+    """Process all supported files currently in the intake inbox folder.
 
     Returns (ok_count, error_count).  Mirrors _cmd_process but is callable
     from the daemon loop without requiring argparse Namespace objects.
     """
     from intake.classify import classify, load_merchant_aliases, load_rules
-    from intake.db import get_receipt_by_file_hash, init_db, upsert_receipt
-    from intake.extract import extract_receipt
+    from intake.db import (
+        get_card_by_file_hash,
+        get_letter_by_file_hash,
+        get_receipt_by_file_hash,
+        init_db,
+        upsert_card,
+        upsert_letter,
+        upsert_receipt,
+    )
+    from intake.document_type import classify_document_type
+    from intake.extract import extract_card, extract_letter, extract_receipt
+    from intake.ocr import extract_text
+    from intake.parse_card import classify_card
+    from intake.parse_letter import classify_letter
     from intake.personal_finance import build_receipt_event
     from intake.sidecar import write_sidecar
 
@@ -2512,7 +2705,11 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
     for pdf in pdfs:
         try:
             file_hash = _file_hash(pdf)
-            existing = get_receipt_by_file_hash(conn, file_hash)
+            existing = (
+                get_receipt_by_file_hash(conn, file_hash)
+                or get_letter_by_file_hash(conn, file_hash)
+                or get_card_by_file_hash(conn, file_hash)
+            )
             if existing is not None:
                 dest = _exhaust_hash_duplicate(
                     receipt_dir,
@@ -2529,8 +2726,95 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
                 )
                 continue
 
+            raw_text = extract_text(pdf)
+            doc_type = classify_document_type(raw_text, pdf.name)
+
+            if doc_type == "letter":
+                letter, model = extract_letter(
+                    pdf,
+                    raw_text,
+                    openai_api_key=settings.get("openai_api_key") or None,
+                    openai_model=settings.get("openai_model_low") or "gpt-4o-mini",
+                )
+                category = classify_letter(letter)
+                dest_dir = receipt_dir / category
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = _canonical_document_destination(
+                    dest_dir,
+                    source_path=pdf,
+                    document_date=letter.letter_date or letter.scan_date,
+                    reserved_paths=reserved_paths,
+                )
+                shutil.move(str(pdf), dest)
+                row = _letter_row_from_letter(
+                    letter,
+                    filename=dest.name,
+                    category=category,
+                    receipt_dir=str(dest.relative_to(receipt_dir)),
+                    file_hash=file_hash,
+                    processed_by=model,
+                )
+                upsert_letter(conn, row)
+                write_sidecar(
+                    dest,
+                    {
+                        **{k: v for k, v in row.items() if k != "raw_text"},
+                        "document_type": "letter",
+                        "tier": "ok",
+                    },
+                )
+                print(
+                    f"  [inbox] {dest.relative_to(receipt_dir)} "
+                    f"[letter] sender={letter.sender!r} model={model}"
+                )
+                ok += 1
+                continue
+
+            if doc_type == "card":
+                card, model = extract_card(
+                    pdf,
+                    raw_text,
+                    openai_api_key=settings.get("openai_api_key") or None,
+                    openai_model=settings.get("openai_model_low") or "gpt-4o-mini",
+                )
+                category = classify_card(card)
+                dest_dir = receipt_dir / category
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = _canonical_document_destination(
+                    dest_dir,
+                    source_path=pdf,
+                    document_date=card.card_date or card.scan_date,
+                    reserved_paths=reserved_paths,
+                )
+                shutil.move(str(pdf), dest)
+                row = _card_row_from_card(
+                    card,
+                    filename=dest.name,
+                    category=category,
+                    receipt_dir=str(dest.relative_to(receipt_dir)),
+                    file_hash=file_hash,
+                    processed_by=model,
+                )
+                upsert_card(conn, row)
+                write_sidecar(
+                    dest,
+                    {
+                        **{k: v for k, v in row.items() if k != "raw_text"},
+                        "document_type": "card",
+                        "tier": "ok",
+                    },
+                )
+                print(
+                    f"  [inbox] {dest.relative_to(receipt_dir)} "
+                    f"[card] occasion={card.occasion!r} model={model}"
+                )
+                ok += 1
+                continue
+
+            # receipt (or unknown — fall through to receipt pipeline)
             receipt, model, tier = extract_receipt(
                 pdf,
+                raw_text=raw_text,
                 **_get_extract_kwargs(settings),
                 fuzzy_rules=rules,
                 merchant_aliases=merchant_aliases,

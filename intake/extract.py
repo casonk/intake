@@ -167,6 +167,7 @@ def extract_receipt(
     fuzzy_threshold: float = 0.82,
     merchant_aliases: dict[str, list[str]] | None = None,
     total_escalation_threshold: float | None = DEFAULT_TOTAL_ESCALATION_THRESHOLD,
+    raw_text: str | None = None,
 ) -> tuple[Receipt, str, str]:
     """Extract a Receipt from *receipt_path*, with optional tiered AI fallback.
 
@@ -185,7 +186,7 @@ def extract_receipt(
         current._debug_ai_attempts = list(ai_attempts or [])  # type: ignore[attr-defined]
         return current
 
-    raw_text = extract_text(receipt_path)
+    raw_text = raw_text if raw_text is not None else extract_text(receipt_path)
     receipt = _attach_debug(
         parse_receipt(receipt_path.name, raw_text, pdf_path=receipt_path), ai_attempts=[]
     )
@@ -266,3 +267,51 @@ def extract_receipt(
             OCR_MODEL,
             tier,
         )  # preserve tier so next run retries
+
+
+def extract_letter(
+    letter_path: Path,
+    raw_text: str,
+    openai_api_key: str | None = None,
+    openai_model: str = "gpt-4o-mini",
+) -> tuple[Letter, str]:
+    """Extract a Letter from *letter_path*. Returns ``(letter, model_name)``."""
+    from intake.parse_letter import parse_letter
+
+    letter = parse_letter(letter_path.name, raw_text, pdf_path=letter_path)
+
+    if not openai_api_key:
+        return letter, OCR_MODEL
+
+    try:
+        from intake.ai_letter import extract_with_openai_letter, merge_ai_letter_result
+
+        ai_data = extract_with_openai_letter(letter_path, raw_text, openai_api_key, openai_model)
+        letter = merge_ai_letter_result(letter, ai_data)
+        return letter, openai_model
+    except Exception:  # noqa: BLE001
+        return letter, OCR_MODEL
+
+
+def extract_card(
+    card_path: Path,
+    raw_text: str,
+    openai_api_key: str | None = None,
+    openai_model: str = "gpt-4o-mini",
+) -> tuple[Card, str]:
+    """Extract a Card from *card_path*. Returns ``(card, model_name)``."""
+    from intake.parse_card import parse_card
+
+    card = parse_card(card_path.name, raw_text, pdf_path=card_path)
+
+    if not openai_api_key:
+        return card, OCR_MODEL
+
+    try:
+        from intake.ai_card import extract_with_openai_card, merge_ai_card_result
+
+        ai_data = extract_with_openai_card(card_path, raw_text, openai_api_key, openai_model)
+        card = merge_ai_card_result(card, ai_data)
+        return card, openai_model
+    except Exception:  # noqa: BLE001
+        return card, OCR_MODEL
