@@ -32,6 +32,7 @@ from intake.email import (
     _file_message_to_processed_label,
     _is_intake_reply_message,
     _is_internal_intake_notification,
+    _is_known_non_receipt_notice,
     _looks_like_receipt,
     _mailbox_select_candidates,
     _preferred_payment_category,
@@ -144,14 +145,36 @@ def test_looks_like_receipt_false_for_quoted_intake_notification():
             "We've received your payment",
             "Thanks for your payment\nPayment amount:\n$69.69\nPosted date:\nApril 16, 2026",
         ),
-        (
-            "Your Scheduled Payment",
-            "Payment Info\nAmount: $20.26\nPayment Post Date: April 16, 2026",
-        ),
     ],
 )
 def test_looks_like_receipt_true_for_credit_card_payment_emails(subject, text):
     assert _looks_like_receipt(f"{subject}\n{text}") is True
+
+
+@pytest.mark.parametrize(
+    ("subject", "sender", "text"),
+    [
+        (
+            "Your payment of $69.69 is scheduled for May. 2, 2026",
+            "Capital One | VentureOne <capitalone@notification.capitalone.com>",
+            "Please review your payment details.",
+        ),
+        (
+            "Your Scheduled Payment",
+            "Discover Card <discover@services.discover.com>",
+            "CASON KONZER, your online Discover card payment is scheduled\n"
+            "Payment Info\nAmount: $69.69",
+        ),
+        (
+            "You have an upcoming Litecoin purchase",
+            "service@paypal.com",
+            "You have an upcoming scheduled Litecoin (LTC) purchase on May 2.",
+        ),
+    ],
+)
+def test_known_non_receipt_payment_notices_are_not_receipts(subject, sender, text):
+    assert _is_known_non_receipt_notice(subject, sender, text) is True
+    assert _looks_like_receipt(f"{subject}\n{text}") is False
 
 
 def test_extract_credit_card_payment_email_capital_one_posted():
@@ -180,7 +203,7 @@ def test_extract_credit_card_payment_email_capital_one_posted():
     }
 
 
-def test_extract_credit_card_payment_email_discover_scheduled():
+def test_extract_credit_card_payment_email_discover_scheduled_is_ignored():
     body = """
     Account ending in 7875
     CASON KONZER, your online Discover card payment is scheduled
@@ -194,14 +217,7 @@ def test_extract_credit_card_payment_email_discover_scheduled():
         "Discover Card discover@services.discover.com",
         body,
     )
-    assert parsed == {
-        "merchant": "discover",
-        "total": 69.69,
-        "receipt_date": date(2026, 4, 16),
-        "purchaser": "cason konzer",
-        "card_last4": "7875",
-        "category": "finance/credit-card-payment",
-    }
+    assert parsed is None
 
 
 def test_preferred_payment_category_prefers_credit_card_subcategory():
@@ -868,6 +884,77 @@ def test_fetch_receipts_files_internal_notification_to_notify_label(db, tmp_path
     assert read_uids == [30999]
     assert moved_uids == [(30999, "intake/notify")]
     assert is_email_processed(db, uid=30999, mailbox="INBOX") is False
+
+
+def test_fetch_receipts_files_known_non_receipt_notice_as_ignored(db, tmp_path):
+    receipt_root = tmp_path / "receipts"
+    message = EmailMessage()
+    message["Message-ID"] = "<scheduled-payment@example.com>"
+    message["Subject"] = "Your payment of $69.69 is scheduled for May. 2, 2026"
+    message["From"] = "Capital One | VentureOne <capitalone@notification.capitalone.com>"
+    message["Date"] = "Fri, 01 May 2026 09:32:35 +0000"
+    message.set_content("Please review your payment details.")
+    payload = message.as_bytes()
+    read_uids: list[int] = []
+    moved_uids: list[tuple[int, str]] = []
+
+    class _NoticeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [b"1"])
+
+        def uid(self, command, uid, *args):
+            assert command == "fetch"
+            assert uid == "41001"
+            return ("OK", [b"payload"])
+
+        def expunge(self):
+            return ("OK", [b"0"])
+
+    def fail_extract_attachments(_payload):
+        raise AssertionError("known non-receipt notices must not inspect attachments")
+
+    sr = SimpleNamespace(
+        load_config=lambda _path: SimpleNamespace(
+            imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None)
+        ),
+        validate_imap=lambda _config: None,
+        open_imap_connection=lambda _config: _NoticeConnection(),
+        extract_fetch_payload=lambda _msg_data: payload,
+        decode_mime_header=lambda value: str(value or ""),
+        extract_message_bodies=lambda _msg: ("Please review your payment details.", ""),
+        extract_attachments=fail_extract_attachments,
+        mark_message_read=lambda _conn, uid: read_uids.append(uid),
+        move_message=lambda _conn, uid, label: moved_uids.append((uid, label)),
+    )
+
+    settings = {
+        "receipt_dir": str(receipt_root),
+        "email": {"shock_relay_config": "/tmp/config.local.yaml"},
+    }
+
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[41001]),
+        patch("intake.email._process_reply_messages"),
+    ):
+        result = fetch_receipts(settings, db, dry_run=False, verbose=False)
+
+    assert result.skipped == 1
+    assert read_uids == [41001]
+    assert moved_uids == [(41001, "intake/processed")]
+    assert is_email_processed(db, uid=41001, mailbox="INBOX") is True
+    row = db.execute(
+        "SELECT status FROM email_receipts WHERE uid = ? AND mailbox = ?",
+        (41001, "INBOX"),
+    ).fetchone()
+    assert row["status"] == "ignored"
+    assert get_receipt(db, "email_41001_INBOX.txt") is None
 
 
 def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monkeypatch):

@@ -95,6 +95,7 @@ reports_dir = "reports"
 #   "order #",
 #   "we've received your payment",
 #   "your payment of",
+#   # Scheduled/upcoming payment notices are fetched so they can be filed as ignored.
 #   "your scheduled payment",
 #   "policy renewal reminder",
 # ]

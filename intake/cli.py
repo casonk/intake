@@ -2653,7 +2653,163 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
             for status_val, count in stats["by_status"].items():
                 print(f"  {status_val:<20} {count}")
 
+    elif args.email_command == "prune-nonreceipts":
+        _cmd_email_prune_nonreceipts(args, settings, conn)
+
     conn.close()
+
+
+def _email_filename_uid(filename: str) -> int | None:
+    """Return the Gmail UID embedded in an inline email receipt filename."""
+    parts = Path(filename).stem.split("_", 2)
+    if len(parts) < 3 or parts[0] != "email":
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def _email_artifact_relpath(row: dict) -> str:
+    """Return the artifact file path for an inline email receipt row."""
+    receipt_dir = Path(str(row.get("receipt_dir") or ""))
+    filename = str(row.get("filename") or "")
+    if receipt_dir.name == filename:
+        return str(receipt_dir)
+    return str(receipt_dir / filename)
+
+
+def _unique_exhaust_relpath(receipt_root: Path, relpath: str) -> str:
+    """Return a non-clobbering exhaust path under *receipt_root*."""
+    candidate = receipt_root / relpath
+    if not candidate.exists():
+        return relpath
+    stem = candidate.stem
+    suffix = candidate.suffix
+    for index in range(2, 1000):
+        alternate = candidate.with_name(f"{stem}_{index}{suffix}")
+        if not alternate.exists():
+            return str(alternate.relative_to(receipt_root))
+    raise RuntimeError(f"could not allocate exhaust path for {candidate}")
+
+
+def _cmd_email_prune_nonreceipts(
+    args: argparse.Namespace,
+    settings: dict,
+    conn,
+) -> None:
+    """Move known non-receipt email rows out of receipt reporting."""
+    from intake.db import record_receipt_update
+    from intake.email import _is_known_non_receipt_notice
+
+    receipt_root = _require_receipt_dir(settings, getattr(args, "receipt_dir", None))
+    dry_run = bool(getattr(args, "dry_run", False))
+
+    row_query = """
+            SELECT filename, merchant, total, scan_date, category, receipt_dir,
+                   raw_text, processed_by, purchaser, card_last4, processed_at,
+                   file_hash
+            FROM receipts
+            WHERE filename LIKE 'email\\_%' ESCAPE '\\'
+            ORDER BY scan_date, filename
+            """
+    rows = []
+    for row in conn.execute(row_query).fetchall():
+        rows.append(dict(row))
+
+    candidates: list[tuple[dict, dict | None]] = []
+    for row in rows:
+        uid = _email_filename_uid(row["filename"])
+        email_meta = None
+        if uid is not None:
+            email_meta = conn.execute(
+                """
+                SELECT uid, mailbox, message_id, subject, sender, received_at, status
+                FROM email_receipts
+                WHERE uid = ?
+                ORDER BY processed_at DESC
+                LIMIT 1
+                """,
+                (uid,),
+            ).fetchone()
+            email_meta = dict(email_meta) if email_meta is not None else None
+        subject = (email_meta or {}).get("subject") or ""
+        sender = (email_meta or {}).get("sender") or ""
+        if _is_known_non_receipt_notice(subject, sender, row.get("raw_text") or ""):
+            candidates.append((row, email_meta))
+
+    if not candidates:
+        print("No known non-receipt email rows found.")
+        return
+
+    print(f"Found {len(candidates)} known non-receipt email row(s):")
+    removed = 0
+    for row, email_meta in candidates:
+        current_rel = _email_artifact_relpath(row)
+        current_path = receipt_root / current_rel
+        target_rel = _unique_exhaust_relpath(
+            receipt_root,
+            str(Path("exhaust") / "non-receipts" / current_rel),
+        )
+        print(
+            f"  {row['filename']:<28} {row.get('scan_date')}  "
+            f"{row.get('merchant') or '?'}  ${float(row.get('total') or 0):.2f}"
+        )
+        if dry_run:
+            print(f"    would move → {target_rel}")
+            continue
+
+        moved_artifact = False
+        if current_path.exists():
+            _move_receipt_artifacts(
+                receipt_root,
+                current_relpath=current_rel,
+                new_relpath=target_rel,
+            )
+            exhausted_row = dict(row)
+            exhausted_row["filename"] = Path(target_rel).name
+            exhausted_row["receipt_dir"] = target_rel
+            _sync_receipt_sidecar(receipt_root, exhausted_row)
+            moved_artifact = True
+
+        record_receipt_update(
+            conn,
+            row["filename"],
+            source="email-prune-nonreceipt",
+            note="removed known scheduled/upcoming non-receipt email from receipts",
+            changes={
+                "status": {"old": "tracked", "new": "non-receipt-exhausted"},
+                "receipt_dir": {
+                    "old": row["receipt_dir"],
+                    "new": target_rel if moved_artifact else None,
+                },
+                "artifact": {
+                    "old": "present" if moved_artifact else "missing",
+                    "new": "exhausted" if moved_artifact else "db-row-removed",
+                },
+            },
+        )
+        if email_meta is not None:
+            conn.execute(
+                """
+                UPDATE email_receipts
+                SET status = 'ignored'
+                WHERE uid = ? AND mailbox = ?
+                """,
+                (email_meta["uid"], email_meta["mailbox"]),
+            )
+        conn.execute("DELETE FROM receipts WHERE filename = ?", (row["filename"],))
+        conn.commit()
+        if moved_artifact:
+            print(f"    moved → {target_rel}")
+        else:
+            print(f"    removed DB row; artifact missing at {current_path}")
+        removed += 1
+
+    if dry_run:
+        print(f"\nDry run complete: {len(candidates)} row(s) would be pruned.")
+    else:
+        print(f"\nPruned {removed} non-receipt email row(s).")
 
 
 def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
@@ -3036,6 +3192,8 @@ def _find_duplicate_groups(rows: list, window_days: int, *, hash_only: bool = Fa
     for row in rows:
         if row["filename"] in exact_filenames:
             continue
+        if row.get("processed_by") == "email-payment":
+            continue
         merchant = (row["merchant"] or "").strip().lower()
         total = round(row["total"] or 0.0, 2)
         if not merchant or total == 0.0:
@@ -3159,7 +3317,10 @@ def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
     groups = _find_duplicate_groups(rows, window, hash_only=getattr(args, "hash_only", False))
 
     if not groups:
-        print(f"No duplicates found (merchant+total, within {window}-day window).")
+        if getattr(args, "hash_only", False):
+            print("No duplicates found (exact file-hash matches).")
+        else:
+            print(f"No duplicates found (merchant+total, within {window}-day window).")
         conn.close()
         return
 
@@ -3754,6 +3915,14 @@ def main() -> None:
 
     p_em_status = p_em_sub.add_parser("status", help="Show email ingestion statistics")
     p_em_status.add_argument("--db", metavar="PATH", help="SQLite database path")
+
+    p_em_prune = p_em_sub.add_parser(
+        "prune-nonreceipts",
+        help="Move already-ingested scheduled/upcoming email notices out of receipts",
+    )
+    p_em_prune.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_em_prune.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_em_prune.add_argument("--dry-run", action="store_true", help="Show changes without writing")
 
     args = parser.parse_args()
     settings = _load_settings()

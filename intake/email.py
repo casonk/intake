@@ -239,7 +239,9 @@ def fetch_receipts(
                         continue
 
                     # Dedup check
-                    if is_email_processed(db_conn, uid, mailbox):
+                    if is_email_processed(db_conn, uid, mailbox) or (
+                        message_id and is_email_message_id_processed(db_conn, message_id)
+                    ):
                         if not dry_run:
                             filed = _file_message_to_processed_label(
                                 sr,
@@ -258,6 +260,35 @@ def fetch_receipts(
                     if _is_intake_reply_message(msg, settings):
                         if verbose:
                             print(f"    skip (intake reply; handled by reply scan): {subject!r}")
+                        result.skipped += 1
+                        continue
+
+                    text_body, html_body = sr.extract_message_bodies(msg)
+                    body_text = _combine_message_body_text(text_body, html_body)
+                    if _is_known_non_receipt_notice(subject, sender, body_text):
+                        if not dry_run:
+                            record_email_receipt(
+                                db_conn,
+                                uid=uid,
+                                mailbox=mailbox,
+                                message_id=message_id,
+                                subject=subject,
+                                sender=sender,
+                                received_at=date_str,
+                                attachment_count=0,
+                                status="ignored",
+                            )
+                            filed = _file_message_to_processed_label(
+                                sr,
+                                conn,
+                                uid,
+                                source_mailbox=mailbox,
+                                processed_label=processed_label,
+                            )
+                            to_expunge = to_expunge or filed
+                        if verbose:
+                            suffix = f"; filed to {processed_label!r}" if not dry_run else ""
+                            print(f"    skip (known non-receipt notice{suffix}): {subject!r}")
                         result.skipped += 1
                         continue
 
@@ -289,7 +320,6 @@ def fetch_receipts(
                     result.attachments_saved += saved_count
 
                     # HTML inline receipt (no PDF attachments or alongside them)
-                    _text_body, html_body = sr.extract_message_bodies(msg)
                     if html_body and not dry_run:
                         plain = html_to_text(html_body)
                         if _looks_like_receipt(plain):
@@ -627,6 +657,19 @@ _PAYMENT_EMAIL_PATTERNS = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_CARD_SCHEDULED_NOTICE_RE = re.compile(
+    r"\b("
+    r"thanks\s+for\s+scheduling\s+your\s+payment|"
+    r"your\s+scheduled\s+payment|"
+    r"(?:payment|card\s+payment)\s+is\s+scheduled|"
+    r"is\s+scheduled\s+for"
+    r")\b",
+    re.IGNORECASE,
+)
+_PAYPAL_UPCOMING_PURCHASE_RE = re.compile(
+    r"\byou\s+have\s+an\s+upcoming\b(?=.*\bscheduled\b)(?=.*\bpurchase\b)",
+    re.IGNORECASE | re.DOTALL,
+)
 _ANY_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _PAYMENT_AMOUNT_RE = re.compile(
     r"\bpayment\s+amount\s*:\s*\$?\s*(\d+(?:\.\d{2})?)\b", re.IGNORECASE
@@ -725,10 +768,29 @@ def _contains_intake_notification_quote(text: str) -> bool:
 def _message_text(msg, sr) -> str:
     """Return the best plain-text body for *msg*."""
     plain_text, html_body = sr.extract_message_bodies(msg)
-    parts = [
-        part.strip() for part in (plain_text, html_to_text(html_body)) if part and part.strip()
-    ]
+    return _combine_message_body_text(plain_text, html_body)
+
+
+def _combine_message_body_text(plain_text: str | None, html_body: str | None) -> str:
+    """Return searchable text from plain and HTML message bodies."""
+    html_text = html_to_text(html_body) if html_body else ""
+    parts = [part.strip() for part in (plain_text, html_text) if part and part.strip()]
     return "\n\n".join(parts).strip()
+
+
+def _is_known_non_receipt_notice(subject: str, sender: str, plain_text: str) -> bool:
+    """Return True for payment notices that should be filed but not ingested."""
+    combined = f"{subject}\n{plain_text or ''}"
+    sender_lower = str(sender or "").lower()
+    if "you paid" not in combined.lower() and _PAYPAL_UPCOMING_PURCHASE_RE.search(combined):
+        return True
+    if (
+        _CAPITAL_ONE_SENDER_HINT in sender_lower
+        or _DISCOVER_SENDER_HINT in sender_lower
+        or _CARD_SCHEDULED_NOTICE_RE.search(combined)
+    ):
+        return bool(_CARD_SCHEDULED_NOTICE_RE.search(combined))
+    return False
 
 
 def _trim_reply_note_text(text: str) -> str:
@@ -1384,6 +1446,8 @@ def _looks_like_receipt(text: str) -> bool:
     """Heuristic: does this email body text resemble a receipt?"""
     if _contains_intake_notification_quote(text):
         return False
+    if _is_known_non_receipt_notice("", "", text):
+        return False
     return bool(_RECEIPT_PATTERNS.search(text) or _PAYMENT_EMAIL_PATTERNS.search(text))
 
 
@@ -1533,6 +1597,8 @@ def _extract_credit_card_payment_email(subject: str, sender: str, plain_text: st
         return None
 
     if not _PAYMENT_EMAIL_PATTERNS.search(f"{subject}\n{plain_text}"):
+        return None
+    if _is_known_non_receipt_notice(subject, sender, plain_text):
         return None
 
     return {

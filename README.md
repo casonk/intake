@@ -59,12 +59,13 @@ as the canonical receipt input and exhausts the companion `.MOV` with an audit
 trail instead of ingesting both as separate receipts.
 
 Email ingestion also handles issuer payment-notification emails for supported
-credit cards. Capital One and Discover payment scheduled/posted messages are
+credit cards. Capital One and Discover posted/received payment messages are
 treated as finance records instead of ordinary merchant receipts, with issuer,
-payment amount, posted/scheduled date, purchaser, and card last4 extracted
-from the email body.
+payment amount, posted date, purchaser, and card last4 extracted from the email
+body. Scheduled/upcoming notices are filed as ignored email records and are not
+added to receipt spending.
 
-TODO: keep expanding regression coverage for live scheduled-payment variants
+TODO: keep expanding regression coverage for live payment-confirmation variants
 from Capital One, Discover, and Progressive as new provider templates arrive.
 
 Every receipt now attempts an itemized breakdown. `intake` first parses line
