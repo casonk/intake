@@ -1625,6 +1625,31 @@ def test_find_duplicate_groups_hash_only_skips_heuristic_matches():
     assert [[row["filename"] for row in group] for group in groups] == [["a.pdf", "b.pdf"]]
 
 
+def test_find_duplicate_groups_skips_email_payment_heuristic_matches():
+    rows = [
+        {
+            "filename": "email_1_INBOX.txt",
+            "merchant": "capital one",
+            "total": 69.69,
+            "scan_date": "2026-04-27",
+            "file_hash": None,
+            "processed_at": "1",
+            "processed_by": "email-payment",
+        },
+        {
+            "filename": "email_2_INBOX.txt",
+            "merchant": "capital one",
+            "total": 69.69,
+            "scan_date": "2026-04-28",
+            "file_hash": None,
+            "processed_at": "2",
+            "processed_by": "email-payment",
+        },
+    ]
+
+    assert cli._find_duplicate_groups(rows, 3, hash_only=False) == []
+
+
 def test_cmd_normalize_purchasers_updates_db_and_sidecar(tmp_path, capsys):
     receipt_root = tmp_path / "receipts"
     pdf = receipt_root / "general" / "20260422_1000.pdf"
