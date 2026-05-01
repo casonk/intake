@@ -1144,7 +1144,9 @@ def test_cmd_dedup_remove_moves_duplicate_to_exhaust_and_records_audit(tmp_path,
 
 def test_cmd_process_exhausts_incoming_hash_duplicate(tmp_path, monkeypatch, capsys):
     import intake.classify as classify_mod
+    import intake.document_type as document_type_mod
     import intake.extract as extract_mod
+    import intake.ocr as ocr_mod
 
     receipt_root = tmp_path / "receipts"
     intake_dir = receipt_root / "intake"
@@ -1175,6 +1177,8 @@ def test_cmd_process_exhausts_incoming_hash_duplicate(tmp_path, monkeypatch, cap
         )
 
     monkeypatch.setattr(extract_mod, "extract_receipt", fake_extract)
+    monkeypatch.setattr(ocr_mod, "extract_text", lambda _path: "vodafone\nTotal 13.20")
+    monkeypatch.setattr(document_type_mod, "classify_document_type", lambda *_args: "receipt")
     monkeypatch.setattr(classify_mod, "classify", lambda *_args, **_kwargs: "phone/carrier")
     monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
     monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
@@ -1218,7 +1222,9 @@ def test_cmd_process_exhausts_incoming_hash_duplicate(tmp_path, monkeypatch, cap
 
 def test_cmd_process_supports_jpg_and_mov_receipts(tmp_path, monkeypatch):
     import intake.classify as classify_mod
+    import intake.document_type as document_type_mod
     import intake.extract as extract_mod
+    import intake.ocr as ocr_mod
 
     receipt_root = tmp_path / "receipts"
     intake_dir = receipt_root / "intake"
@@ -1246,6 +1252,8 @@ def test_cmd_process_supports_jpg_and_mov_receipts(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(extract_mod, "extract_receipt", fake_extract)
+    monkeypatch.setattr(ocr_mod, "extract_text", lambda _path: "target\ntotal 23.45")
+    monkeypatch.setattr(document_type_mod, "classify_document_type", lambda *_args: "receipt")
     monkeypatch.setattr(classify_mod, "classify", lambda *_args, **_kwargs: "general")
     monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
     monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
@@ -1278,7 +1286,9 @@ def test_cmd_process_supports_jpg_and_mov_receipts(tmp_path, monkeypatch):
 
 def test_cmd_process_prefers_still_image_for_live_photo_pair(tmp_path, monkeypatch, capsys):
     import intake.classify as classify_mod
+    import intake.document_type as document_type_mod
     import intake.extract as extract_mod
+    import intake.ocr as ocr_mod
 
     receipt_root = tmp_path / "receipts"
     intake_dir = receipt_root / "intake"
@@ -1308,6 +1318,8 @@ def test_cmd_process_prefers_still_image_for_live_photo_pair(tmp_path, monkeypat
         )
 
     monkeypatch.setattr(extract_mod, "extract_receipt", fake_extract)
+    monkeypatch.setattr(ocr_mod, "extract_text", lambda _path: "target\ntotal 6.66")
+    monkeypatch.setattr(document_type_mod, "classify_document_type", lambda *_args: "receipt")
     monkeypatch.setattr(classify_mod, "classify", lambda *_args, **_kwargs: "general")
     monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
     monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})

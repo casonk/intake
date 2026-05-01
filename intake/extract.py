@@ -25,9 +25,14 @@ from __future__ import annotations
 import contextlib
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from intake.ocr import extract_text
 from intake.parse import Receipt, parse_receipt
+
+if TYPE_CHECKING:
+    from intake.parse_card import Card
+    from intake.parse_letter import Letter
 
 OCR_MODEL = "tesseract"
 DEFAULT_TOTAL_ESCALATION_THRESHOLD = 250.0

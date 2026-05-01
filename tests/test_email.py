@@ -39,6 +39,7 @@ from intake.email import (
     _safe_save,
     _safe_save_receipt_pdf,
     _trim_reply_note_text,
+    _upsert_html_receipt,
     fetch_receipts,
     html_to_text,
 )
@@ -602,6 +603,57 @@ def test_fetch_receipts_treats_reply_processing_as_best_effort(db, tmp_path):
 
     assert result.found == 0
     assert result.errors == 1
+
+
+def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monkeypatch):
+    import intake.classify as classify_mod
+
+    receipt_root = tmp_path / "receipts"
+    sent_links: list[str | None] = []
+
+    def fake_notify(settings, _receipt, *, category, receipt_dir, filename, processed_by):
+        from intake.file_links import build_receipt_filebrowser_link
+
+        sent_links.append(
+            build_receipt_filebrowser_link(
+                settings,
+                {
+                    "filename": filename,
+                    "receipt_dir": receipt_dir,
+                    "category": category,
+                },
+            )
+        )
+        return {"gmail": 1}, {}
+
+    monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+    monkeypatch.setattr(classify_mod, "classify", lambda *_args, **_kwargs: "general")
+    monkeypatch.setattr("intake.notify.send_processed_receipt_notifications", fake_notify)
+    monkeypatch.setattr("intake.personal_finance.trigger_personal_finance", lambda *a, **k: None)
+
+    _upsert_html_receipt(
+        db,
+        30999,
+        "INBOX",
+        "Receipt from Example",
+        "shop@example.com",
+        "",
+        "Example Shop\nTotal $12.99",
+        {"receipt_dir": str(receipt_root)},
+    )
+
+    artifact = receipt_root / "email" / "general" / "email_30999_INBOX.txt"
+    sidecar = receipt_root / "email" / "general" / "email_30999_INBOX.intake.json"
+    row = get_receipt(db, "email_30999_INBOX.txt")
+
+    assert artifact.read_text(encoding="utf-8") == "Example Shop\nTotal $12.99"
+    assert sidecar.exists()
+    assert row is not None
+    assert row["receipt_dir"] == "email/general"
+    assert sent_links == [
+        "https://files.snowbridge.internal/files/receipt/email/general/email_30999_INBOX.txt"
+    ]
 
 
 # ── FetchResult ───────────────────────────────────────────────────────────────
