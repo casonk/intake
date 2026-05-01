@@ -160,6 +160,7 @@ def fetch_receipts(
     inbox_dir.mkdir(parents=True, exist_ok=True)
 
     processed_label = email_cfg.get("processed_label", "intake/processed")
+    notification_label = email_cfg.get("notification_label", "intake/notify")
     since_days: int = int(email_cfg.get("since_days", 90))
     limit: int = int(email_cfg.get("limit", 500))
     configured_subjects: list[str] = list(
@@ -221,6 +222,22 @@ def fetch_receipts(
                     sender = sr.decode_mime_header(msg.get("From"))
                     date_str = str(msg.get("Date", "") or "").strip()
 
+                    if _is_internal_intake_notification(subject, sender, settings):
+                        if not dry_run:
+                            filed = _file_message_to_processed_label(
+                                sr,
+                                conn,
+                                uid,
+                                source_mailbox=mailbox,
+                                processed_label=notification_label,
+                            )
+                            to_expunge = to_expunge or filed
+                        if verbose:
+                            suffix = f"; filed to {notification_label!r}" if not dry_run else ""
+                            print(f"    skip (internal intake notification{suffix}): {subject!r}")
+                        result.skipped += 1
+                        continue
+
                     # Dedup check
                     if is_email_processed(db_conn, uid, mailbox):
                         if not dry_run:
@@ -235,12 +252,6 @@ def fetch_receipts(
                         if verbose:
                             suffix = f"; filed to {processed_label!r}" if not dry_run else ""
                             print(f"    skip (already processed{suffix}): {subject!r}")
-                        result.skipped += 1
-                        continue
-
-                    if _is_internal_intake_notification(subject, sender, settings):
-                        if verbose:
-                            print(f"    skip (internal intake notification): {subject!r}")
                         result.skipped += 1
                         continue
 

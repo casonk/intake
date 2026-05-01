@@ -803,6 +803,73 @@ def test_fetch_receipts_files_already_processed_candidate(db, tmp_path):
     assert moved_uids == [(30999, "intake/processed")]
 
 
+def test_fetch_receipts_files_internal_notification_to_notify_label(db, tmp_path):
+    receipt_root = tmp_path / "receipts"
+    message = EmailMessage()
+    message["Message-ID"] = "<notify@example.com>"
+    message["Subject"] = "[intake] Receipt processed: kroger $32.98"
+    message["From"] = "intake@example.com"
+    message["Date"] = "Fri, 01 May 2026 09:30:00 -0400"
+    message.set_content("Receipt processed\nMerchant: kroger")
+    payload = message.as_bytes()
+    read_uids: list[int] = []
+    moved_uids: list[tuple[int, str]] = []
+
+    class _NotificationConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [b"1"])
+
+        def uid(self, command, uid, *args):
+            assert command == "fetch"
+            assert uid == "30999"
+            return ("OK", [b"payload"])
+
+        def expunge(self):
+            return ("OK", [b"0"])
+
+    def fail_extract_attachments(_payload):
+        raise AssertionError("internal notifications must not be reprocessed")
+
+    sr = SimpleNamespace(
+        load_config=lambda _path: SimpleNamespace(
+            imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None)
+        ),
+        validate_imap=lambda _config: None,
+        open_imap_connection=lambda _config: _NotificationConnection(),
+        extract_fetch_payload=lambda _msg_data: payload,
+        decode_mime_header=lambda value: str(value or ""),
+        extract_attachments=fail_extract_attachments,
+        mark_message_read=lambda _conn, uid: read_uids.append(uid),
+        move_message=lambda _conn, uid, label: moved_uids.append((uid, label)),
+    )
+
+    settings = {
+        "receipt_dir": str(receipt_root),
+        "email": {
+            "shock_relay_config": "/tmp/config.local.yaml",
+            "notification_label": "intake/notify",
+        },
+    }
+
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[30999]),
+        patch("intake.email._process_reply_messages"),
+    ):
+        result = fetch_receipts(settings, db, dry_run=False, verbose=False)
+
+    assert result.skipped == 1
+    assert read_uids == [30999]
+    assert moved_uids == [(30999, "intake/notify")]
+    assert is_email_processed(db, uid=30999, mailbox="INBOX") is False
+
+
 def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monkeypatch):
     import intake.classify as classify_mod
 

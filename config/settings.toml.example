@@ -83,6 +83,9 @@ reports_dir = "reports"
 # # Gmail label to move processed emails into (created automatically if absent)
 # processed_label = "intake/processed"
 #
+# # Gmail label to move intake-generated notification emails into.
+# notification_label = "intake/notify"
+#
 # # Subject keywords — any match triggers fetch (case-insensitive)
 # receipt_subjects = [
 #   "receipt",
