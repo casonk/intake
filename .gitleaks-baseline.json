@@ -1,0 +1,26 @@
+[
+ {
+  "RuleID": "portfolio-git-workspace-path",
+  "Description": "Hardcoded absolute path to local git workspace in config/code/scripts",
+  "StartLine": 111,
+  "EndLine": 111,
+  "StartColumn": 17,
+  "EndColumn": 32,
+  "Match": "/mnt/4tb-m2/git/",
+  "Secret": "/mnt/4tb-m2/git/",
+  "File": "config/settings.toml.example",
+  "SymlinkFile": "",
+  "Commit": "263f4090bc1fba81976c84cf39adcfcdf6d1eaf1",
+  "Link": "https://github.com/casonk/intake/blob/263f4090bc1fba81976c84cf39adcfcdf6d1eaf1/config/settings.toml.example#L111",
+  "Entropy": 3.0778196,
+  "Author": "Cason Konzer",
+  "Email": "72440835+casonk@users.noreply.github.com",
+  "Date": "2026-04-03T23:52:27Z",
+  "Message": "feat: add repo-local automation hooks",
+  "Tags": [
+   "local-path",
+   "machine-specific"
+  ],
+  "Fingerprint": "263f4090bc1fba81976c84cf39adcfcdf6d1eaf1:config/settings.toml.example:portfolio-git-workspace-path:111"
+ }
+]
