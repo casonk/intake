@@ -40,9 +40,11 @@ from intake.email import (
     _safe_save_receipt_pdf,
     _trim_reply_note_text,
     _upsert_html_receipt,
+    _write_processed_email_artifact,
     fetch_receipts,
     html_to_text,
 )
+from intake.sidecar import read_sidecar
 
 # ── html_to_text ──────────────────────────────────────────────────────────────
 
@@ -380,6 +382,37 @@ def test_safe_save_writes_file(tmp_path):
     assert dest.read_bytes() == b"%PDF-1.4"
 
 
+def test_write_processed_email_artifact_archives_raw_message(tmp_path):
+    receipt_root = tmp_path / "receipts"
+    payload = (
+        b"From: shop@example.com\r\n"
+        b"Subject: Receipt\r\n"
+        b"Date: Fri, 01 May 2026 09:30:00 -0400\r\n"
+        b"\r\n"
+        b"Receipt body\r\n"
+    )
+
+    archived = _write_processed_email_artifact(
+        {"receipt_dir": str(receipt_root)},
+        uid=30999,
+        mailbox="INBOX",
+        message_id="<receipt@example.com>",
+        subject="Receipt",
+        sender="shop@example.com",
+        received_at="Fri, 01 May 2026 09:30:00 -0400",
+        payload=payload,
+        attachment_count=1,
+        inline_processed=False,
+    )
+
+    assert archived == receipt_root / "email" / "messages" / "20260501_0930_INBOX_30999.eml"
+    assert archived.read_bytes() == payload
+    sidecar = read_sidecar(archived)
+    assert sidecar["document_type"] == "email-message"
+    assert sidecar["message_id"] == "<receipt@example.com>"
+    assert sidecar["receipt_dir"] == "email/messages/20260501_0930_INBOX_30999.eml"
+
+
 def test_safe_save_sanitises_filename(tmp_path):
     dest = _safe_save(tmp_path, "re ce:ipt?.pdf", b"data")
     # No colon or question mark in filename
@@ -603,6 +636,76 @@ def test_fetch_receipts_treats_reply_processing_as_best_effort(db, tmp_path):
 
     assert result.found == 0
     assert result.errors == 1
+
+
+def test_fetch_receipts_archives_processed_email_message(db, tmp_path):
+    receipt_root = tmp_path / "receipts"
+    message = EmailMessage()
+    message["Message-ID"] = "<receipt@example.com>"
+    message["Subject"] = "Your receipt"
+    message["From"] = "shop@example.com"
+    message["Date"] = "Fri, 01 May 2026 09:30:00 -0400"
+    message.set_content("Receipt attached")
+    payload = message.as_bytes()
+    read_uids: list[int] = []
+    moved_uids: list[tuple[int, str]] = []
+
+    class _OneMessageConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [b"1"])
+
+        def uid(self, command, uid, *args):
+            assert command == "fetch"
+            assert uid == "30999"
+            return ("OK", [b"payload"])
+
+        def expunge(self):
+            return ("OK", [b"0"])
+
+    sr = SimpleNamespace(
+        load_config=lambda _path: SimpleNamespace(
+            imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None)
+        ),
+        validate_imap=lambda _config: None,
+        open_imap_connection=lambda _config: _OneMessageConnection(),
+        extract_fetch_payload=lambda _msg_data: payload,
+        decode_mime_header=lambda value: str(value or ""),
+        extract_attachments=lambda _payload: [
+            ("receipt.pdf", "application/pdf", b"%PDF-1.4\nreceipt\n")
+        ],
+        extract_message_bodies=lambda _msg: ("", ""),
+        mark_message_read=lambda _conn, uid: read_uids.append(uid),
+        move_message=lambda _conn, uid, label: moved_uids.append((uid, label)),
+    )
+
+    settings = {
+        "receipt_dir": str(receipt_root),
+        "email": {"shock_relay_config": "/tmp/config.local.yaml"},
+    }
+
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[30999]),
+        patch("intake.email._process_reply_messages"),
+    ):
+        result = fetch_receipts(settings, db, dry_run=False, verbose=False)
+
+    archived = receipt_root / "email" / "messages" / "20260501_0930_INBOX_30999.eml"
+    sidecar = read_sidecar(archived)
+
+    assert result.attachments_saved == 1
+    assert archived.read_bytes() == payload
+    assert sidecar["attachment_count"] == 1
+    assert sidecar["inline_processed"] is False
+    assert is_email_processed(db, uid=30999, mailbox="INBOX") is True
+    assert read_uids == [30999]
+    assert moved_uids == [(30999, "intake/processed")]
 
 
 def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monkeypatch):

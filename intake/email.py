@@ -141,6 +141,7 @@ def fetch_receipts(
 
     PDF attachments are saved to ``receipt_dir/intake/`` for normal backfill.
     HTML inline receipts are parsed and upserted into the DB directly.
+    Raw RFC822 messages for handled receipts are archived under the receipt root.
     Successfully processed emails are marked read and moved to the processed label.
     """
     email_cfg = settings.get("email", {})
@@ -292,6 +293,24 @@ def fetch_receipts(
                                 print(f"    skip (no receipt content matched): {subject!r}")
                             result.skipped += 1
                             continue
+                        archived_email = _write_processed_email_artifact(
+                            settings,
+                            uid=uid,
+                            mailbox=mailbox,
+                            message_id=message_id,
+                            subject=subject,
+                            sender=sender,
+                            received_at=date_str,
+                            payload=payload,
+                            attachment_count=saved_count,
+                            inline_processed=inline_processed,
+                        )
+                        if verbose and archived_email is not None:
+                            try:
+                                archived_label = archived_email.relative_to(receipt_dir)
+                            except ValueError:
+                                archived_label = archived_email
+                            print(f"    archived email → {archived_label}")
                         record_email_receipt(
                             db_conn,
                             uid=uid,
@@ -419,6 +438,125 @@ def _safe_save_receipt_pdf(
         suffix=Path(filename).suffix or ".pdf",
     )
     dest.write_bytes(data)
+    return dest
+
+
+def _safe_archive_token(value: object) -> str:
+    """Return a compact filesystem-safe token for email archive filenames."""
+    token = re.sub(r"[^\w.-]+", "_", str(value or "").strip())
+    return token.strip("._") or "mailbox"
+
+
+def _processed_email_archive_dir(settings: dict) -> Path | None:
+    """Return the local directory used for raw processed email downloads."""
+    email_cfg = settings.get("email", {})
+    if isinstance(email_cfg, dict) and email_cfg.get("archive_processed_messages", True) is False:
+        return None
+
+    receipt_root_value = str(settings.get("receipt_dir") or "").strip()
+    if not receipt_root_value:
+        return None
+    receipt_root = Path(receipt_root_value).expanduser()
+
+    configured = "email/messages"
+    if isinstance(email_cfg, dict) and email_cfg.get("processed_email_dir"):
+        configured = str(email_cfg["processed_email_dir"]).strip() or configured
+
+    configured_path = Path(configured).expanduser()
+    if configured_path.is_absolute():
+        return configured_path
+    return receipt_root / configured_path
+
+
+def _email_archive_datetime(received_at: str | None) -> datetime:
+    """Return the timestamp used for processed email archive filenames."""
+    try:
+        parsed = parsedate_to_datetime(received_at) if received_at else datetime.now()
+        if isinstance(parsed, datetime):
+            return parsed.replace(tzinfo=None, second=0, microsecond=0)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        pass
+    return datetime.now().replace(second=0, microsecond=0)
+
+
+def _unique_email_archive_path(candidate: Path, payload: bytes) -> Path:
+    """Return a non-clobbering path for *payload*, reusing identical archives."""
+    if not candidate.exists():
+        return candidate
+    try:
+        if candidate.read_bytes() == payload:
+            return candidate
+    except OSError:
+        pass
+
+    stem = candidate.stem
+    suffix = candidate.suffix
+    for index in range(2, 1000):
+        alternate = candidate.with_name(f"{stem}_{index}{suffix}")
+        if not alternate.exists():
+            return alternate
+        try:
+            if alternate.read_bytes() == payload:
+                return alternate
+        except OSError:
+            continue
+    raise RuntimeError(f"could not allocate processed email archive path for {candidate}")
+
+
+def _write_processed_email_artifact(
+    settings: dict,
+    *,
+    uid: int,
+    mailbox: str,
+    message_id: str,
+    subject: str,
+    sender: str,
+    received_at: str,
+    payload: bytes,
+    attachment_count: int,
+    inline_processed: bool,
+) -> Path | None:
+    """Download the raw RFC822 email for a handled receipt message."""
+    archive_dir = _processed_email_archive_dir(settings)
+    if archive_dir is None:
+        return None
+
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    received_dt = _email_archive_datetime(received_at)
+    mailbox_token = _safe_archive_token(mailbox)
+    candidate = archive_dir / f"{received_dt:%Y%m%d_%H%M}_{mailbox_token}_{uid}.eml"
+    dest = _unique_email_archive_path(candidate, payload)
+    dest.write_bytes(payload)
+
+    from intake.sidecar import write_sidecar  # noqa: PLC0415
+
+    receipt_root_value = str(settings.get("receipt_dir") or "").strip()
+    receipt_root = Path(receipt_root_value).expanduser() if receipt_root_value else None
+    try:
+        receipt_dir = str(dest.relative_to(receipt_root)) if receipt_root is not None else str(dest)
+    except ValueError:
+        receipt_dir = str(dest)
+
+    write_sidecar(
+        dest,
+        {
+            "filename": dest.name,
+            "scan_date": received_dt.date().isoformat(),
+            "category": "email/messages",
+            "receipt_dir": receipt_dir,
+            "processed_by": "email-fetch",
+            "document_type": "email-message",
+            "tier": "email",
+            "uid": uid,
+            "mailbox": mailbox,
+            "message_id": message_id,
+            "subject": subject,
+            "sender": sender,
+            "received_at": received_at,
+            "attachment_count": attachment_count,
+            "inline_processed": inline_processed,
+        },
+    )
     return dest
 
 
