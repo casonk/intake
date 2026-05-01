@@ -1436,6 +1436,44 @@ def _is_internal_intake_notification(subject: str, sender: str, settings: dict) 
     return subject.strip().startswith(prefix)
 
 
+def _write_inline_email_receipt_artifact(
+    settings: dict,
+    *,
+    category: str,
+    filename: str,
+    plain_text: str,
+    row: dict,
+) -> Path | None:
+    """Persist an inline email receipt body under the Snowbridge receipt tree."""
+    receipt_root_value = str(settings.get("receipt_dir") or "").strip()
+    if not receipt_root_value:
+        return None
+
+    try:
+        from intake.sidecar import write_sidecar  # noqa: PLC0415
+
+        receipt_root = Path(receipt_root_value).expanduser()
+        artifact_dir = receipt_root / "email" / category
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact = artifact_dir / filename
+        artifact.write_text(plain_text, encoding="utf-8")
+        write_sidecar(
+            artifact,
+            {
+                **{k: v for k, v in row.items() if k != "raw_text"},
+                "document_type": "email",
+                "tier": "email",
+            },
+        )
+        return artifact
+    except OSError as exc:
+        print(
+            f"    [email] WARNING: could not write Snowbridge email artifact: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+
 def _upsert_html_receipt(
     db_conn, uid, mailbox, subject, sender, date_str, plain_text, settings
 ) -> None:
@@ -1531,24 +1569,33 @@ def _upsert_html_receipt(
         if inferred:
             receipt = replace(receipt, purchaser=inferred)
 
+    row = {
+        "filename": synthetic_name,
+        "scan_date": (receipt.receipt_date or datetime.now(UTC).date()).isoformat(),
+        "merchant": receipt.merchant,
+        "total": receipt.total,
+        "category": category,
+        "receipt_dir": f"email/{category}",
+        "raw_text": plain_text[:4000],
+        "processed_by": processed_by,
+        "purchaser": receipt.purchaser,
+        "card_last4": receipt.card_last4,
+        "currency": receipt.currency,
+        "items": receipt.items,
+        "certifications": receipt.certifications,
+        "staff": receipt.staff,
+    }
+
     upsert_receipt(
         db_conn,
-        {
-            "filename": synthetic_name,
-            "scan_date": (receipt.receipt_date or datetime.now(UTC).date()).isoformat(),
-            "merchant": receipt.merchant,
-            "total": receipt.total,
-            "category": category,
-            "receipt_dir": f"email/{category}",
-            "raw_text": plain_text[:4000],
-            "processed_by": processed_by,
-            "purchaser": receipt.purchaser,
-            "card_last4": receipt.card_last4,
-            "currency": receipt.currency,
-            "items": receipt.items,
-            "certifications": receipt.certifications,
-            "staff": receipt.staff,
-        },
+        row,
+    )
+    _write_inline_email_receipt_artifact(
+        settings,
+        category=category,
+        filename=synthetic_name,
+        plain_text=plain_text,
+        row=row,
     )
     _, errors = send_processed_receipt_notifications(
         settings,
