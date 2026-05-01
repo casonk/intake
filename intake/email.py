@@ -223,8 +223,18 @@ def fetch_receipts(
 
                     # Dedup check
                     if is_email_processed(db_conn, uid, mailbox):
+                        if not dry_run:
+                            filed = _file_message_to_processed_label(
+                                sr,
+                                conn,
+                                uid,
+                                source_mailbox=mailbox,
+                                processed_label=processed_label,
+                            )
+                            to_expunge = to_expunge or filed
                         if verbose:
-                            print(f"    skip (already processed): {subject!r}")
+                            suffix = f"; filed to {processed_label!r}" if not dry_run else ""
+                            print(f"    skip (already processed{suffix}): {subject!r}")
                         result.skipped += 1
                         continue
 
@@ -321,9 +331,14 @@ def fetch_receipts(
                             received_at=date_str,
                             attachment_count=saved_count,
                         )
-                        sr.mark_message_read(conn, uid)
-                        sr.move_message(conn, uid, processed_label)
-                        to_expunge = True
+                        filed = _file_message_to_processed_label(
+                            sr,
+                            conn,
+                            uid,
+                            source_mailbox=mailbox,
+                            processed_label=processed_label,
+                        )
+                        to_expunge = to_expunge or filed
 
                 except Exception as exc:
                     result.errors += 1
@@ -405,6 +420,30 @@ def _configured_reply_mailboxes(email_cfg: dict) -> list[str]:
 def _email_was_handled(saved_count: int, inline_processed: bool) -> bool:
     """Return True when the message yielded at least one intake artifact."""
     return saved_count > 0 or inline_processed
+
+
+def _same_mailbox_label(left: str, right: str) -> bool:
+    """Return True when two Gmail IMAP mailbox names refer to the same label."""
+    return left.strip().strip('"').casefold() == right.strip().strip('"').casefold()
+
+
+def _file_message_to_processed_label(
+    sr,
+    conn,
+    uid: int,
+    *,
+    source_mailbox: str,
+    processed_label: str,
+) -> bool:
+    """Mark *uid* read and move it to *processed_label* when needed.
+
+    Returns True when the source mailbox needs expunge because a move occurred.
+    """
+    sr.mark_message_read(conn, uid)
+    if not processed_label or _same_mailbox_label(source_mailbox, processed_label):
+        return False
+    sr.move_message(conn, uid, processed_label)
+    return True
 
 
 def _safe_save(dest_dir: Path, filename: str, data: bytes) -> Path:
