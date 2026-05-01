@@ -107,6 +107,11 @@ reports_dir = "reports"
 # # free-form review requests are recorded automatically.
 # # reply_mailboxes = ["[Gmail]/Sent Mail"]
 #
+# # Raw RFC822 copies of successfully handled receipt emails are archived under
+# # receipt_dir before the message is moved to the processed label.
+# processed_email_dir = "email/messages"
+# archive_processed_messages = true
+#
 # # How far back to search on each run (days)
 # since_days = 90
 #
