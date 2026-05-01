@@ -29,6 +29,7 @@ from intake.email import (
     _extract_progressive_payment_email,
     _extract_receipt_filename_from_text,
     _extract_reply_updates,
+    _file_message_to_processed_label,
     _is_intake_reply_message,
     _is_internal_intake_notification,
     _looks_like_receipt,
@@ -291,6 +292,27 @@ def test_email_was_handled_requires_attachment_or_inline_processing(
     saved_count, inline_processed, handled
 ):
     assert _email_was_handled(saved_count, inline_processed) is handled
+
+
+def test_file_message_to_processed_label_skips_move_when_already_in_label():
+    read_uids: list[int] = []
+    moved_uids: list[tuple[int, str]] = []
+    sr = SimpleNamespace(
+        mark_message_read=lambda _conn, uid: read_uids.append(uid),
+        move_message=lambda _conn, uid, label: moved_uids.append((uid, label)),
+    )
+
+    needs_expunge = _file_message_to_processed_label(
+        sr,
+        object(),
+        30999,
+        source_mailbox="intake/processed",
+        processed_label="intake/processed",
+    )
+
+    assert needs_expunge is False
+    assert read_uids == [30999]
+    assert moved_uids == []
 
 
 def test_internal_intake_notification_is_skipped():
@@ -704,6 +726,79 @@ def test_fetch_receipts_archives_processed_email_message(db, tmp_path):
     assert sidecar["attachment_count"] == 1
     assert sidecar["inline_processed"] is False
     assert is_email_processed(db, uid=30999, mailbox="INBOX") is True
+    assert read_uids == [30999]
+    assert moved_uids == [(30999, "intake/processed")]
+
+
+def test_fetch_receipts_files_already_processed_candidate(db, tmp_path):
+    receipt_root = tmp_path / "receipts"
+    record_email_receipt(
+        db,
+        uid=30999,
+        mailbox="INBOX",
+        message_id="<receipt@example.com>",
+        subject="Your receipt",
+        sender="shop@example.com",
+        received_at="Fri, 01 May 2026 09:30:00 -0400",
+        attachment_count=1,
+    )
+    message = EmailMessage()
+    message["Message-ID"] = "<receipt@example.com>"
+    message["Subject"] = "Your receipt"
+    message["From"] = "shop@example.com"
+    message["Date"] = "Fri, 01 May 2026 09:30:00 -0400"
+    message.set_content("Receipt attached")
+    payload = message.as_bytes()
+    read_uids: list[int] = []
+    moved_uids: list[tuple[int, str]] = []
+
+    class _AlreadyProcessedConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [b"1"])
+
+        def uid(self, command, uid, *args):
+            assert command == "fetch"
+            assert uid == "30999"
+            return ("OK", [b"payload"])
+
+        def expunge(self):
+            return ("OK", [b"0"])
+
+    def fail_extract_attachments(_payload):
+        raise AssertionError("already-processed messages must not be reprocessed")
+
+    sr = SimpleNamespace(
+        load_config=lambda _path: SimpleNamespace(
+            imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None)
+        ),
+        validate_imap=lambda _config: None,
+        open_imap_connection=lambda _config: _AlreadyProcessedConnection(),
+        extract_fetch_payload=lambda _msg_data: payload,
+        decode_mime_header=lambda value: str(value or ""),
+        extract_attachments=fail_extract_attachments,
+        mark_message_read=lambda _conn, uid: read_uids.append(uid),
+        move_message=lambda _conn, uid, label: moved_uids.append((uid, label)),
+    )
+
+    settings = {
+        "receipt_dir": str(receipt_root),
+        "email": {"shock_relay_config": "/tmp/config.local.yaml"},
+    }
+
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[30999]),
+        patch("intake.email._process_reply_messages"),
+    ):
+        result = fetch_receipts(settings, db, dry_run=False, verbose=False)
+
+    assert result.skipped == 1
     assert read_uids == [30999]
     assert moved_uids == [(30999, "intake/processed")]
 
