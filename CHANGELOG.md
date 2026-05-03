@@ -1,3 +1,9 @@
+## Unreleased
+
+### Changed
+- `*.ai.json` debug artifacts now append new AI model attempts across
+  re-extractions and include a fidelity-weighted `models` summary.
+
 ## [0.1.0] - 2026-04-01
 
 ### Added

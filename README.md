@@ -338,6 +338,11 @@ links for the receipt artifact and any sidecar-adjacent OCR/JSON artifacts
 (`*.ocr.txt`, `*.intake.json`, `*.ai.json`) that exist under the mounted
 receipt root.
 
+The `*.ai.json` artifact is cumulative. Each new AI model attempt is appended
+instead of replacing the prior attempt history, and the file includes a
+`models` summary with fidelity weights (`low=1`, `mid=2`, `high=3`) for later
+comparison or weighted review.
+
 If the reply asks for the OCR/image/file itself, intake now sends a follow-up
 Gmail reply with the same Snowbridge receipt, OCR, and JSON links.
 
