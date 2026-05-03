@@ -423,7 +423,7 @@ def test_cmd_correct_moves_receipt_when_category_changes(tmp_path):
     }
 
 
-def test_cmd_correct_recategorizes_email_receipt_without_file_move(tmp_path):
+def test_cmd_correct_recategorizes_email_receipt_and_materializes_artifact(tmp_path):
     receipt_root = tmp_path / "receipts"
     receipt_root.mkdir()
     db_path = tmp_path / "intake.db"
@@ -437,7 +437,7 @@ def test_cmd_correct_recategorizes_email_receipt_without_file_move(tmp_path):
             "total": 12.99,
             "category": "general",
             "receipt_dir": "email/general",
-            "raw_text": "",
+            "raw_text": "Spotify receipt body",
             "processed_by": "email-parse",
         },
     )
@@ -472,10 +472,79 @@ def test_cmd_correct_recategorizes_email_receipt_without_file_move(tmp_path):
     assert row["merchant"] == "spotify usa inc"
     assert row["category"] == "sw/subscription"
     assert row["receipt_dir"] == "email/sw/subscription"
+    artifact = receipt_root / "email" / "sw" / "subscription" / "email_30999_INBOX.txt"
+    sidecar = read_sidecar(artifact)
+    assert artifact.read_text(encoding="utf-8") == "Spotify receipt body"
+    assert sidecar is not None
+    assert sidecar["category"] == "sw/subscription"
+    assert sidecar["receipt_dir"] == "email/sw/subscription"
     assert history[0]["changes"]["receipt_dir"] == {
         "old": "email/general",
         "new": "email/sw/subscription",
     }
+
+
+def test_cmd_correct_moves_existing_email_receipt_artifact(tmp_path):
+    receipt_root = tmp_path / "receipts"
+    old_artifact = receipt_root / "email" / "general" / "email_30999_INBOX.txt"
+    old_artifact.parent.mkdir(parents=True)
+    old_artifact.write_text("Spotify receipt body", encoding="utf-8")
+    write_sidecar(
+        old_artifact,
+        {
+            "filename": "email_30999_INBOX.txt",
+            "scan_date": "2026-04-23",
+            "merchant": "spotify usa inc",
+            "total": 12.99,
+            "category": "general",
+            "receipt_dir": "email/general",
+            "processed_by": "email-parse",
+        },
+    )
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "email_30999_INBOX.txt",
+            "scan_date": "2026-04-23",
+            "merchant": "Spotify USA Inc",
+            "total": 12.99,
+            "category": "general",
+            "receipt_dir": "email/general",
+            "raw_text": "Spotify receipt body",
+            "processed_by": "email-parse",
+        },
+    )
+    conn.close()
+
+    cli._cmd_correct(
+        Namespace(
+            filename="email_30999_INBOX.txt",
+            receipt_dir=str(receipt_root),
+            db=str(db_path),
+            merchant=None,
+            total=None,
+            category="sw/subscription",
+            purchaser=None,
+            clear_purchaser=False,
+            card_last4=None,
+            clear_card_last4=False,
+            certification=None,
+            clear_certifications=False,
+            note="normalize subscription email",
+            currency=None,
+        ),
+        {},
+    )
+
+    new_artifact = receipt_root / "email" / "sw" / "subscription" / "email_30999_INBOX.txt"
+    sidecar = read_sidecar(new_artifact)
+    assert not old_artifact.exists()
+    assert new_artifact.read_text(encoding="utf-8") == "Spotify receipt body"
+    assert sidecar is not None
+    assert sidecar["category"] == "sw/subscription"
+    assert sidecar["receipt_dir"] == "email/sw/subscription"
 
 
 def test_cmd_correct_updates_certifications_in_db_and_sidecar(tmp_path):

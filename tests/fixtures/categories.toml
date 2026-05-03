@@ -59,7 +59,7 @@ keywords = ["steam"]
 
 [categories.sw.subscription]
 label    = "Software Subscriptions"
-keywords = ["spotify"]
+keywords = ["spotify", "app store", "in-app purchase", "keepassium", "keepass"]
 
 [categories.finance]
 label    = "Finance & Transfers"

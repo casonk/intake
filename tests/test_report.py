@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from intake.db import init_db, upsert_receipt
-from intake.report import generate_reports
+from intake.report import _format_item_summary, generate_reports
 
 
 def _browser_uri(*parts: str, is_dir: bool = False) -> str:
@@ -118,6 +118,26 @@ def _seed_receipt_files(receipt_root: Path) -> None:
     (receipt_root / "sw" / "dev").mkdir(parents=True, exist_ok=True)
 
 
+def test_format_item_summary_keeps_table_preview_short():
+    label, markdown, full_label = _format_item_summary(
+        [
+            {
+                "description": (
+                    "KeePassium (KeePass passwords) Version 2.5 Premium "
+                    "(iOS+Mac) In-App Purchase iPhone"
+                )
+            },
+            {"description": "Family Sharing renewal for a very long product name"},
+            {"description": "Tax adjustment"},
+        ]
+    )
+
+    assert len(label) <= 90
+    assert label == "3: KeePassium (KeePass passwords)..., Family Sharing renewal for a ve..., ..."
+    assert markdown == label
+    assert "In-App Purchase iPhone" in full_label
+
+
 def test_generate_reports_renders_chart_sections(tmp_path):
     db_path = tmp_path / "intake.db"
     output_dir = tmp_path / "reports"
@@ -186,7 +206,7 @@ def test_generate_reports_renders_chart_sections(tmp_path):
     assert _browser_uri("sw", "dev", is_dir=True) in md
     assert _browser_uri("sw", "dev", is_dir=True) in html
     assert "email_1.txt" in md
-    assert f"[email_1.txt]({_browser_uri('sw', 'dev', is_dir=True)})" in md
+    assert f"[email_1.txt]({_browser_uri('sw', 'dev', is_dir=True)})" not in md
     assert f"[receipt/]({_browser_uri(is_dir=True)})" in md
     assert f"[receipt/intake/]({_browser_uri('intake', is_dir=True)})" in md
     assert "2: Bananas, Whole Milk" in md
@@ -287,6 +307,38 @@ def test_generate_reports_resolves_non_pdf_receipt_links(tmp_path):
     assert output_dir / "intake-report.html" in written
     assert _browser_uri("general", "20260402_1707.jpg") in html
     assert _browser_uri("general", "20260402_1707.jpg") in md
+
+
+def test_generate_reports_links_existing_email_text_artifact(tmp_path):
+    db_path = tmp_path / "intake.db"
+    output_dir = tmp_path / "reports"
+    receipt_root = tmp_path / "receipts"
+    artifact = receipt_root / "email" / "sw" / "subscription" / "email_31077_INBOX.txt"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("KeePassium receipt body", encoding="utf-8")
+
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "email_31077_INBOX.txt",
+            "scan_date": "2026-04-26",
+            "merchant": "apple",
+            "total": 31.79,
+            "category": "sw/subscription",
+            "receipt_dir": "email/sw/subscription",
+            "raw_text": "KeePassium App Store",
+            "processed_by": "gpt-4.1",
+        },
+    )
+    generate_reports(conn, output_dir, fmt="both", receipt_root=receipt_root)
+    conn.close()
+
+    html = (output_dir / "intake-report.html").read_text(encoding="utf-8")
+    md = (output_dir / "intake-report.md").read_text(encoding="utf-8")
+
+    assert _browser_uri("email", "sw", "subscription", "email_31077_INBOX.txt") in html
+    assert _browser_uri("email", "sw", "subscription", "email_31077_INBOX.txt") in md
 
 
 def test_generate_reports_distinguishes_unknown_totals_from_true_zero(tmp_path):

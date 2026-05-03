@@ -115,10 +115,27 @@ def test_format_processed_receipt_message_includes_optional_snowbridge_link():
         filename="20260318_1834.pdf",
         processed_by="tesseract",
         snowbridge_link="https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.pdf",
+        artifact_links={
+            "ocr": "https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.ocr.txt",
+            "sidecar_json": "https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.intake.json",
+            "ai_json": "https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.ai.json",
+        },
     )
 
     assert (
         "Link: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.pdf"
+        in message
+    )
+    assert (
+        "OCR: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.ocr.txt"
+        in message
+    )
+    assert (
+        "Sidecar JSON: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.intake.json"
+        in message
+    )
+    assert (
+        "AI JSON: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.ai.json"
         in message
     )
 
@@ -136,12 +153,27 @@ def test_format_receipt_file_link_reply_message_includes_link():
             "total": 39.07,
         },
         snowbridge_link="https://files.snowbridge.internal/files/receipt/general/20260419_2018.jpg",
+        artifact_links={
+            "ocr": "https://files.snowbridge.internal/files/receipt/general/20260419_2018.ocr.txt",
+            "sidecar_json": "https://files.snowbridge.internal/files/receipt/general/20260419_2018.intake.json",
+            "ai_json": "https://files.snowbridge.internal/files/receipt/general/20260419_2018.ai.json",
+        },
     )
     assert "Snowbridge receipt link requested" in message
     assert "Receipt: 20260419_2018.jpg" in message
     assert "Merchant: dewdney liquor store" in message
     assert "Total: $39.07" in message
     assert "https://files.snowbridge.internal/files/receipt/general/20260419_2018.jpg" in message
+    assert (
+        "https://files.snowbridge.internal/files/receipt/general/20260419_2018.ocr.txt" in message
+    )
+    assert (
+        "https://files.snowbridge.internal/files/receipt/general/20260419_2018.intake.json"
+        in message
+    )
+    assert (
+        "https://files.snowbridge.internal/files/receipt/general/20260419_2018.ai.json" in message
+    )
 
 
 def test_send_processed_receipt_notification_invokes_signal_sender(monkeypatch, tmp_path):
@@ -153,6 +185,9 @@ def test_send_processed_receipt_notification_invokes_signal_sender(monkeypatch, 
     receipt_file = receipt_root / "grocery" / "supermarket" / "20260318_1834.pdf"
     receipt_file.parent.mkdir(parents=True, exist_ok=True)
     receipt_file.write_bytes(b"%PDF-1.4")
+    receipt_file.with_suffix(".ocr.txt").write_text("ocr", encoding="utf-8")
+    receipt_file.with_suffix(".intake.json").write_text("{}", encoding="utf-8")
+    receipt_file.with_suffix(".ai.json").write_text("{}", encoding="utf-8")
 
     calls = []
 
@@ -216,6 +251,9 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
     receipt_file = receipt_root / "grocery" / "supermarket" / "20260318_1834.pdf"
     receipt_file.parent.mkdir(parents=True, exist_ok=True)
     receipt_file.write_bytes(b"%PDF-1.4")
+    receipt_file.with_suffix(".ocr.txt").write_text("ocr", encoding="utf-8")
+    receipt_file.with_suffix(".intake.json").write_text("{}", encoding="utf-8")
+    receipt_file.with_suffix(".ai.json").write_text("{}", encoding="utf-8")
 
     calls = []
 
@@ -272,6 +310,18 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
         "Link: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.pdf"
         in cmd[12]
     )
+    assert (
+        "OCR: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.ocr.txt"
+        in cmd[12]
+    )
+    assert (
+        "Sidecar JSON: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.intake.json"
+        in cmd[12]
+    )
+    assert (
+        "AI JSON: https://files.snowbridge.internal/files/receipt/grocery/supermarket/20260318_1834.ai.json"
+        in cmd[12]
+    )
     assert cmd[13:] == ["--config", str(config_path)]
     assert capture_output is True
     assert text is True
@@ -287,6 +337,9 @@ def test_send_receipt_file_link_gmail_reply_invokes_sender(monkeypatch, tmp_path
     receipt_file = receipt_root / "general" / "20260419_2018.jpg"
     receipt_file.parent.mkdir(parents=True, exist_ok=True)
     receipt_file.write_bytes(b"jpg")
+    receipt_file.with_suffix(".ocr.txt").write_text("ocr", encoding="utf-8")
+    receipt_file.with_suffix(".intake.json").write_text("{}", encoding="utf-8")
+    receipt_file.with_suffix(".ai.json").write_text("{}", encoding="utf-8")
 
     calls = []
 
@@ -344,6 +397,18 @@ def test_send_receipt_file_link_gmail_reply_invokes_sender(monkeypatch, tmp_path
     ]
     assert cmd[15] == "Re: [intake] Receipt processed: dewdney liquor store $39.07"
     assert "https://files.snowbridge.internal/files/receipt/general/20260419_2018.jpg" in cmd[16]
+    assert (
+        "OCR: https://files.snowbridge.internal/files/receipt/general/20260419_2018.ocr.txt"
+        in cmd[16]
+    )
+    assert (
+        "Sidecar JSON: https://files.snowbridge.internal/files/receipt/general/20260419_2018.intake.json"
+        in cmd[16]
+    )
+    assert (
+        "AI JSON: https://files.snowbridge.internal/files/receipt/general/20260419_2018.ai.json"
+        in cmd[16]
+    )
     assert cmd[17:] == ["--config", str(config_path)]
     assert capture_output is True
     assert text is True

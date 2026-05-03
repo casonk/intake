@@ -33,6 +33,7 @@ from intake.parse import Receipt, parse_receipt
 if TYPE_CHECKING:
     from intake.parse_card import Card
     from intake.parse_letter import Letter
+    from intake.parse_payment import Payment
 
 OCR_MODEL = "tesseract"
 DEFAULT_TOTAL_ESCALATION_THRESHOLD = 250.0
@@ -320,3 +321,27 @@ def extract_card(
         return card, openai_model
     except Exception:  # noqa: BLE001
         return card, OCR_MODEL
+
+
+def extract_payment(
+    payment_path: Path,
+    raw_text: str,
+    openai_api_key: str | None = None,
+    openai_model: str = "gpt-4o-mini",
+) -> tuple[Payment, str]:
+    """Extract a Payment from *payment_path*. Returns ``(payment, model_name)``."""
+    from intake.parse_payment import parse_payment
+
+    payment = parse_payment(payment_path.name, raw_text, pdf_path=payment_path)
+
+    if not openai_api_key:
+        return payment, OCR_MODEL
+
+    try:
+        from intake.ai_payment import extract_with_openai_payment, merge_ai_payment_result
+
+        ai_data = extract_with_openai_payment(payment_path, raw_text, openai_api_key, openai_model)
+        payment = merge_ai_payment_result(payment, ai_data)
+        return payment, openai_model
+    except Exception:  # noqa: BLE001
+        return payment, OCR_MODEL
