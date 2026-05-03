@@ -102,6 +102,28 @@ CREATE TABLE IF NOT EXISTS cards (
 CREATE INDEX IF NOT EXISTS idx_cards_file_hash ON cards(file_hash);
 """
 
+_PAYMENT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS payments (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename            TEXT UNIQUE NOT NULL,
+    scan_date           TEXT NOT NULL,
+    payment_date        TEXT,
+    amount              REAL,
+    account_name        TEXT,
+    account_last4       TEXT,
+    payment_type        TEXT,
+    confirmation_number TEXT,
+    payer               TEXT,
+    category            TEXT NOT NULL DEFAULT 'payments/other',
+    receipt_dir         TEXT NOT NULL,
+    file_hash           TEXT,
+    raw_text            TEXT,
+    processed_by        TEXT NOT NULL DEFAULT 'tesseract',
+    processed_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payments_file_hash ON payments(file_hash);
+"""
+
 _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN processed_by TEXT NOT NULL DEFAULT 'tesseract'",
     "ALTER TABLE receipts ADD COLUMN purchaser TEXT",
@@ -126,6 +148,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     conn.executescript(_RECEIPT_UPDATE_SCHEMA)
     conn.executescript(_LETTER_SCHEMA)
     conn.executescript(_CARD_SCHEMA)
+    conn.executescript(_PAYMENT_SCHEMA)
     conn.commit()
     _run_migrations(conn)
     return conn
@@ -640,6 +663,18 @@ def query_summary(conn: sqlite3.Connection) -> dict:
     }
 
 
+def query_all_receipts(conn: sqlite3.Connection) -> list[dict]:
+    """Return all receipts for the audit page, newest first."""
+    rows = conn.execute("""
+            SELECT scan_date, merchant, category, total, filename, receipt_dir,
+                   purchaser, card_last4, items_json, staff_json,
+                   processed_by, processed_at, reviewed_at
+            FROM receipts
+            ORDER BY scan_date DESC, processed_at DESC, filename DESC
+        """).fetchall()
+    return [dict(row) for row in rows]
+
+
 def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) -> list[dict]:
     """Return rows that look suspicious for manual review.
 
@@ -1031,6 +1066,85 @@ def get_card_by_file_hash(
                message_excerpt, category, receipt_dir, file_hash,
                processed_by, processed_at
         FROM cards
+        {where}
+        ORDER BY processed_at ASC, filename ASC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def upsert_payment(conn: sqlite3.Connection, data: dict) -> None:
+    """Insert or replace a payment record.
+
+    *data* keys: filename, scan_date, payment_date, amount, account_name,
+                 account_last4, payment_type, confirmation_number, payer,
+                 category, receipt_dir, file_hash, raw_text, processed_by.
+    processed_at is set automatically to now (UTC).
+    """
+    processed_at = datetime.now(UTC).isoformat()
+    conn.execute(
+        """
+        INSERT INTO payments
+            (filename, scan_date, payment_date, amount, account_name,
+             account_last4, payment_type, confirmation_number, payer,
+             category, receipt_dir, file_hash, raw_text, processed_by, processed_at)
+        VALUES
+            (:filename, :scan_date, :payment_date, :amount, :account_name,
+             :account_last4, :payment_type, :confirmation_number, :payer,
+             :category, :receipt_dir, :file_hash, :raw_text, :processed_by, :processed_at)
+        ON CONFLICT(filename) DO UPDATE SET
+            scan_date           = excluded.scan_date,
+            payment_date        = excluded.payment_date,
+            amount              = excluded.amount,
+            account_name        = excluded.account_name,
+            account_last4       = excluded.account_last4,
+            payment_type        = excluded.payment_type,
+            confirmation_number = excluded.confirmation_number,
+            payer               = excluded.payer,
+            category            = excluded.category,
+            receipt_dir         = excluded.receipt_dir,
+            file_hash           = excluded.file_hash,
+            raw_text            = excluded.raw_text,
+            processed_by        = excluded.processed_by,
+            processed_at        = excluded.processed_at
+        """,
+        {
+            "processed_by": "tesseract",
+            "payment_date": None,
+            "amount": None,
+            "account_name": None,
+            "account_last4": None,
+            "payment_type": None,
+            "confirmation_number": None,
+            "payer": None,
+            "file_hash": None,
+            **data,
+            "processed_at": processed_at,
+        },
+    )
+    conn.commit()
+
+
+def get_payment_by_file_hash(
+    conn: sqlite3.Connection,
+    file_hash: str,
+    *,
+    exclude_filename: str | None = None,
+) -> dict | None:
+    """Return a tracked payment row for *file_hash*, or None if absent."""
+    params: list[object] = [file_hash]
+    where = "WHERE file_hash = ?"
+    if exclude_filename is not None:
+        where += " AND filename != ?"
+        params.append(exclude_filename)
+    row = conn.execute(
+        f"""
+        SELECT filename, scan_date, payment_date, amount, account_name,
+               account_last4, payment_type, confirmation_number, payer,
+               category, receipt_dir, file_hash, processed_by, processed_at
+        FROM payments
         {where}
         ORDER BY processed_at ASC, filename ASC
         LIMIT 1

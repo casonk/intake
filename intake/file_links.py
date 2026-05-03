@@ -9,6 +9,11 @@ from intake.media import is_supported_receipt
 
 DEFAULT_FILEBROWSER_BASE_URL = "https://files.snowbridge.internal"
 DEFAULT_FILEBROWSER_RECEIPT_ROOT = "receipt"
+_COMPANION_ARTIFACT_SUFFIXES = {
+    "ocr": ".ocr.txt",
+    "sidecar_json": ".intake.json",
+    "ai_json": ".ai.json",
+}
 
 
 def configured_filebrowser_base_url(settings: dict) -> str | None:
@@ -162,3 +167,35 @@ def build_receipt_filebrowser_link(
         base_url=configured_filebrowser_base_url(settings),
         root_path=configured_filebrowser_receipt_root(settings),
     )
+
+
+def build_receipt_companion_filebrowser_links(
+    settings: dict,
+    receipt_row: dict,
+    *,
+    search_cache: dict[str, Path | None] | None = None,
+) -> dict[str, str]:
+    """Return File Browser URLs for sidecar-adjacent OCR/JSON artifacts."""
+    receipt_root = configured_receipt_root(settings)
+    if receipt_root is None or not receipt_root.exists():
+        return {}
+
+    file_path = resolve_receipt_file_path(
+        receipt_row,
+        receipt_root=receipt_root,
+        search_cache=search_cache,
+    )
+    if file_path is None:
+        return {}
+
+    links: dict[str, str] = {}
+    for key, suffix in _COMPANION_ARTIFACT_SUFFIXES.items():
+        link = filebrowser_uri_for_local_path(
+            file_path.with_suffix(suffix),
+            receipt_root=receipt_root,
+            base_url=configured_filebrowser_base_url(settings),
+            root_path=configured_filebrowser_receipt_root(settings),
+        )
+        if link:
+            links[key] = link
+    return links

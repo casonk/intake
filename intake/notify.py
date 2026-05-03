@@ -8,7 +8,10 @@ import sys
 from email.utils import parseaddr
 from pathlib import Path
 
-from intake.file_links import build_receipt_filebrowser_link
+from intake.file_links import (
+    build_receipt_companion_filebrowser_links,
+    build_receipt_filebrowser_link,
+)
 from intake.parse import Receipt
 
 _PORTFOLIO_SERVICE_HEADER = "X-Portfolio-Service: intake"
@@ -18,6 +21,11 @@ _INTAKE_RECEIPT_DIR_HEADER = "X-Intake-Receipt-Dir"
 _INTAKE_REPLY_INTENT_HEADER = "X-Crew-Chief-Intent: reply-link"
 _SIGNAL_SERVICE_META = "cc-service: intake"
 _SIGNAL_INTENT_META = "cc-intent: notify"
+_ARTIFACT_LINK_LABELS = {
+    "ocr": "OCR",
+    "sidecar_json": "Sidecar JSON",
+    "ai_json": "AI JSON",
+}
 
 
 def _section_config(settings: dict, section: str) -> dict:
@@ -155,6 +163,7 @@ def format_processed_receipt_message(
     filename: str,
     processed_by: str,
     snowbridge_link: str | None = None,
+    artifact_links: dict[str, str] | None = None,
 ) -> str:
     """Build the notification body for a processed receipt."""
     total = f"${receipt.total:.2f}" if receipt.total is not None else "unknown"
@@ -179,6 +188,7 @@ def format_processed_receipt_message(
         lines.append(f"Filename: {filename}")
     if snowbridge_link:
         lines.append(f"Link: {snowbridge_link}")
+    lines.extend(_format_artifact_link_lines(artifact_links))
     return "\n".join(lines)
 
 
@@ -197,21 +207,34 @@ def format_receipt_file_link_reply_message(
     receipt_row: dict,
     *,
     snowbridge_link: str,
+    artifact_links: dict[str, str] | None = None,
 ) -> str:
     """Build the reply body for a requested Snowbridge receipt link."""
     filename = str(receipt_row.get("filename") or "unknown")
     merchant = str(receipt_row.get("merchant") or "unknown")
     total = receipt_row.get("total")
     total_display = f"${float(total):.2f}" if total is not None else "unknown"
-    return "\n".join(
-        [
-            "Snowbridge receipt link requested",
-            f"Receipt: {filename}",
-            f"Merchant: {merchant}",
-            f"Total: {total_display}",
-            f"Link: {snowbridge_link}",
-        ]
-    )
+    lines = [
+        "Snowbridge receipt link requested",
+        f"Receipt: {filename}",
+        f"Merchant: {merchant}",
+        f"Total: {total_display}",
+        f"Link: {snowbridge_link}",
+    ]
+    lines.extend(_format_artifact_link_lines(artifact_links))
+    return "\n".join(lines)
+
+
+def _format_artifact_link_lines(artifact_links: dict[str, str] | None) -> list[str]:
+    """Return stable notification lines for optional OCR/JSON artifacts."""
+    if not artifact_links:
+        return []
+    lines: list[str] = []
+    for key, label in _ARTIFACT_LINK_LABELS.items():
+        link = artifact_links.get(key)
+        if link:
+            lines.append(f"{label}: {link}")
+    return lines
 
 
 def send_processed_receipt_notification(
@@ -324,6 +347,14 @@ def send_processed_receipt_gmail_notification(
             "category": category,
         },
     )
+    artifact_links = build_receipt_companion_filebrowser_links(
+        settings,
+        {
+            "filename": filename,
+            "receipt_dir": receipt_dir,
+            "category": category,
+        },
+    )
 
     subject = format_processed_receipt_subject(
         receipt,
@@ -336,6 +367,7 @@ def send_processed_receipt_gmail_notification(
         filename=filename,
         processed_by=processed_by,
         snowbridge_link=snowbridge_link,
+        artifact_links=artifact_links,
     )
 
     sent = 0
@@ -396,6 +428,7 @@ def send_receipt_file_link_gmail_reply(
         raise RuntimeError(
             f"Could not resolve Snowbridge link for receipt {receipt_row.get('filename')!r}"
         )
+    artifact_links = build_receipt_companion_filebrowser_links(settings, receipt_row)
 
     headers = [
         _PORTFOLIO_SERVICE_HEADER,
@@ -415,6 +448,7 @@ def send_receipt_file_link_gmail_reply(
     message = format_receipt_file_link_reply_message(
         receipt_row,
         snowbridge_link=snowbridge_link,
+        artifact_links=artifact_links,
     )
     cmd = [
         sys.executable,

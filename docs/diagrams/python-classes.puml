@@ -32,6 +32,18 @@ class "Letter" as intake.parse_letter.Letter {
   sender : str | None
   subject : str | None
 }
+class "Payment" as intake.parse_payment.Payment {
+  account_last4 : str | None
+  account_name : str | None
+  amount : float | None
+  confirmation_number : str | None
+  filename : str
+  payer : str | None
+  payment_date : date | None
+  payment_type : str | None
+  raw_text : str
+  scan_date : date
+}
 class "Receipt" as intake.parse.Receipt {
   card_last4 : str | None
   certifications : list[ReceiptCertification]

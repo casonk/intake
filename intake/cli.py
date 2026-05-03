@@ -332,12 +332,12 @@ def _sync_receipt_sidecar(receipt_root: Path, row: dict) -> Path | None:
     if not receipt_dir_rel:
         return None
 
-    pdf = receipt_root / receipt_dir_rel
-    sc_path = sidecar_path(pdf)
-    if not sc_path.exists():
+    artifact = _receipt_artifact_for_row(receipt_root, row)
+    if artifact is None or not artifact.exists() or artifact.is_dir():
         return None
 
-    payload = read_sidecar(pdf) or {}
+    sc_path = sidecar_path(artifact)
+    payload = read_sidecar(artifact) if sc_path.exists() else {}
     payload.update(
         {
             "filename": row["filename"],
@@ -358,6 +358,19 @@ def _sync_receipt_sidecar(receipt_root: Path, row: dict) -> Path | None:
     )
     sc_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return sc_path
+
+
+def _receipt_artifact_for_row(receipt_root: Path, row: dict) -> Path | None:
+    """Return the concrete receipt artifact path for a DB row, if inferable."""
+    receipt_dir_rel = str(row.get("receipt_dir") or "")
+    if not receipt_dir_rel:
+        return None
+
+    artifact = receipt_root / receipt_dir_rel
+    filename = str(row.get("filename") or "")
+    if artifact.exists() and artifact.is_dir() and filename:
+        return artifact / filename
+    return artifact
 
 
 def _move_receipt_artifacts(
@@ -411,6 +424,48 @@ def _relocate_receipt_artifacts(
         current_relpath=current_relpath,
         new_relpath=str(Path(category) / filename),
     )
+
+
+def _relocate_email_receipt_artifact(
+    receipt_root: Path,
+    *,
+    current_relpath: str,
+    new_category: str,
+    filename: str,
+    raw_text: str | None,
+) -> str:
+    """Move or create an inline email artifact for an email receipt row."""
+    from intake.sidecar import ai_debug_path, ocr_debug_path, sidecar_path
+
+    new_relpath = str(Path("email") / new_category)
+    current_dir = receipt_root / current_relpath
+    current_artifact = current_dir if current_dir.suffix else current_dir / filename
+    new_artifact = receipt_root / new_relpath / filename
+
+    if current_artifact.exists() and current_artifact.resolve() != new_artifact.resolve():
+        new_artifact.parent.mkdir(parents=True, exist_ok=True)
+        if new_artifact.exists():
+            raise FileExistsError(f"destination receipt already exists: {new_artifact}")
+
+        current_sc = sidecar_path(current_artifact)
+        new_sc = sidecar_path(new_artifact)
+        current_ocr = ocr_debug_path(current_artifact)
+        new_ocr = ocr_debug_path(new_artifact)
+        current_ai = ai_debug_path(current_artifact)
+        new_ai = ai_debug_path(new_artifact)
+
+        shutil.move(str(current_artifact), str(new_artifact))
+        if current_sc.exists():
+            shutil.move(str(current_sc), str(new_sc))
+        if current_ocr.exists():
+            shutil.move(str(current_ocr), str(new_ocr))
+        if current_ai.exists():
+            shutil.move(str(current_ai), str(new_ai))
+    elif not new_artifact.exists() and raw_text:
+        new_artifact.parent.mkdir(parents=True, exist_ok=True)
+        new_artifact.write_text(raw_text, encoding="utf-8")
+
+    return new_relpath
 
 
 def _canonical_receipt_destination(
@@ -643,6 +698,34 @@ def _card_row_from_card(
         "receipt_dir": receipt_dir,
         "file_hash": file_hash,
         "raw_text": card.raw_text,
+        "processed_by": processed_by,
+    }
+
+
+def _payment_row_from_payment(
+    payment,
+    *,
+    filename: str,
+    category: str,
+    receipt_dir: str,
+    file_hash: str | None,
+    processed_by: str,
+) -> dict:
+    """Serialize a Payment into the DB/sidecar row shape."""
+    return {
+        "filename": filename,
+        "scan_date": payment.scan_date.isoformat(),
+        "payment_date": payment.payment_date.isoformat() if payment.payment_date else None,
+        "amount": payment.amount,
+        "account_name": payment.account_name,
+        "account_last4": payment.account_last4,
+        "payment_type": payment.payment_type,
+        "confirmation_number": payment.confirmation_number,
+        "payer": payment.payer,
+        "category": category,
+        "receipt_dir": receipt_dir,
+        "file_hash": file_hash,
+        "raw_text": payment.raw_text,
         "processed_by": processed_by,
     }
 
@@ -1027,17 +1110,20 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
     from intake.db import (
         get_card_by_file_hash,
         get_letter_by_file_hash,
+        get_payment_by_file_hash,
         get_receipt_by_file_hash,
         init_db,
         upsert_card,
         upsert_letter,
+        upsert_payment,
         upsert_receipt,
     )
     from intake.document_type import classify_document_type
-    from intake.extract import extract_card, extract_letter, extract_receipt
+    from intake.extract import extract_card, extract_letter, extract_payment, extract_receipt
     from intake.ocr import extract_text
     from intake.parse_card import classify_card
     from intake.parse_letter import classify_letter
+    from intake.parse_payment import classify_payment
     from intake.personal_finance import build_receipt_event
     from intake.sidecar import write_sidecar
 
@@ -1080,6 +1166,7 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
                 get_receipt_by_file_hash(conn, file_hash)
                 or get_letter_by_file_hash(conn, file_hash)
                 or get_card_by_file_hash(conn, file_hash)
+                or get_payment_by_file_hash(conn, file_hash)
             )
             if existing is not None:
                 dest = _exhaust_hash_duplicate(
@@ -1178,6 +1265,48 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
                 print(
                     f"    -> {category}/{dest.name} [card]"
                     f" occasion={card.occasion!r} model={model}{renamed}"
+                )
+                continue
+
+            if doc_type == "payment":
+                payment, model = extract_payment(
+                    pdf,
+                    raw_text,
+                    openai_api_key=settings.get("openai_api_key") or None,
+                    openai_model=settings.get("openai_model_low") or "gpt-4o-mini",
+                )
+                category = classify_payment(payment)
+                dest_dir = receipt_dir / category
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = _canonical_document_destination(
+                    dest_dir,
+                    source_path=pdf,
+                    document_date=payment.payment_date or payment.scan_date,
+                    reserved_paths=reserved_paths,
+                )
+                shutil.move(str(pdf), dest)
+                renamed = f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
+                row = _payment_row_from_payment(
+                    payment,
+                    filename=dest.name,
+                    category=category,
+                    receipt_dir=str(dest.relative_to(receipt_dir)),
+                    file_hash=file_hash,
+                    processed_by=model,
+                )
+                upsert_payment(conn, row)
+                write_sidecar(
+                    dest,
+                    {
+                        **{k: v for k, v in row.items() if k != "raw_text"},
+                        "document_type": "payment",
+                        "tier": "ok",
+                    },
+                )
+                print(
+                    f"    -> {category}/{dest.name} [payment]"
+                    f" amount={payment.amount!r} account={payment.account_name!r}"
+                    f" model={model}{renamed}"
                 )
                 continue
 
@@ -2245,7 +2374,7 @@ def _cmd_correct(args: argparse.Namespace, settings: dict) -> None:
 
     conn = init_db(db_path)
     row = conn.execute(
-        "SELECT filename, category, receipt_dir FROM receipts WHERE filename = ?",
+        "SELECT * FROM receipts WHERE filename = ?",
         (args.filename,),
     ).fetchone()
     if row is None:
@@ -2256,7 +2385,13 @@ def _cmd_correct(args: argparse.Namespace, settings: dict) -> None:
     if "category" in updates:
         current_rel = row["receipt_dir"] or ""
         if current_rel.startswith("email/"):
-            new_rel = f"email/{updates['category']}"
+            new_rel = _relocate_email_receipt_artifact(
+                receipt_root,
+                current_relpath=current_rel,
+                new_category=str(updates["category"]),
+                filename=args.filename,
+                raw_text=row["raw_text"],
+            )
         else:
             new_rel = _relocate_receipt_artifacts(
                 receipt_root,
@@ -2822,17 +2957,20 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
     from intake.db import (
         get_card_by_file_hash,
         get_letter_by_file_hash,
+        get_payment_by_file_hash,
         get_receipt_by_file_hash,
         init_db,
         upsert_card,
         upsert_letter,
+        upsert_payment,
         upsert_receipt,
     )
     from intake.document_type import classify_document_type
-    from intake.extract import extract_card, extract_letter, extract_receipt
+    from intake.extract import extract_card, extract_letter, extract_payment, extract_receipt
     from intake.ocr import extract_text
     from intake.parse_card import classify_card
     from intake.parse_letter import classify_letter
+    from intake.parse_payment import classify_payment
     from intake.personal_finance import build_receipt_event
     from intake.sidecar import write_sidecar
 
@@ -2865,6 +3003,7 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
                 get_receipt_by_file_hash(conn, file_hash)
                 or get_letter_by_file_hash(conn, file_hash)
                 or get_card_by_file_hash(conn, file_hash)
+                or get_payment_by_file_hash(conn, file_hash)
             )
             if existing is not None:
                 dest = _exhaust_hash_duplicate(
@@ -2963,6 +3102,48 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
                 print(
                     f"  [inbox] {dest.relative_to(receipt_dir)} "
                     f"[card] occasion={card.occasion!r} model={model}"
+                )
+                ok += 1
+                continue
+
+            if doc_type == "payment":
+                payment, model = extract_payment(
+                    pdf,
+                    raw_text,
+                    openai_api_key=settings.get("openai_api_key") or None,
+                    openai_model=settings.get("openai_model_low") or "gpt-4o-mini",
+                )
+                category = classify_payment(payment)
+                dest_dir = receipt_dir / category
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = _canonical_document_destination(
+                    dest_dir,
+                    source_path=pdf,
+                    document_date=payment.payment_date or payment.scan_date,
+                    reserved_paths=reserved_paths,
+                )
+                shutil.move(str(pdf), dest)
+                row = _payment_row_from_payment(
+                    payment,
+                    filename=dest.name,
+                    category=category,
+                    receipt_dir=str(dest.relative_to(receipt_dir)),
+                    file_hash=file_hash,
+                    processed_by=model,
+                )
+                upsert_payment(conn, row)
+                write_sidecar(
+                    dest,
+                    {
+                        **{k: v for k, v in row.items() if k != "raw_text"},
+                        "document_type": "payment",
+                        "tier": "ok",
+                    },
+                )
+                print(
+                    f"  [inbox] {dest.relative_to(receipt_dir)} "
+                    f"[payment] amount={payment.amount!r} account={payment.account_name!r}"
+                    f" model={model}"
                 )
                 ok += 1
                 continue

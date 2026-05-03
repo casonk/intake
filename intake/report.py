@@ -133,9 +133,10 @@ _HTML_TEMPLATE = """\
       linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
   }
   .page {
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 32px 20px 56px;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 32px clamp(12px, 1.5vw, 28px) 56px;
   }
   .hero {
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 248, 244, 0.92));
@@ -352,6 +353,7 @@ _HTML_TEMPLATE = """\
     overflow: hidden;
     background: rgba(24, 33, 47, 0.08);
     margin: 8px 0 6px;
+    max-width: min(100%, 15rem);
   }
   .bar-fill {
     height: 100%;
@@ -441,6 +443,19 @@ _HTML_TEMPLATE = """\
     border-bottom: 1px solid rgba(24, 33, 47, 0.08);
     vertical-align: top;
   }
+  .detail-table .items-cell {
+    width: clamp(12rem, 22vw, 20rem);
+    max-width: 20rem;
+  }
+  .item-summary {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
   .detail-table th {
     font-size: 12px;
     letter-spacing: 0.10em;
@@ -521,6 +536,7 @@ _HTML_TEMPLATE = """\
       <a href="#merchant-spend-over-time">Merchant Trends</a>
       <a href="#merchant-month-breakdown">Merchant Months</a>
       <a href="#recent-receipts">Recent Receipts</a>
+      <a href="audit.html">Audit</a>
     </div>
   </nav>
 
@@ -760,7 +776,7 @@ _HTML_TEMPLATE = """\
       <td>{{ row.purchaser or "—" }}</td>
       <td>{{ "···· " + row.card_last4 if row.card_last4 else "—" }}</td>
       <td>{{ row.staff_label }}</td>
-      <td>{{ row.items_label }}</td>
+      <td class="items-cell"><span class="item-summary" title="{{ row.items_full_label }}">{{ row.items_label }}</span></td>
       <td>{% if row.file_link_uri %}<a href="{{ row.file_link_uri }}">{{ row.filename }}</a>{% else %}{{ row.filename }}{% endif %}</td>
       <td>{% if row.folder_uri %}<a href="{{ row.folder_uri }}">{{ row.folder_name }}</a>{% else %}—{% endif %}</td>
       <td>{{ row.processed_by or "tesseract" }}</td>
@@ -816,9 +832,10 @@ _MERCHANT_DIRECTORY_HTML_TEMPLATE = """\
       linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
   }
   .page {
-    max-width: 1180px;
-    margin: 0 auto;
-    padding: 32px 20px 56px;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 32px clamp(12px, 1.5vw, 28px) 56px;
   }
   .hero, .panel {
     background: var(--panel);
@@ -915,6 +932,19 @@ _MERCHANT_DIRECTORY_HTML_TEMPLATE = """\
     text-align: left;
     border-bottom: 1px solid rgba(24, 33, 47, 0.08);
     vertical-align: top;
+  }
+  .items-cell {
+    width: clamp(12rem, 22vw, 20rem);
+    max-width: 20rem;
+  }
+  .item-summary {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
   }
   th {
     font-size: 12px;
@@ -1104,9 +1134,10 @@ _MERCHANT_DETAIL_HTML_TEMPLATE = """\
       linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
   }
   .page {
-    max-width: 1180px;
-    margin: 0 auto;
-    padding: 32px 20px 56px;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 32px clamp(12px, 1.5vw, 28px) 56px;
   }
   .hero, .panel {
     background: var(--panel);
@@ -1373,7 +1404,7 @@ _MERCHANT_DETAIL_HTML_TEMPLATE = """\
           <td>{{ row.purchaser or "—" }}</td>
           <td>{{ "···· " + row.card_last4 if row.card_last4 else "—" }}</td>
           <td>{{ row.staff_label }}</td>
-          <td>{{ row.items_label }}</td>
+          <td class="items-cell"><span class="item-summary" title="{{ row.items_full_label }}">{{ row.items_label }}</span></td>
           <td>{{ row.certifications_label }}</td>
           <td>{% if row.file_link_uri %}<a href="{{ row.file_link_uri }}">{{ row.filename }}</a>{% else %}{{ row.filename }}{% endif %}</td>
           <td>{% if row.folder_uri %}<a href="{{ row.folder_uri }}">{{ row.folder_name }}</a>{% else %}—{% endif %}</td>
@@ -1388,6 +1419,336 @@ _MERCHANT_DETAIL_HTML_TEMPLATE = """\
     {% endif %}
   </section>
 </main>
+</body>
+</html>
+"""
+
+_AUDIT_HTML_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intake Audit</title>
+<style>
+  :root {
+    --ink: #18212f;
+    --muted: #667085;
+    --paper: #f3efe6;
+    --panel: rgba(255, 255, 255, 0.9);
+    --line: rgba(24, 33, 47, 0.12);
+    --shadow: 0 20px 45px rgba(24, 33, 47, 0.09);
+    --teal: #0f766e;
+    --teal-soft: #d3f1ec;
+    --amber: #c77d2b;
+    --amber-soft: #f7dfc4;
+    --blue: #375a9e;
+    --blue-soft: #dce7ff;
+    --rose: #b5475d;
+    --rose-soft: #f7d9e0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 34%),
+      radial-gradient(circle at top right, rgba(199, 125, 43, 0.14), transparent 30%),
+      linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
+  }
+  .page { width: 100%; max-width: none; margin: 0; padding: 32px clamp(12px, 1.5vw, 28px) 56px; }
+  .hero {
+    background: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(248,248,244,0.92));
+    border: 1px solid rgba(24,33,47,0.08);
+    border-radius: 26px;
+    box-shadow: var(--shadow);
+    padding: 28px;
+  }
+  .eyebrow { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--teal); margin:0 0 8px; }
+  h1 { margin:0; font-size:clamp(1.8rem,4vw,3rem); letter-spacing:-0.04em; }
+  .hero p { margin:10px 0 0; color:var(--muted); line-height:1.55; }
+  .hero-links { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+  .hero-links a {
+    display:inline-flex; align-items:center; gap:8px; padding:10px 14px;
+    border-radius:999px; background:rgba(220,231,255,0.78);
+    border:1px solid rgba(55,90,158,0.18); color:var(--blue);
+    text-decoration:none; font-size:.92rem; font-weight:600;
+  }
+  .hero-links a:hover { text-decoration:underline; }
+  .filter-bar {
+    margin: 18px 0 14px;
+    padding: 18px 18px 14px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.88);
+    border: 1px solid rgba(24,33,47,0.08);
+    box-shadow: var(--shadow);
+  }
+  .filter-row { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .filter-field { display:flex; flex-direction:column; gap:4px; }
+  .filter-field--grow { flex:1; min-width:160px; }
+  .filter-field label { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+  .filter-field input,
+  .filter-field select {
+    padding:8px 10px; border-radius:10px;
+    border:1px solid rgba(24,33,47,0.16);
+    background:rgba(243,239,230,0.7);
+    font-size:.92rem; color:var(--ink);
+    font-family:inherit;
+  }
+  .filter-field input:focus,
+  .filter-field select:focus { outline:2px solid var(--teal); outline-offset:1px; }
+  .filter-field--btn { justify-content:flex-end; }
+  .filter-field--btn button {
+    padding:8px 16px; border-radius:10px; border:none;
+    background:rgba(24,33,47,0.1); color:var(--ink);
+    font-size:.92rem; font-family:inherit; cursor:pointer;
+  }
+  .filter-field--btn button:hover { background:rgba(24,33,47,0.18); }
+  .stat-bar {
+    margin-top:12px; font-size:.92rem; color:var(--muted);
+  }
+  .stat-bar strong { color:var(--ink); }
+  .table-wrap {
+    overflow-x:auto;
+    border-radius:18px;
+    box-shadow:var(--shadow);
+  }
+  .detail-table {
+    width:100%; border-collapse:collapse;
+    background:rgba(255,255,255,0.86);
+    border:1px solid rgba(24,33,47,0.08);
+    border-radius:18px; overflow:hidden;
+  }
+  .detail-table th, .detail-table td {
+    padding:10px 12px; text-align:left;
+    border-bottom:1px solid rgba(24,33,47,0.08); vertical-align:top;
+    white-space:nowrap;
+  }
+  .detail-table .items-cell {
+    width: clamp(12rem, 22vw, 20rem);
+    max-width: 20rem;
+    white-space: normal;
+  }
+  .item-summary {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+  .detail-table th {
+    font-size:11px; letter-spacing:.10em; text-transform:uppercase;
+    color:var(--muted); background:rgba(243,239,230,0.95);
+    position:sticky; top:0; z-index:2;
+  }
+  .detail-table th.sortable { cursor:pointer; user-select:none; }
+  .detail-table th.sortable:hover { color:var(--ink); }
+  .detail-table th .sort-arrow { margin-left:4px; opacity:.4; }
+  .detail-table th.sort-asc .sort-arrow::after { content:"▲"; opacity:1; }
+  .detail-table th.sort-desc .sort-arrow::after { content:"▼"; opacity:1; }
+  .detail-table tbody tr:nth-child(even) td { background:rgba(248,247,243,0.7); }
+  .detail-table tbody tr:last-child td { border-bottom:none; }
+  .detail-table tbody tr:hover td { background:rgba(220,231,255,0.3); }
+  .detail-table td.merchant { max-width:200px; overflow:hidden; text-overflow:ellipsis; }
+  a { color:var(--blue); text-decoration:none; font-weight:600; }
+  a:hover { text-decoration:underline; }
+  .badge {
+    display:inline-block; padding:2px 8px; border-radius:999px;
+    font-size:.8rem; font-weight:600;
+  }
+  .badge--ok { background:var(--teal-soft); color:var(--teal); }
+  .empty-state {
+    padding:32px; text-align:center; color:var(--muted);
+    background:rgba(255,255,255,0.72); border-radius:18px;
+    border:1px dashed rgba(24,33,47,0.16);
+  }
+  section[id], h2[id] { scroll-margin-top:80px; }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <section class="hero">
+    <p class="eyebrow">Intake Dashboard</p>
+    <h1>Receipt Audit</h1>
+    <p>Filter by date range, category, merchant, or purchaser. {{ total_count }} receipts total.</p>
+    <div class="hero-links">
+      <a href="intake-report.html">← Dashboard</a>
+    </div>
+  </section>
+
+  <div class="filter-bar">
+    <div class="filter-row">
+      <div class="filter-field">
+        <label for="f-from">From</label>
+        <input type="date" id="f-from">
+      </div>
+      <div class="filter-field">
+        <label for="f-to">To</label>
+        <input type="date" id="f-to">
+      </div>
+      <div class="filter-field">
+        <label for="f-cat">Category</label>
+        <select id="f-cat">
+          <option value="">All categories</option>
+          {% for cat in categories %}<option value="{{ cat }}">{{ cat }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="filter-field filter-field--grow">
+        <label for="f-merchant">Merchant</label>
+        <input type="text" id="f-merchant" placeholder="Search merchants…" autocomplete="off">
+      </div>
+      <div class="filter-field filter-field--grow">
+        <label for="f-purchaser">Purchaser</label>
+        <input type="text" id="f-purchaser" placeholder="Search purchasers…" autocomplete="off">
+      </div>
+      <div class="filter-field filter-field--btn">
+        <label>&nbsp;</label>
+        <button id="f-clear">Clear filters</button>
+      </div>
+    </div>
+    <div class="stat-bar">
+      <strong id="stat-count">{{ total_count }}</strong> receipt(s) &nbsp;·&nbsp;
+      total spend: <strong id="stat-total">—</strong>
+    </div>
+  </div>
+
+  <div id="audit-empty" class="empty-state" style="display:none">No receipts match the current filters.</div>
+  <div class="table-wrap" id="audit-wrap">
+    <table class="detail-table" id="audit-table">
+      <thead>
+        <tr>
+          <th class="sortable" data-col="scan_date">Date<span class="sort-arrow"></span></th>
+          <th>Merchant</th>
+          <th class="sortable" data-col="category">Category<span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="total">Total<span class="sort-arrow"></span></th>
+          <th>Purchaser</th>
+          <th>Card</th>
+          <th class="sortable" data-col="processed_by">Model<span class="sort-arrow"></span></th>
+          <th>Items</th>
+          <th>File</th>
+          <th>Reviewed</th>
+        </tr>
+      </thead>
+      <tbody id="audit-tbody"></tbody>
+    </table>
+  </div>
+
+</main>
+<script>
+(function () {
+  const R = {{ receipts_json|safe }};
+  let sortCol = 'scan_date', sortAsc = false;
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function link(href, label) {
+    return href ? `<a href="${esc(href)}">${esc(label)}</a>` : esc(label);
+  }
+
+  function fmt(rows) {
+    if (!rows.length) return '';
+    return rows.map(r => {
+      const rev = r.reviewed ? '<span class="badge badge--ok">Reviewed</span>' : '';
+      return [
+        '<tr>',
+        `<td>${esc(r.scan_date)}</td>`,
+        `<td class="merchant">${link(r.merchant_href, r.merchant_label||r.merchant||'—')}</td>`,
+        `<td>${link(r.folder_uri, r.category||'—')}</td>`,
+        `<td>${esc(r.total_display)}</td>`,
+        `<td>${esc(r.purchaser||'—')}</td>`,
+        `<td>${r.card_last4 ? '···· '+esc(r.card_last4) : '—'}</td>`,
+        `<td>${esc(r.processed_by||'tesseract')}</td>`,
+        `<td class="items-cell"><span class="item-summary" title="${esc(r.items_full_label||r.items_label||'')}">${esc(r.items_label||'—')}</span></td>`,
+        `<td>${link(r.file_link_uri, r.filename||'—')}</td>`,
+        `<td>${rev}</td>`,
+        '</tr>',
+      ].join('');
+    }).join('');
+  }
+
+  function sumTotal(rows) {
+    let t = 0, n = 0;
+    for (const r of rows) { if (r.total != null) { t += r.total; n++; } }
+    return n ? '$' + t.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '—';
+  }
+
+  function cmpVal(r, col) {
+    const v = r[col];
+    if (v == null) return sortAsc ? '￿' : '';
+    return v;
+  }
+
+  function applySort(rows) {
+    return rows.slice().sort((a, b) => {
+      const av = cmpVal(a, sortCol), bv = cmpVal(b, sortCol);
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortAsc ? cmp : -cmp;
+    });
+  }
+
+  function apply() {
+    const from = document.getElementById('f-from').value;
+    const to   = document.getElementById('f-to').value;
+    const cat  = document.getElementById('f-cat').value;
+    const merch = document.getElementById('f-merchant').value.toLowerCase();
+    const purch = document.getElementById('f-purchaser').value.toLowerCase();
+
+    let out = R.filter(r => {
+      if (from && r.scan_date < from) return false;
+      if (to   && r.scan_date > to)   return false;
+      if (cat  && !r.category.startsWith(cat)) return false;
+      if (merch && !(r.merchant||'').toLowerCase().includes(merch)) return false;
+      if (purch && !(r.purchaser||'').toLowerCase().includes(purch)) return false;
+      return true;
+    });
+
+    out = applySort(out);
+
+    document.getElementById('audit-tbody').innerHTML = fmt(out);
+    document.getElementById('stat-count').textContent = out.length;
+    document.getElementById('stat-total').textContent = sumTotal(out);
+    document.getElementById('audit-empty').style.display = out.length ? 'none' : 'block';
+    document.getElementById('audit-wrap').style.display = out.length ? '' : 'none';
+  }
+
+  ['f-from','f-to','f-cat','f-merchant','f-purchaser'].forEach(id => {
+    document.getElementById(id).addEventListener('input', apply);
+  });
+
+  document.getElementById('f-clear').addEventListener('click', () => {
+    ['f-from','f-to','f-merchant','f-purchaser'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('f-cat').value = '';
+    apply();
+  });
+
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortCol === col) { sortAsc = !sortAsc; }
+      else { sortCol = col; sortAsc = col !== 'scan_date'; }
+      document.querySelectorAll('th.sortable').forEach(t => {
+        t.classList.remove('sort-asc','sort-desc');
+      });
+      th.classList.add(sortAsc ? 'sort-asc' : 'sort-desc');
+      apply();
+    });
+  });
+
+  // Default sort indicator
+  document.querySelector('th[data-col="scan_date"]').classList.add('sort-desc');
+
+  apply();
+}());
+</script>
 </body>
 </html>
 """
@@ -1853,17 +2214,45 @@ def _decode_recent_staff(staff_json: object) -> list[dict] | None:
     return receipt_staff_to_dicts(receipt_staff_from_dicts(payload))
 
 
-def _format_item_summary(items: list[dict] | None) -> tuple[str, str]:
-    if items is None:
-        return "—", "—"
-    if not items:
-        return "0", "0"
+_ITEM_SUMMARY_PREVIEW_COUNT = 2
+_ITEM_SUMMARY_DESCRIPTION_LIMIT = 34
+_ITEM_SUMMARY_LABEL_LIMIT = 90
+_ITEM_SUMMARY_FULL_LABEL_LIMIT = 240
 
-    preview = ", ".join(item["description"] for item in items[:3] if item.get("description"))
-    if len(items) > 3:
+
+def _squash_text(value: object) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _truncate_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return value[: max_chars - 3].rstrip() + "..."
+
+
+def _format_item_summary(items: list[dict] | None) -> tuple[str, str, str]:
+    if items is None:
+        return "—", "—", "—"
+    if not items:
+        return "0", "0", "0"
+
+    descriptions = [_squash_text(item.get("description")) for item in items]
+    descriptions = [description for description in descriptions if description]
+    preview = ", ".join(
+        _truncate_text(description, _ITEM_SUMMARY_DESCRIPTION_LIMIT)
+        for description in descriptions[:_ITEM_SUMMARY_PREVIEW_COUNT]
+    )
+    if len(items) > _ITEM_SUMMARY_PREVIEW_COUNT:
         preview += ", ..."
-    label = f"{len(items)}: {preview}" if preview else str(len(items))
-    return label, label.replace("|", "/")
+    full_preview = ", ".join(descriptions)
+    label = _truncate_text(
+        f"{len(items)}: {preview}" if preview else str(len(items)), _ITEM_SUMMARY_LABEL_LIMIT
+    )
+    full_label = _truncate_text(
+        f"{len(items)}: {full_preview}" if full_preview else str(len(items)),
+        _ITEM_SUMMARY_FULL_LABEL_LIMIT,
+    )
+    return label, label.replace("|", "/"), full_label
 
 
 def _format_certification_summary(certifications: list[dict] | None) -> tuple[str, str]:
@@ -1919,7 +2308,9 @@ def _prepare_recent(
         items = _decode_recent_items(item.get("items_json"))
         item["items"] = items
         item["item_count"] = len(items) if items is not None else None
-        item["items_label"], item["items_markdown"] = _format_item_summary(items)
+        item["items_label"], item["items_markdown"], item["items_full_label"] = (
+            _format_item_summary(items)
+        )
         certifications = _decode_recent_certifications(item.get("certifications_json"))
         item["certifications"] = certifications
         item["certifications_label"], item["certifications_markdown"] = (
@@ -1963,7 +2354,7 @@ def _prepare_recent(
             base_url=filebrowser_base_url,
             root_path=filebrowser_receipt_root,
         )
-        file_link_uri = file_uri or folder_uri
+        file_link_uri = file_uri
         item["folder_name"] = folder_path.name if folder_path else "—"
         item["category_uri"] = category_uri
         item["folder_uri"] = folder_uri
@@ -1991,10 +2382,13 @@ def _bar_chart_rows(
     href_key: str | None = None,
 ) -> list[dict]:
     selected = rows[:limit] if limit is not None else rows
-    max_value = max((float(row.get(value_key) or 0) for row in selected), default=0.0)
+    values = [float(row.get(value_key) or 0) for row in selected]
+    mean_value = sum(values) / len(values) if values else 0.0
+    # Scale so a bar at the mean shows at 50%; bars at 2× mean reach 100%.
+    # This keeps small bars visible when one outlier would otherwise dwarf them.
+    scale = mean_value * 2 if mean_value > 0 else 1.0
     chart_rows: list[dict] = []
-    for row in selected:
-        value = float(row.get(value_key) or 0)
+    for row, value in zip(selected, values, strict=True):
         if kind == "currency":
             value_display = _format_currency(value)
         else:
@@ -2005,7 +2399,7 @@ def _bar_chart_rows(
                 "count": row.get("count", 0),
                 "value_display": value_display,
                 "share_display": row.get("share_display", _format_percent(0.0)),
-                "bar_width": round((value / max_value * 100) if max_value else 0.0, 1),
+                "bar_width": round(min(100.0, value / scale * 100), 1),
                 "href": row.get(href_key) if href_key else None,
             }
         )
@@ -2414,6 +2808,79 @@ def _build_report_view(
     return view
 
 
+def generate_audit_report(
+    conn: sqlite3.Connection,
+    output_dir: Path,
+    *,
+    receipt_root: Path | None = None,
+    filebrowser_base_url: str | None = _DEFAULT_FILEBROWSER_BASE_URL,
+    filebrowser_receipt_root: str = _DEFAULT_FILEBROWSER_RECEIPT_ROOT,
+) -> Path:
+    """Write reports/audit.html — filterable receipt audit page."""
+    from intake.db import query_all_receipts
+
+    raw_rows = query_all_receipts(conn)
+
+    # Reuse _prepare_recent to get merchant page links and file URIs.
+    # Build a lightweight merchant→page-href lookup from available merchant data.
+    merchant_page_lookup: dict[str, dict] = {}
+    for row in raw_rows:
+        key = _merchant_key(row.get("merchant"))
+        if key and key not in merchant_page_lookup:
+            slug = _merchant_slug(row.get("merchant") or "")
+            if slug:
+                merchant_page_lookup[key] = {
+                    "merchant_page_html": f"merchants/{slug}.html",
+                    "merchant_page_md": f"merchants/{slug}.md",
+                }
+
+    prepared = _prepare_recent(
+        raw_rows,
+        receipt_root=receipt_root,
+        filebrowser_base_url=filebrowser_base_url,
+        filebrowser_receipt_root=filebrowser_receipt_root,
+        merchant_lookup=merchant_page_lookup,
+    )
+
+    receipts_for_js: list[dict] = []
+    for r in prepared:
+        receipts_for_js.append(
+            {
+                "scan_date": r.get("scan_date") or "",
+                "merchant": r.get("merchant") or "",
+                "merchant_label": r.get("merchant_label") or "",
+                "merchant_href": r.get("merchant_href_html") or "",
+                "category": r.get("category") or "",
+                "total": r.get("total"),
+                "total_display": r.get("total_display") or "—",
+                "purchaser": r.get("purchaser") or "",
+                "card_last4": r.get("card_last4") or "",
+                "processed_by": r.get("processed_by") or "tesseract",
+                "items_label": r.get("items_label") or "—",
+                "items_full_label": r.get("items_full_label") or r.get("items_label") or "—",
+                "file_link_uri": r.get("file_link_uri") or "",
+                "folder_uri": r.get("folder_uri") or "",
+                "filename": r.get("filename") or "",
+                "reviewed": bool(r.get("reviewed_at")),
+            }
+        )
+
+    categories = sorted({r["category"] for r in receipts_for_js if r["category"]})
+
+    html_env = Environment(loader=BaseLoader(), autoescape=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audit_path = output_dir / "audit.html"
+    audit_path.write_text(
+        html_env.from_string(_AUDIT_HTML_TEMPLATE).render(
+            receipts_json=json.dumps(receipts_for_js, ensure_ascii=True),
+            categories=categories,
+            total_count=len(receipts_for_js),
+        ),
+        encoding="utf-8",
+    )
+    return audit_path
+
+
 def generate_reports(
     conn: sqlite3.Connection,
     output_dir: Path,
@@ -2510,5 +2977,13 @@ def generate_reports(
                 encoding="utf-8",
             )
             written.append(merchant_html_path)
+        audit_path = generate_audit_report(
+            conn,
+            output_dir,
+            receipt_root=receipt_root,
+            filebrowser_base_url=filebrowser_base_url,
+            filebrowser_receipt_root=filebrowser_receipt_root,
+        )
+        written.append(audit_path)
 
     return written

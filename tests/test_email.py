@@ -30,6 +30,7 @@ from intake.email import (
     _extract_receipt_filename_from_text,
     _extract_reply_updates,
     _file_message_to_processed_label,
+    _is_intake_generated_message,
     _is_intake_reply_message,
     _is_internal_intake_notification,
     _is_known_non_receipt_notice,
@@ -350,6 +351,24 @@ def test_intake_reply_message_is_detected_from_re_subject():
     assert _is_intake_reply_message(msg, {}) is True
 
 
+def test_intake_generated_reply_link_is_not_treated_as_user_reply():
+    msg = EmailMessage()
+    msg["Subject"] = "Re: [intake] Receipt processed: ac tire & service center unknown total"
+    msg["X-Portfolio-Service"] = "intake"
+    msg["X-Crew-Chief-Intent"] = "reply-link"
+    msg["In-Reply-To"] = "<reply@example.com>"
+    msg.set_content(
+        "Snowbridge receipt link requested\n"
+        "Receipt: 20260427_1121.pdf\n"
+        "Merchant: ac tire & service center\n"
+        "Total: unknown\n"
+        "Link: https://files.snowbridge.internal/files/receipt/general/20260427_1121.pdf"
+    )
+
+    assert _is_intake_generated_message(msg) is True
+    assert _is_intake_reply_message(msg, {}) is False
+
+
 def test_extract_receipt_filename_from_text_prefers_explicit_filename():
     text = """
     Receipt processed
@@ -391,6 +410,17 @@ def test_extract_reply_updates_parses_safe_structured_fields():
 
 def test_reply_requests_file_link_matches_attach_ocr_image_note():
     assert _reply_requests_file_link("Please attach the OCR and Image") is True
+
+
+def test_reply_requests_file_link_ignores_generated_link_reply_body():
+    note = (
+        "Snowbridge receipt link requested\n"
+        "Receipt: 20260427_1121.pdf\n"
+        "Merchant: ac tire & service center\n"
+        "Total: unknown\n"
+        "Link: https://files.snowbridge.internal/files/receipt/general/20260427_1121.pdf"
+    )
+    assert _reply_requests_file_link(note) is False
 
 
 def test_reply_requests_file_link_ignores_plain_correction_note():
@@ -884,6 +914,82 @@ def test_fetch_receipts_files_internal_notification_to_notify_label(db, tmp_path
     assert read_uids == [30999]
     assert moved_uids == [(30999, "intake/notify")]
     assert is_email_processed(db, uid=30999, mailbox="INBOX") is False
+
+
+def test_fetch_receipts_files_internal_reply_link_to_notify_label(db, tmp_path):
+    receipt_root = tmp_path / "receipts"
+    message = EmailMessage()
+    message["Message-ID"] = "<reply-link@example.com>"
+    message["Subject"] = "Re: [intake] Receipt processed: kroger $32.98"
+    message["From"] = "intake@example.com"
+    message["Date"] = "Fri, 01 May 2026 09:31:00 -0400"
+    message["X-Portfolio-Service"] = "intake"
+    message["X-Crew-Chief-Intent"] = "reply-link"
+    message["In-Reply-To"] = "<human-reply@example.com>"
+    message.set_content(
+        "Snowbridge receipt link requested\n"
+        "Receipt: 20260409_1707.pdf\n"
+        "Merchant: kroger\n"
+        "Total: $32.98\n"
+        "Link: https://files.snowbridge.internal/files/receipt/grocery/kroger/20260409_1707.pdf"
+    )
+    payload = message.as_bytes()
+    read_uids: list[int] = []
+    moved_uids: list[tuple[int, str]] = []
+
+    class _ReplyLinkConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [b"1"])
+
+        def uid(self, command, uid, *args):
+            assert command == "fetch"
+            assert uid == "31000"
+            return ("OK", [b"payload"])
+
+        def expunge(self):
+            return ("OK", [b"0"])
+
+    def fail_extract_attachments(_payload):
+        raise AssertionError("internal reply-link messages must not inspect attachments")
+
+    sr = SimpleNamespace(
+        load_config=lambda _path: SimpleNamespace(
+            imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None)
+        ),
+        validate_imap=lambda _config: None,
+        open_imap_connection=lambda _config: _ReplyLinkConnection(),
+        extract_fetch_payload=lambda _msg_data: payload,
+        decode_mime_header=lambda value: str(value or ""),
+        extract_attachments=fail_extract_attachments,
+        mark_message_read=lambda _conn, uid: read_uids.append(uid),
+        move_message=lambda _conn, uid, label: moved_uids.append((uid, label)),
+    )
+
+    settings = {
+        "receipt_dir": str(receipt_root),
+        "email": {
+            "shock_relay_config": "/tmp/config.local.yaml",
+            "notification_label": "intake/notify",
+        },
+    }
+
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[31000]),
+        patch("intake.email._process_reply_messages"),
+    ):
+        result = fetch_receipts(settings, db, dry_run=False, verbose=False)
+
+    assert result.skipped == 1
+    assert read_uids == [31000]
+    assert moved_uids == [(31000, "intake/notify")]
+    assert is_email_processed(db, uid=31000, mailbox="INBOX") is False
 
 
 def test_fetch_receipts_files_known_non_receipt_notice_as_ignored(db, tmp_path):

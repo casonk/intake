@@ -333,12 +333,13 @@ structured lines like `merchant: kroger`, `total: 88.05`, `purchaser: ...`,
 `card last4: 5653`, or `currency: usd` are applied automatically through the
 same audited update path.
 
-The initial processed-receipt email now also includes the Snowbridge File
-Browser link for the receipt artifact when the file resolves under the mounted
+The initial processed-receipt email now also includes Snowbridge File Browser
+links for the receipt artifact and any sidecar-adjacent OCR/JSON artifacts
+(`*.ocr.txt`, `*.intake.json`, `*.ai.json`) that exist under the mounted
 receipt root.
 
 If the reply asks for the OCR/image/file itself, intake now sends a follow-up
-Gmail reply with the Snowbridge File Browser link for that receipt artifact.
+Gmail reply with the same Snowbridge receipt, OCR, and JSON links.
 
 **Trigger personal-finance** after receipt ingestion by writing a batch JSON and
 running a downstream command:

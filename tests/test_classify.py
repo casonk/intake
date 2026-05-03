@@ -48,6 +48,13 @@ def test_spotify_is_sw_subscription():
     assert classify("Spotify USA Inc", _RULES) == "sw/subscription"
 
 
+def test_keepassium_app_store_receipt_is_sw_subscription():
+    assert (
+        classify("Apple", _RULES, "App Store KeePassium KeePass passwords In-App Purchase iPhone")
+        == "sw/subscription"
+    )
+
+
 def test_mcdonalds_is_dining_fast_food():
     assert classify("McDonald's Restaurant #36549", _RULES) == "dining/fast-food"
 
