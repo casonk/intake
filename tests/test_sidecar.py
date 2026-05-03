@@ -92,4 +92,64 @@ def test_write_debug_artifacts(tmp_pdf):
     assert payload["processed_by"] == "gpt-4o-mini"
     assert payload["tier"] == "low"
     assert payload["used_ai"] is True
+    assert payload["latest_used_ai"] is True
+    assert payload["attempt_count"] == 1
+    assert payload["attempts"][0]["model"] == "gpt-4o-mini"
+    assert payload["attempts"][0]["fidelity"] == "low"
+    assert payload["attempts"][0]["weight"] == 1
+    assert payload["models"][0]["model"] == "gpt-4o-mini"
+    assert payload["models"][0]["weight"] == 1
+
+
+def test_write_debug_artifacts_appends_ai_attempts(tmp_pdf):
+    write_debug_artifacts(
+        tmp_pdf,
+        raw_text="Store\nTOTAL 10.00",
+        processed_by="gpt-4o-mini",
+        tier="low",
+        ai_attempts=[{"model": "gpt-4o-mini", "response": {"merchant": "store"}}],
+    )
+
+    _ocr_path, ai_path = write_debug_artifacts(
+        tmp_pdf,
+        raw_text="Store\nTOTAL 12.00",
+        processed_by="gpt-4o",
+        tier="mid",
+        ai_attempts=[{"model": "gpt-4o", "response": {"merchant": "store", "total": 12.0}}],
+    )
+
+    payload = json.loads(ai_path.read_text(encoding="utf-8"))
+    assert payload["processed_by"] == "gpt-4o"
+    assert payload["tier"] == "mid"
+    assert payload["attempt_count"] == 2
+    assert payload["latest_attempt_count"] == 1
+    assert [attempt["model"] for attempt in payload["attempts"]] == ["gpt-4o-mini", "gpt-4o"]
+    by_model = {model["model"]: model for model in payload["models"]}
+    assert by_model["gpt-4o-mini"]["fidelity"] == "low"
+    assert by_model["gpt-4o-mini"]["weight"] == 1
+    assert by_model["gpt-4o"]["fidelity"] == "mid"
+    assert by_model["gpt-4o"]["weight"] == 2
+
+
+def test_write_debug_artifacts_preserves_prior_attempts_when_latest_run_uses_no_ai(tmp_pdf):
+    write_debug_artifacts(
+        tmp_pdf,
+        raw_text="Store\nTOTAL 10.00",
+        processed_by="gpt-4o-mini",
+        tier="low",
+        ai_attempts=[{"model": "gpt-4o-mini", "response": {"merchant": "store"}}],
+    )
+
+    _ocr_path, ai_path = write_debug_artifacts(
+        tmp_pdf,
+        raw_text="Store\nTOTAL 10.00",
+        processed_by="tesseract",
+        tier="ok",
+        ai_attempts=[],
+    )
+
+    payload = json.loads(ai_path.read_text(encoding="utf-8"))
+    assert payload["used_ai"] is True
+    assert payload["latest_used_ai"] is False
+    assert payload["attempt_count"] == 1
     assert payload["attempts"][0]["model"] == "gpt-4o-mini"
