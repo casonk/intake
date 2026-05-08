@@ -103,3 +103,4 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 - Manual category corrections for inline email receipts must move or materialize the Snowbridge email text artifact and sync its sidecar; changing only the DB leaves reports with folder-only links.
 - Avoid broad category keywords such as color words in cannabis rules; use explicit cannabis merchant/product terms and add known App Store/KeePass signals under software so full-text classification does not misfire.
 - Itemized receipt summaries in report tables must be capped before rendering, not just wrapped with CSS; long product names otherwise force operational tables wider than the viewport.
+- Inline email receipt sidecars must serialize structured fields such as items, certifications, and staff before JSON writes; a post-DB sidecar failure can leave the receipt row present while Gmail filing and `email_receipts` recording never happen.

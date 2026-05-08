@@ -13,6 +13,9 @@ from intake.notify import (
     format_receipt_file_link_reply_message,
     gmail_notifications_enabled,
     gmail_reply_available,
+    send_corrupt_intake_gmail_notification,
+    send_corrupt_intake_notifications,
+    send_corrupt_intake_signal_notification,
     send_processed_receipt_gmail_notification,
     send_processed_receipt_notification,
     send_processed_receipt_notifications,
@@ -549,3 +552,108 @@ def test_send_processed_receipt_gmail_notification_raises_on_sender_error(monkey
             filename="20260318_1834.pdf",
             processed_by="tesseract",
         )
+
+
+# ---------------------------------------------------------------------------
+# Corrupt-intake notifications
+# ---------------------------------------------------------------------------
+
+
+def test_send_corrupt_intake_signal_notification_sends_to_recipient(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.local.yaml"
+    config_path.write_text("signal_cli:\n  account: +15550001111\n", encoding="utf-8")
+    send_script = tmp_path / "send_message.py"
+    send_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    captured: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **_kwargs):
+        captured.append(cmd)
+        return Result()
+
+    monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
+
+    settings = {
+        "signal": {
+            "shock_relay_config": str(config_path),
+            "recipient": "+15551234567",
+        }
+    }
+
+    count = send_corrupt_intake_signal_notification(settings, ["IMG_2365.JPG"])
+    assert count == 1
+    assert len(captured) == 1
+    assert "IMG_2365.JPG" in captured[0][-1]
+    assert "corrupt" in captured[0][-1].lower() or "zero bytes" in captured[0][-1].lower()
+
+
+def test_send_corrupt_intake_signal_notification_noop_when_disabled():
+    count = send_corrupt_intake_signal_notification({}, ["IMG_2365.JPG"])
+    assert count == 0
+
+
+def test_send_corrupt_intake_gmail_notification_sends_to_recipient(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.local.yaml"
+    config_path.write_text("imap:\n  username: me@example.com\n", encoding="utf-8")
+    send_script = tmp_path / "send_email.py"
+    send_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    captured: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **_kwargs):
+        captured.append(cmd)
+        return Result()
+
+    monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
+
+    settings = {
+        "gmail": {
+            "shock_relay_config": str(config_path),
+            "recipient": "me@example.com",
+        }
+    }
+
+    count = send_corrupt_intake_gmail_notification(settings, ["IMG_2365.JPG", "IMG_2381.JPG"])
+    assert count == 1
+    assert len(captured) == 1
+    subject_arg = captured[0][captured[0].index("me@example.com") + 1]
+    assert "2 file" in subject_arg
+
+
+def test_send_corrupt_intake_gmail_notification_noop_when_disabled():
+    count = send_corrupt_intake_gmail_notification({}, ["IMG_2365.JPG"])
+    assert count == 0
+
+
+def test_send_corrupt_intake_notifications_returns_sent_and_errors(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.local.yaml"
+    config_path.write_text("signal_cli:\n  account: +15550001111\n", encoding="utf-8")
+    (tmp_path / "send_message.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr("intake.notify.subprocess.run", lambda *args, **kwargs: Result())
+
+    settings = {
+        "signal": {
+            "shock_relay_config": str(config_path),
+            "recipient": "+15551234567",
+        }
+    }
+
+    sent, errors = send_corrupt_intake_notifications(settings, ["IMG_2365.JPG"])
+    assert sent.get("signal") == 1
+    assert errors == {}

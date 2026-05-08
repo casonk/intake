@@ -43,10 +43,12 @@ from intake.email import (
     _safe_save_receipt_pdf,
     _trim_reply_note_text,
     _upsert_html_receipt,
+    _write_inline_email_receipt_artifact,
     _write_processed_email_artifact,
     fetch_receipts,
     html_to_text,
 )
+from intake.parse import ReceiptItem
 from intake.sidecar import read_sidecar
 
 # ── html_to_text ──────────────────────────────────────────────────────────────
@@ -1111,6 +1113,40 @@ def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monk
     assert row["receipt_dir"] == "email/general"
     assert sent_links == [
         "https://files.snowbridge.internal/files/receipt/email/general/email_30999_INBOX.txt"
+    ]
+
+
+def test_write_inline_email_artifact_serializes_items_in_sidecar(tmp_path):
+    receipt_root = tmp_path / "receipts"
+    artifact = _write_inline_email_receipt_artifact(
+        {"receipt_dir": str(receipt_root)},
+        category="gas-station",
+        filename="email_31485_INBOX.txt",
+        plain_text="Shell receipt",
+        row={
+            "filename": "email_31485_INBOX.txt",
+            "scan_date": "2026-05-05",
+            "merchant": "shell oil",
+            "total": 2.11,
+            "category": "gas-station",
+            "receipt_dir": "email/gas-station",
+            "processed_by": "gpt-4.1",
+            "items": [ReceiptItem("Coffee Refill", amount=1.99, quantity=1.0, unit_price=1.99)],
+            "certifications": [],
+            "staff": [],
+        },
+    )
+
+    assert artifact == receipt_root / "email" / "gas-station" / "email_31485_INBOX.txt"
+    sidecar = read_sidecar(artifact)
+    assert sidecar is not None
+    assert sidecar["items"] == [
+        {
+            "description": "Coffee Refill",
+            "amount": 1.99,
+            "quantity": 1.0,
+            "unit_price": 1.99,
+        }
     ]
 
 

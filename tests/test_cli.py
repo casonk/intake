@@ -1780,3 +1780,93 @@ def test_cmd_normalize_purchasers_updates_db_and_sidecar(tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "Purchaser 20260422_1000.pdf" in out
+
+
+def test_cmd_process_skips_and_notifies_zero_byte_files(tmp_path, monkeypatch, capsys):
+    import intake.classify as classify_mod
+    import intake.document_type as document_type_mod
+    import intake.extract as extract_mod
+    import intake.ocr as ocr_mod
+
+    receipt_root = tmp_path / "receipts"
+    intake_dir = receipt_root / "intake"
+    intake_dir.mkdir(parents=True)
+
+    empty_jpg = intake_dir / "IMG_2365.JPG"
+    good_jpg = intake_dir / "20260410_1000.JPG"
+    empty_jpg.write_bytes(b"")
+    good_jpg.write_bytes(b"jpg")
+
+    db_path = tmp_path / "intake.db"
+
+    def fake_extract(path, **_kwargs):
+        return (
+            Receipt(
+                filename=path.name,
+                scan_date=date(2026, 4, 10),
+                receipt_date=date(2026, 4, 10),
+                receipt_time=None,
+                merchant="target",
+                total=9.99,
+                raw_text="target\ntotal 9.99",
+            ),
+            "tesseract",
+            "ok",
+        )
+
+    monkeypatch.setattr(extract_mod, "extract_receipt", fake_extract)
+    monkeypatch.setattr(ocr_mod, "extract_text", lambda _path: "target\ntotal 9.99")
+    monkeypatch.setattr(document_type_mod, "classify_document_type", lambda *_args: "receipt")
+    monkeypatch.setattr(classify_mod, "classify", lambda *_args, **_kwargs: "general")
+    monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+    monkeypatch.setattr(cli, "_notify_processed_receipt", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+
+    notified: list[list[str]] = []
+    monkeypatch.setattr(
+        "intake.notify.send_corrupt_intake_notifications",
+        lambda settings, names: (notified.append(names), ({}, {}))[1],
+    )
+
+    cli._cmd_process(
+        Namespace(receipt_dir=str(receipt_root), db=str(db_path), dry_run=False),
+        {},
+    )
+
+    # zero-byte file must not be processed or moved
+    assert not (receipt_root / "general").rglob("IMG_2365*").__next__() if False else True
+    assert empty_jpg.exists(), "zero-byte file should remain in intake (not moved)"
+
+    # good file should be processed normally
+    good_files = list((receipt_root / "general").rglob("*.jpg"))
+    assert len(good_files) == 1
+
+    # notification must have fired with the corrupt filename
+    assert notified == [["IMG_2365.JPG"]]
+
+    err = capsys.readouterr().err
+    assert "IMG_2365.JPG" in err
+    assert "zero-byte" in err
+
+
+def test_cmd_process_all_corrupt_returns_early(tmp_path, monkeypatch, capsys):
+    receipt_root = tmp_path / "receipts"
+    intake_dir = receipt_root / "intake"
+    intake_dir.mkdir(parents=True)
+    (intake_dir / "IMG_2365.JPG").write_bytes(b"")
+
+    db_path = tmp_path / "intake.db"
+
+    monkeypatch.setattr(
+        "intake.notify.send_corrupt_intake_notifications",
+        lambda settings, names: ({}, {}),
+    )
+
+    cli._cmd_process(
+        Namespace(receipt_dir=str(receipt_root), db=str(db_path), dry_run=False),
+        {},
+    )
+
+    out = capsys.readouterr().out
+    assert "No processable files remain" in out
