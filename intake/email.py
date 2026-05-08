@@ -350,18 +350,25 @@ def fetch_receipts(
                                 print(f"    skip (no receipt content matched): {subject!r}")
                             result.skipped += 1
                             continue
-                        archived_email = _write_processed_email_artifact(
-                            settings,
-                            uid=uid,
-                            mailbox=mailbox,
-                            message_id=message_id,
-                            subject=subject,
-                            sender=sender,
-                            received_at=date_str,
-                            payload=payload,
-                            attachment_count=saved_count,
-                            inline_processed=inline_processed,
-                        )
+                        archived_email = None
+                        try:
+                            archived_email = _write_processed_email_artifact(
+                                settings,
+                                uid=uid,
+                                mailbox=mailbox,
+                                message_id=message_id,
+                                subject=subject,
+                                sender=sender,
+                                received_at=date_str,
+                                payload=payload,
+                                attachment_count=saved_count,
+                                inline_processed=inline_processed,
+                            )
+                        except Exception as archive_exc:
+                            if verbose:
+                                print(
+                                    f"    WARNING: could not archive email uid={uid}: {archive_exc}"
+                                )
                         if verbose and archived_email is not None:
                             try:
                                 archived_label = archived_email.relative_to(receipt_dir)
@@ -1732,17 +1739,24 @@ def _write_inline_email_receipt_artifact(
         return None
 
     try:
+        from intake.certification import receipt_certifications_to_dicts  # noqa: PLC0415
+        from intake.parse import receipt_items_to_dicts  # noqa: PLC0415
         from intake.sidecar import write_sidecar  # noqa: PLC0415
+        from intake.staff import receipt_staff_to_dicts  # noqa: PLC0415
 
         receipt_root = Path(receipt_root_value).expanduser()
         artifact_dir = receipt_root / "email" / category
         artifact_dir.mkdir(parents=True, exist_ok=True)
         artifact = artifact_dir / filename
         artifact.write_text(plain_text, encoding="utf-8")
+        payload = {k: v for k, v in row.items() if k != "raw_text"}
+        payload["items"] = receipt_items_to_dicts(payload.get("items"))
+        payload["certifications"] = receipt_certifications_to_dicts(payload.get("certifications"))
+        payload["staff"] = receipt_staff_to_dicts(payload.get("staff"))
         write_sidecar(
             artifact,
             {
-                **{k: v for k, v in row.items() if k != "raw_text"},
+                **payload,
                 "document_type": "email",
                 "tier": "email",
             },

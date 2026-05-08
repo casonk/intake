@@ -1140,6 +1140,25 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
         print("No files found in intake.")
         return
 
+    corrupt_files = [p for p in receipt_files if p.stat().st_size == 0]
+    if corrupt_files:
+        receipt_files = [p for p in receipt_files if p not in corrupt_files]
+        names = [p.name for p in corrupt_files]
+        for name in names:
+            print(f"  WARNING: skipping zero-byte file (corrupt upload): {name}", file=sys.stderr)
+        from intake.notify import send_corrupt_intake_notifications
+
+        sent, errors = send_corrupt_intake_notifications(settings, names)
+        for channel, error in errors.items():
+            print(
+                f"  [{channel}] WARNING: corrupt-file notification failed: {error}", file=sys.stderr
+            )
+        for channel, count in sent.items():
+            print(f"  [{channel}] notified {count} recipient(s) about corrupt file(s)")
+        if not receipt_files:
+            print("No processable files remain after removing corrupt uploads.")
+            return
+
     rules = load_rules()
     merchant_aliases = load_merchant_aliases()
     conn = init_db(db_path)

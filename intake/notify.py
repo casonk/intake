@@ -509,3 +509,128 @@ def send_processed_receipt_notifications(
             sent[channel] = count
 
     return sent, errors
+
+
+def _format_corrupt_intake_message(filenames: list[str]) -> str:
+    lines = ["Corrupt intake file(s) detected (zero bytes — upload may have failed)"]
+    for name in filenames:
+        lines.append(f"  - {name}")
+    lines.append("Re-upload and run `intake process` again.")
+    return "\n".join(lines)
+
+
+def send_corrupt_intake_signal_notification(settings: dict, filenames: list[str]) -> int:
+    """Send a Signal alert for zero-byte files found in the intake folder."""
+    if not signal_notifications_enabled(settings):
+        return 0
+
+    cfg = _signal_config(settings)
+    config_path = Path(str(cfg["shock_relay_config"])).expanduser()
+    send_script = config_path.with_name("send_message.py")
+    if not config_path.exists():
+        raise RuntimeError(f"Signal config not found: {config_path}")
+
+    message = _signal_message_with_metadata(_format_corrupt_intake_message(filenames))
+    sent = 0
+
+    if _signal_note_to_self(settings):
+        account, bus_name = _signal_cli_fields(config_path)
+        cmd = ["signal-cli", "-a", account]
+        if bus_name:
+            cmd.extend(["--bus-name", bus_name])
+        cmd.extend(["send", "--note-to-self", "-m", message])
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            error = (result.stderr or result.stdout or "").strip()
+            detail = f": {error}" if error else ""
+            raise RuntimeError(f"Signal note-to-self notification failed{detail}")
+        sent += 1
+
+    if _signal_recipients(settings) and not send_script.exists():
+        raise RuntimeError(f"Signal sender script not found: {send_script}")
+    for recipient in _signal_recipients(settings):
+        cmd = [
+            sys.executable,
+            str(send_script),
+            "--meta",
+            _SIGNAL_SERVICE_META,
+            "--meta",
+            _SIGNAL_INTENT_META,
+            "--config",
+            str(config_path),
+            recipient,
+            message,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            error = (result.stderr or result.stdout or "").strip()
+            detail = f": {error}" if error else ""
+            raise RuntimeError(f"Signal notification failed for {recipient}{detail}")
+        sent += 1
+
+    return sent
+
+
+def send_corrupt_intake_gmail_notification(settings: dict, filenames: list[str]) -> int:
+    """Send a Gmail alert for zero-byte files found in the intake folder."""
+    if not gmail_notifications_enabled(settings):
+        return 0
+
+    config_path = Path(_gmail_config_path(settings)).expanduser()
+    send_script = config_path.with_name("send_email.py")
+    if not config_path.exists():
+        raise RuntimeError(f"Gmail config not found: {config_path}")
+    if not send_script.exists():
+        raise RuntimeError(f"Gmail sender script not found: {send_script}")
+
+    cfg = _gmail_config(settings)
+    subject_prefix = str(cfg.get("subject_prefix", ""))
+    count_label = f"{len(filenames)} file" + ("s" if len(filenames) != 1 else "")
+    subject = f"{subject_prefix}Corrupt intake file(s): {count_label} need re-upload"
+    message = _format_corrupt_intake_message(filenames)
+
+    sent = 0
+    for recipient in _gmail_recipients(settings):
+        cmd = [
+            sys.executable,
+            str(send_script),
+            "--header",
+            _PORTFOLIO_SERVICE_HEADER,
+            "--header",
+            _CREW_CHIEF_INTENT_HEADER,
+            recipient,
+            subject,
+            message,
+            "--config",
+            str(config_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            error = (result.stderr or result.stdout or "").strip()
+            detail = f": {error}" if error else ""
+            raise RuntimeError(f"Gmail notification failed for {recipient}{detail}")
+        sent += 1
+
+    return sent
+
+
+def send_corrupt_intake_notifications(
+    settings: dict, filenames: list[str]
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Send best-effort corrupt-file alerts across all configured channels."""
+    sent: dict[str, int] = {}
+    errors: dict[str, str] = {}
+
+    for channel, sender in (
+        ("signal", send_corrupt_intake_signal_notification),
+        ("gmail", send_corrupt_intake_gmail_notification),
+    ):
+        try:
+            count = sender(settings, filenames)
+        except Exception as exc:  # noqa: BLE001
+            errors[channel] = str(exc)
+            continue
+        if count:
+            sent[channel] = count
+
+    return sent, errors
