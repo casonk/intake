@@ -1105,6 +1105,27 @@ def _skip_sidecar(sc: dict, settings: dict, pdf_path: Path | None = None) -> boo
     return False
 
 
+def _is_unreadable_receipt_image(path: Path) -> bool:
+    """Return True when *path* is an image receipt that Pillow cannot decode.
+
+    Image.open() only reads the file header and succeeds even for truncated
+    images (e.g. incomplete Snowbridge uploads). img.load() forces a full pixel
+    decode and raises for truncated files.
+    """
+    from intake.media import is_image_receipt
+
+    if not is_image_receipt(path):
+        return False
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            img.load()
+        return False
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
     from intake.classify import classify, load_merchant_aliases, load_rules
     from intake.db import (
@@ -1140,12 +1161,15 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
         print("No files found in intake.")
         return
 
-    corrupt_files = [p for p in receipt_files if p.stat().st_size == 0]
+    corrupt_files = [
+        p for p in receipt_files if p.stat().st_size == 0 or _is_unreadable_receipt_image(p)
+    ]
     if corrupt_files:
         receipt_files = [p for p in receipt_files if p not in corrupt_files]
         names = [p.name for p in corrupt_files]
-        for name in names:
-            print(f"  WARNING: skipping zero-byte file (corrupt upload): {name}", file=sys.stderr)
+        for p in corrupt_files:
+            reason = "zero-byte" if p.stat().st_size == 0 else "unreadable"
+            print(f"  WARNING: skipping {reason} file (corrupt upload): {p.name}", file=sys.stderr)
         from intake.notify import send_corrupt_intake_notifications
 
         sent, errors = send_corrupt_intake_notifications(settings, names)
@@ -2447,6 +2471,12 @@ def _cmd_correct(args: argparse.Namespace, settings: dict) -> None:
         print(f"  note: {args.note}")
     if sc_path is not None:
         print(f"  sidecar: {sc_path}")
+    _trigger_personal_finance(
+        settings,
+        [_receipt_event_from_row(updated_row, tier="manual-correct")],
+        trigger="correct",
+        prefix="  ",
+    )
 
 
 def _cmd_history(args: argparse.Namespace, settings: dict) -> None:
@@ -2966,11 +2996,18 @@ def _cmd_email_prune_nonreceipts(
         print(f"\nPruned {removed} non-receipt email row(s).")
 
 
-def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
+def _process_inbox(
+    settings: dict,
+    db_path: Path,
+    notified_corrupt: set[str] | None = None,
+) -> tuple[int, int]:
     """Process all supported files currently in the intake inbox folder.
 
     Returns (ok_count, error_count).  Mirrors _cmd_process but is callable
     from the daemon loop without requiring argparse Namespace objects.
+    *notified_corrupt* is a caller-owned set of filenames already notified;
+    corrupt-file alerts are skipped for names already in it and new names are
+    added so repeated daemon cycles do not re-send the same alert.
     """
     from intake.classify import classify, load_merchant_aliases, load_rules
     from intake.db import (
@@ -3000,6 +3037,33 @@ def _process_inbox(settings: dict, db_path: Path) -> tuple[int, int]:
     pdfs = _intake_receipt_files(intake_dir) if intake_dir.exists() else []
     if not pdfs:
         return 0, 0
+
+    corrupt = [p for p in pdfs if p.stat().st_size == 0 or _is_unreadable_receipt_image(p)]
+    if corrupt:
+        pdfs = [p for p in pdfs if p not in corrupt]
+        new_corrupt = [p for p in corrupt if p.name not in (notified_corrupt or set())]
+        for p in corrupt:
+            reason = "zero-byte" if p.stat().st_size == 0 else "unreadable"
+            print(
+                f"  [inbox] WARNING: skipping {reason} file (corrupt upload): {p.name}",
+                file=sys.stderr,
+            )
+        if new_corrupt:
+            from intake.notify import send_corrupt_intake_notifications
+
+            names = [p.name for p in new_corrupt]
+            sent, notify_errors = send_corrupt_intake_notifications(settings, names)
+            for channel, error in notify_errors.items():
+                print(
+                    f"  [{channel}] WARNING: corrupt-file notification failed: {error}",
+                    file=sys.stderr,
+                )
+            for channel, count in sent.items():
+                print(f"  [{channel}] notified {count} recipient(s) about corrupt file(s)")
+            if notified_corrupt is not None:
+                notified_corrupt.update(p.name for p in new_corrupt)
+        if not pdfs:
+            return 0, 0
 
     rules = load_rules()
     merchant_aliases = load_merchant_aliases()
@@ -3251,6 +3315,7 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
     db_conn = init_db(db_path)
 
     stop = False
+    notified_corrupt: set[str] = set()
 
     def _handle_signal(signum, frame):  # noqa: ANN001
         nonlocal stop
@@ -3283,7 +3348,7 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
             inbox_pdfs = len(_intake_receipt_files(receipt_dir / "intake"))
             if inbox_pdfs:
                 print(f"[inbox] {inbox_pdfs} receipt file(s) found — processing…", flush=True)
-                ok, err = _process_inbox(settings, db_path)
+                ok, err = _process_inbox(settings, db_path, notified_corrupt=notified_corrupt)
                 print(f"[inbox] done: {ok} processed, {err} error(s)", flush=True)
             else:
                 print("[inbox] nothing new", flush=True)
@@ -3300,7 +3365,9 @@ def _cmd_daemon(args: argparse.Namespace, settings: dict) -> None:
                     )
                     # Process any PDFs saved from email attachments
                     if result.attachments_saved:
-                        ok, err = _process_inbox(settings, db_path)
+                        ok, err = _process_inbox(
+                            settings, db_path, notified_corrupt=notified_corrupt
+                        )
                         print(
                             f"[inbox] post-email: {ok} processed, {err} error(s)",
                             flush=True,

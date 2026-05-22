@@ -129,6 +129,10 @@ keywords = ["trail-outfitters", "base-camp-supply"]
 label    = "Ski & Mountain Resorts"
 keywords = ["summit-ski", "alpine-resort"]
 
+[categories.outdoor.park]
+label    = "Parks & Public Lands"
+keywords = ["national park", "nps.gov", "badlands national park", "yellowstone national park lodges", "bridge bay campground", "xanterra"]
+
 [categories.finance]
 label    = "Finance & Transfers"
 keywords = []

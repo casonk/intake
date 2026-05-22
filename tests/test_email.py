@@ -25,10 +25,15 @@ from intake.email import (
     _configured_receipt_sender_hints,
     _email_was_handled,
     _extract_credit_card_payment_email,
+    _extract_irs_payment_email,
+    _extract_nelnet_billing_email,
     _extract_paypal_receipt_email,
     _extract_progressive_payment_email,
     _extract_receipt_filename_from_text,
     _extract_reply_updates,
+    _extract_venmo_payment_email,
+    _extract_wise_payment_email,
+    _extract_xanterra_reservation_email,
     _file_message_to_processed_label,
     _is_intake_generated_message,
     _is_intake_reply_message,
@@ -147,6 +152,26 @@ def test_looks_like_receipt_false_for_quoted_intake_notification():
         (
             "We've received your payment",
             "Thanks for your payment\nPayment amount:\n$69.69\nPosted date:\nApril 16, 2026",
+        ),
+        (
+            "You paid Mirjam Zinner $20.00",
+            "Hi Cason,\nYou paid Mirjam Zinner $20.00\nFor: dinner",
+        ),
+        (
+            "Mirjam Zinner paid you $15.00",
+            "Hi Cason,\nMirjam Zinner paid you $15.00",
+        ),
+        (
+            "Alex charged you $50.00",
+            "Hi Cason,\nAlex charged you $50.00",
+        ),
+        (
+            "Money added to your account",
+            "Hello Cason,\nYou added 123.45 USD to your account.",
+        ),
+        (
+            "Your Reservation Confirmation",
+            "Yellowstone National Park Lodges\nReservation Total $43.88",
         ),
     ],
 )
@@ -294,9 +319,343 @@ def test_extract_paypal_receipt_email_transaction_receipt():
     }
 
 
+def test_extract_venmo_payment_email_you_paid():
+    body = """
+    You paid Joe Smith $25.00
+
+    Note: dinner
+
+    May 10, 2026
+
+    View on Venmo
+    """
+    parsed = _extract_venmo_payment_email(
+        "You paid Joe Smith $25.00",
+        "Venmo venmo@venmo.com",
+        body,
+    )
+    assert parsed == {
+        "merchant": "Joe Smith",
+        "total": 25.00,
+        "receipt_date": date(2026, 5, 10),
+        "purchaser": None,
+        "card_last4": None,
+        "category": None,
+    }
+
+
+def test_extract_venmo_payment_email_paid_you():
+    body = """
+    Jane Doe paid you $50.00
+
+    Note: rent split
+
+    May 9, 2026
+
+    View on Venmo
+    """
+    parsed = _extract_venmo_payment_email(
+        "Jane Doe paid you $50.00",
+        "Venmo venmo@venmo.com",
+        body,
+    )
+    assert parsed == {
+        "merchant": "Jane Doe",
+        "total": 50.00,
+        "receipt_date": date(2026, 5, 9),
+        "purchaser": None,
+        "card_last4": None,
+        "category": None,
+    }
+
+
+def test_extract_venmo_payment_email_charged_you():
+    body = """
+    Alex Kim charged you $15.00
+
+    Note: pizza
+
+    May 8, 2026
+
+    View on Venmo
+    """
+    parsed = _extract_venmo_payment_email(
+        "Alex Kim charged you $15.00",
+        "Venmo venmo@venmo.com",
+        body,
+    )
+    assert parsed == {
+        "merchant": "Alex Kim",
+        "total": 15.00,
+        "receipt_date": date(2026, 5, 8),
+        "purchaser": None,
+        "card_last4": None,
+        "category": None,
+    }
+
+
+def test_extract_venmo_payment_email_wrong_sender_returns_none():
+    parsed = _extract_venmo_payment_email(
+        "You paid Joe Smith $25.00",
+        "Scammer scammer@notvenmo.com",
+        "You paid Joe Smith $25.00\nMay 10, 2026",
+    )
+    assert parsed is None
+
+
+def test_extract_wise_payment_email_money_added():
+    body = """
+    Hello Cason Andrew,
+
+    You added 123.45 USD to your account.
+
+    And it's ready to be used.
+    """
+    parsed = _extract_wise_payment_email(
+        "Money added to your account",
+        "Wise <noreply@wise.com>",
+        body,
+    )
+    assert parsed == {
+        "merchant": "Wise",
+        "total": 123.45,
+        "receipt_date": None,
+        "purchaser": None,
+        "card_last4": None,
+        "category": "finance",
+    }
+
+
+def test_extract_wise_payment_email_wrong_sender_returns_none():
+    parsed = _extract_wise_payment_email(
+        "Money added to your account",
+        "Wise <noreply@notwise.example>",
+        "You added 123.45 USD to your account.",
+    )
+    assert parsed is None
+
+
+def test_extract_xanterra_reservation_email_confirmation():
+    body = """
+    Welcome, Cason Konzer
+
+    Yellowstone National Park Lodges
+    Bridge Bay Campground
+    Arriving Sunday, May 24, 2026
+    Check-In Sunday 5/24/2026 after 1:00 p.m.
+    Check-Out Monday 5/25/2026 by 11:00 a.m.
+    Nightly Rate $38.00
+    Taxes/Fees $5.88
+    Reservation Total $43.88
+    Deposit Required $43.88
+    Deposit Paid By American Express Card
+    """
+    parsed = _extract_xanterra_reservation_email(
+        "Your Reservation Confirmation",
+        "Xanterra Reservations <Reserve-NoReply@xanterra.com>",
+        body,
+    )
+    assert parsed == {
+        "merchant": "Yellowstone National Park Lodges",
+        "total": 43.88,
+        "receipt_date": None,
+        "purchaser": "cason konzer",
+        "card_last4": None,
+        "category": "outdoor/park",
+        "processed_by": "email-reservation",
+        "items": [
+            {
+                "description": "Bridge Bay Campground lodging",
+                "amount": 38.0,
+                "quantity": None,
+                "unit_price": None,
+            },
+            {
+                "description": "Taxes/Fees",
+                "amount": 5.88,
+                "quantity": None,
+                "unit_price": None,
+            },
+        ],
+    }
+
+
+def test_extract_xanterra_reservation_email_wrong_sender_returns_none():
+    parsed = _extract_xanterra_reservation_email(
+        "Your Reservation Confirmation",
+        "Reservations <reserve@example.com>",
+        "Yellowstone National Park Lodges\nReservation Total $43.88",
+    )
+    assert parsed is None
+
+
+def test_extract_irs_payment_email_confirmation():
+    body = """
+CONFIRMATION OF PAYMENT TRANSACTION
+
+You've successfully submitted your payment(s).
+
+Total Amount:
+$108.10
+
+Payment Amount:
+$108.10
+
+Date:
+May 12, 2026
+
+Tax Year & Type:
+2025 Income Tax
+    """
+    parsed = _extract_irs_payment_email(
+        "IRS Account Confirmation of Scheduled Transaction",
+        "Internal Revenue Service <DoNotReply@account.irs.gov>",
+        body,
+    )
+    assert parsed == {
+        "merchant": "IRS",
+        "total": 108.10,
+        "receipt_date": date(2026, 5, 12),
+        "purchaser": None,
+        "card_last4": None,
+        "category": None,
+    }
+
+
+def test_extract_irs_payment_email_generic_notification_returns_none():
+    body = """
+Internal Revenue Service
+You Have a New Notification in Your Online Account
+Dear Taxpayer,
+Sign in to your account to view your notification.
+    """
+    parsed = _extract_irs_payment_email(
+        "Notification from the IRS",
+        "Internal Revenue Service <DoNotReply@account.irs.gov>",
+        body,
+    )
+    assert parsed is None
+
+
+def test_extract_irs_payment_email_wrong_sender_returns_none():
+    parsed = _extract_irs_payment_email(
+        "IRS Account Confirmation of Scheduled Transaction",
+        "scammer@notirs.com",
+        "You've successfully submitted your payment(s).\nTotal Amount:\n$100.00\nDate:\nMay 12, 2026",
+    )
+    assert parsed is None
+
+
+def test_extract_nelnet_billing_email_statement():
+    body = """
+CASON
+Account:\xa0EXXXXX6972
+Due Date:\xa06/1/2026
+Amount Due:\xa0$0.00
+Your Nelnet monthly billing statement is now available.
+This email was sent to: CASONKONZER@GMAIL.COM
+    """
+    parsed = _extract_nelnet_billing_email(
+        "Your student loan billing statement is now available",
+        "Nelnet <nelnetnoreply@nelnet.studentaid.gov>",
+        body,
+    )
+    assert parsed == {
+        "merchant": "Nelnet",
+        "total": 0.00,
+        "receipt_date": date(2026, 6, 1),
+        "purchaser": "cason konzer",
+        "card_last4": None,
+        "category": None,
+    }
+
+
+def test_extract_nelnet_billing_email_wrong_sender_returns_none():
+    parsed = _extract_nelnet_billing_email(
+        "Your student loan billing statement is now available",
+        "scammer@notnel.net",
+        "Amount Due:\xa0$0.00\nDue Date:\xa06/1/2026",
+    )
+    assert parsed is None
+
+
+def test_is_known_non_receipt_notice_irs_generic():
+    body = """
+Internal Revenue Service
+You Have a New Notification in Your Online Account
+Dear Taxpayer,
+Sign in to your account to view your notification.
+    """
+    from intake.email import _is_known_non_receipt_notice
+
+    assert (
+        _is_known_non_receipt_notice(
+            "Notification from the IRS",
+            "Internal Revenue Service <DoNotReply@account.irs.gov>",
+            body,
+        )
+        is True
+    )
+
+
+def test_is_known_non_receipt_notice_irs_payment_not_ignored():
+    body = """
+CONFIRMATION OF PAYMENT TRANSACTION
+You've successfully submitted your payment(s).
+Total Amount:
+$108.10
+Date:
+May 12, 2026
+    """
+    from intake.email import _is_known_non_receipt_notice
+
+    assert (
+        _is_known_non_receipt_notice(
+            "IRS Account Confirmation of Scheduled Transaction",
+            "Internal Revenue Service <DoNotReply@account.irs.gov>",
+            body,
+        )
+        is False
+    )
+
+
+def test_is_known_non_receipt_notice_venmo_transaction_history():
+    from intake.email import _is_known_non_receipt_notice
+
+    assert (
+        _is_known_non_receipt_notice(
+            "Your April 2026 transaction history",
+            "Venmo <venmo@venmo.com>",
+            "Here is a summary of your Venmo transaction history for April 2026.",
+        )
+        is True
+    )
+
+
+def test_is_known_non_receipt_notice_venmo_payment_not_ignored():
+    from intake.email import _is_known_non_receipt_notice
+
+    assert (
+        _is_known_non_receipt_notice(
+            "You paid John Doe $25.00",
+            "Venmo <venmo@venmo.com>",
+            "You paid John Doe $25.00",
+        )
+        is False
+    )
+
+
 def test_configured_receipt_sender_hints_include_paypal_default():
     hints = _configured_receipt_sender_hints({"receipt_senders": ["merchant@example.com"]})
-    assert hints == ["merchant@example.com", "service@paypal.com"]
+    assert hints == [
+        "merchant@example.com",
+        "service@paypal.com",
+        "venmo@venmo.com",
+        "account.irs.gov",
+        "nelnet.studentaid.gov",
+        "noreply@wise.com",
+        "reserve-noreply@xanterra.com",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1114,6 +1473,76 @@ def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monk
     assert sent_links == [
         "https://files.snowbridge.internal/files/receipt/email/general/email_30999_INBOX.txt"
     ]
+
+
+def test_upsert_html_receipt_handles_xanterra_reservation(db, tmp_path, monkeypatch):
+    import intake.classify as classify_mod
+
+    receipt_root = tmp_path / "receipts"
+    captured_events = []
+
+    monkeypatch.setattr(
+        classify_mod,
+        "load_rules",
+        lambda: {"outdoor": {"park": {"label": "Parks & Public Lands", "keywords": []}}},
+    )
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+    monkeypatch.setattr(
+        "intake.notify.send_processed_receipt_notifications", lambda *a, **k: ({}, {})
+    )
+    monkeypatch.setattr(
+        "intake.personal_finance.trigger_personal_finance",
+        lambda _settings, events, *, trigger: captured_events.append((trigger, events)),
+    )
+
+    _upsert_html_receipt(
+        db,
+        31936,
+        "INBOX",
+        "Your Reservation Confirmation",
+        "Xanterra Reservations <Reserve-NoReply@xanterra.com>",
+        "Wed, 20 May 2026 19:01:20 -0600",
+        """
+        Welcome, Cason Konzer
+        Yellowstone National Park Lodges
+        Bridge Bay Campground
+        Nightly Rate $38.00
+        Taxes/Fees $5.88
+        Reservation Total $43.88
+        Deposit Required $43.88
+        """,
+        {"receipt_dir": str(receipt_root)},
+    )
+
+    row = get_receipt(db, "email_31936_INBOX.txt")
+    artifact = receipt_root / "email" / "outdoor" / "park" / "email_31936_INBOX.txt"
+    sidecar = read_sidecar(artifact)
+
+    assert row is not None
+    assert row["scan_date"] == "2026-05-20"
+    assert row["merchant"] == "yellowstone national park lodges"
+    assert row["total"] == 43.88
+    assert row["category"] == "outdoor/park"
+    assert row["receipt_dir"] == "email/outdoor/park"
+    assert row["processed_by"] == "email-reservation"
+    assert row["purchaser"] == "cason konzer"
+    assert sidecar is not None
+    assert sidecar["items"] == [
+        {
+            "description": "Bridge Bay Campground lodging",
+            "amount": 38.0,
+            "quantity": None,
+            "unit_price": None,
+        },
+        {
+            "description": "Taxes/Fees",
+            "amount": 5.88,
+            "quantity": None,
+            "unit_price": None,
+        },
+    ]
+    assert captured_events[0][0] == "email"
+    assert captured_events[0][1][0]["scan_date"] == "2026-05-20"
 
 
 def test_write_inline_email_artifact_serializes_items_in_sidecar(tmp_path):

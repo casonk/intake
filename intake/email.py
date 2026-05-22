@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import sys
 import time
+from contextlib import suppress
 from datetime import UTC, date, datetime
 from email import message_from_bytes
 from email.policy import default as default_policy
@@ -29,7 +30,14 @@ from intake.db import (
 from intake.naming import allocate_canonical_path
 from intake.purchaser import normalize_purchaser
 
-_DEFAULT_RECEIPT_SENDER_HINTS = ("service@paypal.com",)
+_DEFAULT_RECEIPT_SENDER_HINTS = (
+    "service@paypal.com",
+    "venmo@venmo.com",
+    "account.irs.gov",
+    "nelnet.studentaid.gov",
+    "noreply@wise.com",
+    "reserve-noreply@xanterra.com",
+)
 _DEFAULT_REPLY_MAILBOXES = (
     "[Gmail]/All Mail",
     "[GoogleMail]/All Mail",
@@ -181,6 +189,7 @@ def fetch_receipts(
                 "your payment of",
                 "your scheduled payment",
                 "policy renewal reminder",
+                "reservation confirmation",
             ]
         )
     )
@@ -666,7 +675,15 @@ _PAYMENT_EMAIL_PATTERNS = re.compile(
     r"payment\s+post\s+date|"
     r"scheduled\s+date|"
     r"posted\s+date|"
-    r"payment\s+of\s+\$"
+    r"payment\s+of\s+\$|"
+    r"you\s+paid\s+\$|"
+    r"you\s+paid\s+\w+|"  # Venmo: "You paid Name $N" (name precedes $)
+    r"paid\s+you\s+\$|"
+    r"\w+\s+paid\s+you\s+\$|"  # Venmo: "Name paid you $N"
+    r"charged\s+you\s+\$|"
+    r"\w+\s+charged\s+you\s+\$|"  # Venmo: "Name charged you $N"
+    r"money\s+added\s+to\s+your\s+account|"
+    r"you\s+added\s+\d+(?:\.\d{2})?\s+[A-Z]{3}\s+to\s+your\s+account"
     r")\b",
     re.IGNORECASE,
 )
@@ -724,6 +741,31 @@ _DISCOVER_SENDER_HINT = "discover@services.discover.com"
 _PROGRESSIVE_SENDER_HINT = "customerservice@e.progressive.com"
 _PAYPAL_SENDER_HINT = "service@paypal.com"
 _PAYPAL_SUBJECT_AMOUNT_RE = re.compile(r":\s*\$?\s*(\d+(?:\.\d{2})?)\s+[A-Z]{3}\b")
+_VENMO_SENDER_HINT = "venmo@venmo.com"
+_VENMO_YOU_PAID_RE = re.compile(
+    r"^you\s+paid\s+(.+?)\s+\$\s*(\d+(?:\.\d{2})?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_VENMO_PAID_YOU_RE = re.compile(
+    r"^(.+?)\s+paid\s+you\s+\$\s*(\d+(?:\.\d{2})?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_VENMO_CHARGED_YOU_RE = re.compile(
+    r"^(.+?)\s+charged\s+you\s+\$\s*(\d+(?:\.\d{2})?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_IRS_SENDER_HINT = "account.irs.gov"
+_NELNET_SENDER_HINT = "nelnet.studentaid.gov"
+_NELNET_MDY_DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
+_WISE_SENDER_HINT = "noreply@wise.com"
+_WISE_MONEY_ADDED_RE = re.compile(
+    r"\byou\s+added\s+(\d+(?:\.\d{2})?)\s+([A-Z]{3})\s+to\s+your\s+account\b",
+    re.IGNORECASE,
+)
+_XANTERRA_SENDER_HINT = "xanterra.com"
+_XANTERRA_WELCOME_RE = re.compile(
+    r"(?im)^\s*Welcome,\s*([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z]+){1,3})\s*$"
+)
 _PAYPAL_YOU_PAID_RE = re.compile(
     r"\byou paid\s+\$?\s*(\d+(?:\.\d{2})?)\s+[A-Z]{3}\s+to\s+(.+)$",
     re.IGNORECASE | re.MULTILINE,
@@ -813,7 +855,12 @@ def _is_known_non_receipt_notice(subject: str, sender: str, plain_text: str) -> 
         or _CARD_SCHEDULED_NOTICE_RE.search(combined)
     ):
         return bool(_CARD_SCHEDULED_NOTICE_RE.search(combined))
-    return False
+    if _IRS_SENDER_HINT in sender_lower and not re.search(r"\$\s*\d+", combined):
+        return True
+    return bool(
+        _VENMO_SENDER_HINT in sender_lower
+        and re.search(r"transaction\s+history", combined, re.IGNORECASE)
+    )
 
 
 def _trim_reply_note_text(text: str) -> str:
@@ -1525,6 +1572,15 @@ def _parse_numeric_payment_date(text: str) -> date | None:
         return None
 
 
+def _parse_email_header_date(text: str) -> date | None:
+    """Parse an RFC822 email date header into the sender-local calendar date."""
+    try:
+        parsed = parsedate_to_datetime(text) if text else None
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    return parsed.date() if isinstance(parsed, datetime) else None
+
+
 def _extract_labeled_block_value(plain_text: str, labels: tuple[str, ...]) -> str | None:
     """Return the value following one of *labels* on the same or next line."""
     lines = [line.strip() for line in plain_text.splitlines() if line.strip()]
@@ -1540,6 +1596,21 @@ def _extract_labeled_block_value(plain_text: str, labels: tuple[str, ...]) -> st
         for candidate in lines[idx + 1 : idx + 3]:
             if candidate:
                 return candidate
+    return None
+
+
+def _extract_labeled_money_amount(plain_text: str, labels: tuple[str, ...]) -> float | None:
+    """Return the first money amount printed after one of *labels*."""
+    flattened = " ".join(plain_text.replace("\xa0", " ").split())
+    for label in labels:
+        label_pattern = r"\s+".join(re.escape(part) for part in label.split())
+        match = re.search(
+            rf"\b{label_pattern}\s*:?\s*\$?\s*([0-9,]+(?:\.\d{{2}})?)\b",
+            flattened,
+            re.IGNORECASE,
+        )
+        if match:
+            return float(match.group(1).replace(",", ""))
     return None
 
 
@@ -1707,12 +1778,200 @@ def _extract_paypal_receipt_email(subject: str, sender: str, plain_text: str) ->
     }
 
 
+def _extract_irs_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Return structured fields for IRS online payment confirmation emails."""
+    if _IRS_SENDER_HINT not in sender.lower():
+        return None
+    if not re.search(
+        r"confirmation\s+of\s+(?:scheduled\s+)?(?:payment\s+)?transaction"
+        r"|you.?ve\s+successfully\s+submitted\s+your\s+payment",
+        plain_text,
+        re.IGNORECASE,
+    ):
+        return None
+
+    total = None
+    total_value = _extract_labeled_block_value(plain_text, ("total amount",))
+    if total_value:
+        match = re.search(r"\$?\s*(\d+(?:\.\d{2})?)", total_value)
+        if match:
+            total = float(match.group(1))
+
+    receipt_date = None
+    date_value = _extract_labeled_block_value(plain_text, ("date",))
+    if date_value:
+        receipt_date = _parse_payment_date_text(date_value)
+
+    return {
+        "merchant": "IRS",
+        "total": total,
+        "receipt_date": receipt_date,
+        "purchaser": None,
+        "card_last4": None,
+        "category": None,
+    }
+
+
+def _extract_nelnet_billing_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Return structured fields for Nelnet student loan billing statement emails."""
+    if _NELNET_SENDER_HINT not in sender.lower():
+        return None
+    if "billing statement" not in subject.lower() and "billing statement" not in plain_text.lower():
+        return None
+
+    total = None
+    amount_value = _extract_labeled_block_value(plain_text, ("amount due",))
+    if amount_value:
+        match = re.search(r"\$?\s*(\d+(?:\.\d{2})?)", amount_value)
+        if match:
+            total = float(match.group(1))
+
+    receipt_date = None
+    date_value = _extract_labeled_block_value(plain_text, ("due date",))
+    if date_value:
+        date_match = _NELNET_MDY_DATE_RE.search(date_value)
+        if date_match:
+            receipt_date = _parse_numeric_payment_date(date_match.group(1))
+
+    return {
+        "merchant": "Nelnet",
+        "total": total,
+        "receipt_date": receipt_date,
+        "purchaser": _extract_payment_purchaser(plain_text),
+        "card_last4": None,
+        "category": None,
+    }
+
+
+def _extract_venmo_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Return structured fields for Venmo payment notification emails."""
+    if _VENMO_SENDER_HINT not in sender.lower():
+        return None
+
+    combined = f"{subject}\n{plain_text}"
+    merchant: str | None = None
+    total: float | None = None
+
+    for pattern in (_VENMO_YOU_PAID_RE, _VENMO_PAID_YOU_RE, _VENMO_CHARGED_YOU_RE):
+        match = pattern.search(combined)
+        if match:
+            merchant = match.group(1).strip()
+            with suppress(ValueError, IndexError):
+                total = float(match.group(2))
+            break
+
+    receipt_date: date | None = None
+    date_match = _PAYMENT_DATE_RE.search(plain_text)
+    if date_match:
+        receipt_date = _parse_payment_date_text(date_match.group(0))
+
+    return {
+        "merchant": merchant,
+        "total": total,
+        "receipt_date": receipt_date,
+        "purchaser": _extract_payment_purchaser(plain_text),
+        "card_last4": None,
+        "category": None,
+    }
+
+
+def _extract_wise_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Return structured fields for Wise money-movement notification emails."""
+    if _WISE_SENDER_HINT not in sender.lower():
+        return None
+    if "money added to your account" not in subject.lower():
+        return None
+
+    match = _WISE_MONEY_ADDED_RE.search(plain_text)
+    total = float(match.group(1)) if match else None
+
+    return {
+        "merchant": "Wise",
+        "total": total,
+        "receipt_date": None,
+        "purchaser": None,
+        "card_last4": None,
+        "category": "finance",
+    }
+
+
+def _extract_xanterra_reservation_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Return structured fields for Xanterra/Yellowstone reservation confirmations."""
+    combined = f"{subject}\n{plain_text}"
+    if _XANTERRA_SENDER_HINT not in sender.lower():
+        return None
+    if not re.search(r"\breservation\s+confirmation\b", subject, re.IGNORECASE):
+        return None
+    if "yellowstone national park" not in combined.lower():
+        return None
+
+    total = _extract_labeled_money_amount(
+        plain_text,
+        (
+            "deposit paid",
+            "deposit required",
+            "reservation total",
+            "lodging total",
+        ),
+    )
+    booking_date = None
+    booking_value = _extract_labeled_block_value(plain_text, ("original booking date",))
+    if booking_value:
+        booking_date = _parse_numeric_payment_date(booking_value)
+
+    lodging_amount = _extract_labeled_money_amount(
+        plain_text,
+        ("lodging total", "lodging", "nightly rate"),
+    )
+    taxes_amount = _extract_labeled_money_amount(plain_text, ("taxes/fees", "taxes & fees"))
+    items = []
+    if lodging_amount is not None:
+        items.append(
+            {
+                "description": "Bridge Bay Campground lodging",
+                "amount": lodging_amount,
+                "quantity": None,
+                "unit_price": None,
+            }
+        )
+    if taxes_amount is not None:
+        items.append(
+            {
+                "description": "Taxes/Fees",
+                "amount": taxes_amount,
+                "quantity": None,
+                "unit_price": None,
+            }
+        )
+
+    purchaser = None
+    match = _XANTERRA_WELCOME_RE.search(plain_text)
+    if match:
+        purchaser = normalize_purchaser(match.group(1))
+
+    return {
+        "merchant": "Yellowstone National Park Lodges",
+        "total": total,
+        "receipt_date": booking_date,
+        "purchaser": purchaser,
+        "card_last4": None,
+        "category": "outdoor/park",
+        "processed_by": "email-reservation",
+        "items": items,
+    }
+
+
 def _extract_structured_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
     """Return structured fields for known payment-notification email formats."""
     return (
         _extract_credit_card_payment_email(subject, sender, plain_text)
         or _extract_progressive_payment_email(subject, sender, plain_text)
         or _extract_paypal_receipt_email(subject, sender, plain_text)
+        or _extract_venmo_payment_email(subject, sender, plain_text)
+        or _extract_irs_payment_email(subject, sender, plain_text)
+        or _extract_nelnet_billing_email(subject, sender, plain_text)
+        or _extract_wise_payment_email(subject, sender, plain_text)
+        or _extract_xanterra_reservation_email(subject, sender, plain_text)
     )
 
 
@@ -1790,7 +2049,10 @@ def _upsert_html_receipt(
     merchant_aliases = load_merchant_aliases()
     # Build a synthetic filename for the receipt (uid-based)
     synthetic_name = f"email_{uid}_{mailbox.replace('/', '_')}.txt"
+    email_header_date = _parse_email_header_date(date_str)
     receipt = parse_receipt(synthetic_name, plain_text)
+    if email_header_date is not None:
+        receipt = replace(receipt, scan_date=email_header_date)
     payment_email = _extract_structured_payment_email(subject, sender, plain_text)
     if payment_email is not None:
         receipt = replace(
@@ -1800,7 +2062,7 @@ def _upsert_html_receipt(
             receipt_date=payment_email["receipt_date"],
             purchaser=payment_email["purchaser"],
             card_last4=payment_email["card_last4"],
-            items=[],
+            items=payment_email.get("items", []),
         )
         preferred_category = payment_email.get("category")
         if isinstance(preferred_category, str) and _category_exists(rules, preferred_category):
@@ -1809,7 +2071,9 @@ def _upsert_html_receipt(
             category = _preferred_payment_category(rules)
         else:
             category = classify(receipt.merchant or "", rules, full_text=plain_text)
-        processed_by = "email-payment" if preferred_category else "email-parse"
+        processed_by = payment_email.get("processed_by") or (
+            "email-payment" if preferred_category else "email-parse"
+        )
     else:
         receipt = replace(
             receipt, merchant=consolidate_merchant(receipt.merchant, merchant_aliases)
@@ -1867,7 +2131,7 @@ def _upsert_html_receipt(
 
     row = {
         "filename": synthetic_name,
-        "scan_date": (receipt.receipt_date or datetime.now(UTC).date()).isoformat(),
+        "scan_date": (receipt.receipt_date or receipt.scan_date).isoformat(),
         "merchant": receipt.merchant,
         "total": receipt.total,
         "category": category,
@@ -1893,7 +2157,7 @@ def _upsert_html_receipt(
         plain_text=plain_text,
         row=row,
     )
-    _, errors = send_processed_receipt_notifications(
+    sent, errors = send_processed_receipt_notifications(
         settings,
         receipt,
         category=category,
@@ -1903,6 +2167,8 @@ def _upsert_html_receipt(
     )
     for channel, error in errors.items():
         print(f"    [{channel}] WARNING: {error}", file=sys.stderr)
+    for channel, count in sent.items():
+        print(f"    [{channel}] notified {count} recipient(s)")
     try:
         trigger_personal_finance(
             settings,
