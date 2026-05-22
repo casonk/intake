@@ -345,6 +345,77 @@ def test_cmd_correct_updates_db_and_sidecar_and_records_audit(tmp_path, capsys):
     assert "sidecar:" in out
 
 
+def test_cmd_correct_triggers_personal_finance_after_db_change(tmp_path, monkeypatch):
+    receipt_root = tmp_path / "receipts"
+    pdf = receipt_root / "general" / "20260409_1707.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": pdf.name,
+            "scan_date": "2026-04-09",
+            "merchant": "unknown",
+            "total": 86.05,
+            "category": "general",
+            "receipt_dir": "general/20260409_1707.pdf",
+            "raw_text": "BALANCE 86.05",
+            "processed_by": "tesseract",
+        },
+    )
+    conn.close()
+
+    calls = []
+
+    def fake_trigger(settings, receipt_events, *, trigger, prefix=""):
+        calls.append(
+            {
+                "settings": settings,
+                "receipt_events": receipt_events,
+                "trigger": trigger,
+                "prefix": prefix,
+            }
+        )
+
+    monkeypatch.setattr(cli, "_trigger_personal_finance", fake_trigger)
+
+    settings = {"personal_finance": {"repo_root": "/tmp/finance-pipeline"}}
+    cli._cmd_correct(
+        Namespace(
+            filename=pdf.name,
+            receipt_dir=str(receipt_root),
+            db=str(db_path),
+            merchant="badlands national park",
+            total=88.05,
+            category="outdoor/park",
+            purchaser=None,
+            clear_purchaser=False,
+            card_last4=None,
+            clear_card_last4=False,
+            certification=None,
+            clear_certifications=False,
+            note="correct merchant and category",
+            currency=None,
+        ),
+        settings,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["settings"] == settings
+    assert calls[0]["trigger"] == "correct"
+    assert calls[0]["prefix"] == "  "
+    event = calls[0]["receipt_events"][0]
+    assert event["filename"] == pdf.name
+    assert event["merchant"] == "badlands national park"
+    assert event["total"] == 88.05
+    assert event["category"] == "outdoor/park"
+    assert event["receipt_dir"] == "outdoor/park/20260409_1707.pdf"
+    assert event["tier"] == "manual-correct"
+
+
 def test_cmd_correct_moves_receipt_when_category_changes(tmp_path):
     receipt_root = tmp_path / "receipts"
     old_pdf = receipt_root / "general" / "20260409_1707.pdf"
@@ -1328,6 +1399,7 @@ def test_cmd_process_supports_jpg_and_mov_receipts(tmp_path, monkeypatch):
     monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
     monkeypatch.setattr(cli, "_notify_processed_receipt", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_is_unreadable_receipt_image", lambda p: False)
 
     cli._cmd_process(
         Namespace(receipt_dir=str(receipt_root), db=str(db_path), dry_run=False),
@@ -1394,6 +1466,7 @@ def test_cmd_process_prefers_still_image_for_live_photo_pair(tmp_path, monkeypat
     monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
     monkeypatch.setattr(cli, "_notify_processed_receipt", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_is_unreadable_receipt_image", lambda p: False)
 
     cli._cmd_process(
         Namespace(receipt_dir=str(receipt_root), db=str(db_path), dry_run=False),
@@ -1822,6 +1895,7 @@ def test_cmd_process_skips_and_notifies_zero_byte_files(tmp_path, monkeypatch, c
     monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
     monkeypatch.setattr(cli, "_notify_processed_receipt", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_is_unreadable_receipt_image", lambda p: False)
 
     notified: list[list[str]] = []
     monkeypatch.setattr(
@@ -1850,6 +1924,46 @@ def test_cmd_process_skips_and_notifies_zero_byte_files(tmp_path, monkeypatch, c
     assert "zero-byte" in err
 
 
+def test_is_unreadable_receipt_image_detects_truncated_file(tmp_path, monkeypatch):
+    """_is_unreadable_receipt_image returns True when img.load() raises (truncated file)."""
+    import unittest.mock as mock
+
+    from intake import cli
+
+    truncated_jpg = tmp_path / "IMG_truncated.JPG"
+    truncated_jpg.write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)  # fake JPEG header
+
+    monkeypatch.setattr("intake.media.is_image_receipt", lambda p: True)
+
+    fake_img = mock.MagicMock()
+    fake_img.__enter__ = lambda s: s
+    fake_img.__exit__ = mock.MagicMock(return_value=False)
+    fake_img.load.side_effect = OSError("image file is truncated (80 bytes not processed)")
+
+    with mock.patch("PIL.Image.open", return_value=fake_img):
+        assert cli._is_unreadable_receipt_image(truncated_jpg) is True
+
+
+def test_is_unreadable_receipt_image_ok_for_valid_file(tmp_path, monkeypatch):
+    """_is_unreadable_receipt_image returns False when img.load() succeeds."""
+    import unittest.mock as mock
+
+    from intake import cli
+
+    good_jpg = tmp_path / "IMG_good.JPG"
+    good_jpg.write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+
+    monkeypatch.setattr("intake.media.is_image_receipt", lambda p: True)
+
+    fake_img = mock.MagicMock()
+    fake_img.__enter__ = lambda s: s
+    fake_img.__exit__ = mock.MagicMock(return_value=False)
+    fake_img.load.return_value = None  # success
+
+    with mock.patch("PIL.Image.open", return_value=fake_img):
+        assert cli._is_unreadable_receipt_image(good_jpg) is False
+
+
 def test_cmd_process_all_corrupt_returns_early(tmp_path, monkeypatch, capsys):
     receipt_root = tmp_path / "receipts"
     intake_dir = receipt_root / "intake"
@@ -1870,3 +1984,148 @@ def test_cmd_process_all_corrupt_returns_early(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "No processable files remain" in out
+
+
+def test_cmd_process_skips_and_notifies_unreadable_image(tmp_path, monkeypatch, capsys):
+    import intake.classify as classify_mod
+    import intake.document_type as document_type_mod
+    import intake.extract as extract_mod
+    import intake.ocr as ocr_mod
+
+    receipt_root = tmp_path / "receipts"
+    intake_dir = receipt_root / "intake"
+    intake_dir.mkdir(parents=True)
+
+    bad_jpg = intake_dir / "IMG_2365.JPG"
+    good_jpg = intake_dir / "20260410_1000.JPG"
+    bad_jpg.write_bytes(b"not-a-jpeg")
+    good_jpg.write_bytes(b"not-a-jpeg-either")
+
+    db_path = tmp_path / "intake.db"
+
+    def fake_extract(path, **_kwargs):
+        return (
+            Receipt(
+                filename=path.name,
+                scan_date=date(2026, 4, 10),
+                receipt_date=date(2026, 4, 10),
+                receipt_time=None,
+                merchant="target",
+                total=9.99,
+                raw_text="target\ntotal 9.99",
+            ),
+            "tesseract",
+            "ok",
+        )
+
+    monkeypatch.setattr(extract_mod, "extract_receipt", fake_extract)
+    monkeypatch.setattr(ocr_mod, "extract_text", lambda _path: "target\ntotal 9.99")
+    monkeypatch.setattr(document_type_mod, "classify_document_type", lambda *_args: "receipt")
+    monkeypatch.setattr(classify_mod, "classify", lambda *_args, **_kwargs: "general")
+    monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+    monkeypatch.setattr(cli, "_notify_processed_receipt", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+
+    def fake_is_unreadable(path):
+        return path.name == "IMG_2365.JPG"
+
+    monkeypatch.setattr(cli, "_is_unreadable_receipt_image", fake_is_unreadable)
+
+    notified: list[list[str]] = []
+    monkeypatch.setattr(
+        "intake.notify.send_corrupt_intake_notifications",
+        lambda settings, names: (notified.append(names), ({}, {}))[1],
+    )
+
+    cli._cmd_process(
+        Namespace(receipt_dir=str(receipt_root), db=str(db_path), dry_run=False),
+        {},
+    )
+
+    assert notified == [["IMG_2365.JPG"]]
+    err = capsys.readouterr().err
+    assert "IMG_2365.JPG" in err
+    assert "unreadable" in err
+    good_files = list((receipt_root / "general").rglob("*.jpg"))
+    assert len(good_files) == 1
+
+
+def test_process_inbox_skips_and_notifies_corrupt_image(tmp_path, monkeypatch, capsys):
+    import intake.classify as classify_mod
+    import intake.document_type as document_type_mod
+    import intake.extract as extract_mod
+    import intake.ocr as ocr_mod
+
+    receipt_root = tmp_path / "receipts"
+    intake_dir = receipt_root / "intake"
+    intake_dir.mkdir(parents=True)
+
+    bad_jpg = intake_dir / "IMG_2365.JPG"
+    good_jpg = intake_dir / "20260410_1000.JPG"
+    bad_jpg.write_bytes(b"not-a-jpeg")
+    good_jpg.write_bytes(b"good")
+
+    db_path = tmp_path / "intake.db"
+
+    def fake_extract(path, **_kwargs):
+        return (
+            Receipt(
+                filename=path.name,
+                scan_date=date(2026, 4, 10),
+                receipt_date=date(2026, 4, 10),
+                receipt_time=None,
+                merchant="target",
+                total=9.99,
+                raw_text="target\ntotal 9.99",
+            ),
+            "tesseract",
+            "ok",
+        )
+
+    monkeypatch.setattr(extract_mod, "extract_receipt", fake_extract)
+    monkeypatch.setattr(ocr_mod, "extract_text", lambda _path: "target\ntotal 9.99")
+    monkeypatch.setattr(document_type_mod, "classify_document_type", lambda *_args: "receipt")
+    monkeypatch.setattr(classify_mod, "classify", lambda *_args, **_kwargs: "general")
+    monkeypatch.setattr(classify_mod, "load_rules", lambda: {})
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+    monkeypatch.setattr(cli, "_notify_processed_receipt", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_trigger_personal_finance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "_is_unreadable_receipt_image", lambda p: p.name == "IMG_2365.JPG")
+
+    notified: list[list[str]] = []
+    monkeypatch.setattr(
+        "intake.notify.send_corrupt_intake_notifications",
+        lambda settings, names: (notified.append(names), ({}, {}))[1],
+    )
+
+    ok, err_count = cli._process_inbox({"receipt_dir": str(receipt_root)}, db_path)
+
+    assert ok == 1
+    assert err_count == 0
+    assert notified == [["IMG_2365.JPG"]]
+    stderr = capsys.readouterr().err
+    assert "IMG_2365.JPG" in stderr
+    assert "unreadable" in stderr
+
+
+def test_process_inbox_corrupt_notification_deduplication(tmp_path, monkeypatch, capsys):
+    receipt_root = tmp_path / "receipts"
+    intake_dir = receipt_root / "intake"
+    intake_dir.mkdir(parents=True)
+    (intake_dir / "IMG_2365.JPG").write_bytes(b"bad")
+
+    db_path = tmp_path / "intake.db"
+
+    monkeypatch.setattr(cli, "_is_unreadable_receipt_image", lambda p: p.name == "IMG_2365.JPG")
+
+    notified: list[list[str]] = []
+    monkeypatch.setattr(
+        "intake.notify.send_corrupt_intake_notifications",
+        lambda settings, names: (notified.append(names), ({}, {}))[1],
+    )
+
+    already_seen: set[str] = {"IMG_2365.JPG"}
+    cli._process_inbox({"receipt_dir": str(receipt_root)}, db_path, notified_corrupt=already_seen)
+
+    assert notified == [], "should not re-notify for a file already in notified_corrupt"

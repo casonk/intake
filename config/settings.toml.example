@@ -98,13 +98,14 @@ reports_dir = "reports"
 #   # Scheduled/upcoming payment notices are fetched so they can be filed as ignored.
 #   "your scheduled payment",
 #   "policy renewal reminder",
+#   "reservation confirmation",
 # ]
 #
 # # Optional sender fragments to search in addition to subject keywords.
-# # PayPal transaction receipts often have subjects like "Spotify USA Inc: $12.99 USD"
-# # that do not contain "receipt" or "invoice", so intake searches
-# # "service@paypal.com" by default even when this list is left unset.
-# # receipt_senders = ["service@paypal.com"]
+# # PayPal/Wise/Venmo/Xanterra transaction receipts often have subjects that do
+# # not contain "receipt" or "invoice", so intake searches known sender hints
+# # by default even when this list is left unset.
+# # receipt_senders = ["service@paypal.com", "noreply@wise.com", "venmo@venmo.com", "reserve-noreply@xanterra.com"]
 #
 # # Optional mailboxes to scan for replies to intake's own Gmail notifications.
 # # Defaults to Gmail sent-mail folders so self-addressed correction replies and
