@@ -70,6 +70,7 @@ intake.db --> intake.parse
 intake.db --> intake.purchaser
 intake.db --> intake.staff
 intake.email --> intake.ai
+intake.email --> intake.certification
 intake.email --> intake.classify
 intake.email --> intake.cli
 intake.email --> intake.db
@@ -81,6 +82,7 @@ intake.email --> intake.parse
 intake.email --> intake.personal_finance
 intake.email --> intake.purchaser
 intake.email --> intake.sidecar
+intake.email --> intake.staff
 intake.extract --> intake.ai
 intake.extract --> intake.ai_card
 intake.extract --> intake.ai_letter
