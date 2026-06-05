@@ -512,7 +512,9 @@ def send_processed_receipt_notifications(
 
 
 def _format_corrupt_intake_message(filenames: list[str]) -> str:
-    lines = ["Corrupt intake file(s) detected (zero bytes — upload may have failed)"]
+    lines = [
+        "Corrupt intake file(s) detected (unreadable — upload may have failed or be incomplete)"
+    ]
     for name in filenames:
         lines.append(f"  - {name}")
     lines.append("Re-upload and run `intake process` again.")

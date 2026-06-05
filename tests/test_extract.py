@@ -8,10 +8,12 @@ from unittest.mock import patch
 from intake.extract import (
     DEFAULT_ESCALATION_PATTERNS,
     DEFAULT_TOTAL_ESCALATION_THRESHOLD,
+    OCR_GARBAGE_THRESHOLD,
     OCR_MODEL,
     _compile_patterns,
     _extraction_tier,
     _merchant_escalates,
+    _ocr_garbage_score,
     _ocr_quality_ok,
     extract_receipt,
     model_rank,
@@ -389,3 +391,47 @@ def test_extraction_tier_low_for_poor_quality():
     patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
     r = _receipt(merchant="unknown", total=None)
     assert _extraction_tier("short", r, patterns) == "low"
+
+
+# ── _ocr_garbage_score ────────────────────────────────────────────────────────
+
+_GARBAGE_BODY = " ".join(
+    [
+        "JJJJJJJJJJJ",
+        "SSSSSSSSSSS",
+        "***********",
+        "uzpfuxdydcu",
+        "nebxwjtmnsi",
+        "xwllsiczpuf",
+        "axmchzcsdni",
+        "1jnq2plwlcy",
+        "4ilvc0rylnx",
+        "azh1boabydc",
+    ]
+)
+
+
+def test_ocr_garbage_score_high_for_garbage_text():
+    score = _ocr_garbage_score(_GARBAGE_BODY)
+    assert score >= OCR_GARBAGE_THRESHOLD
+
+
+def test_ocr_garbage_score_low_for_clean_receipt():
+    clean = (
+        "Kroger\n123 Main St\nAnytown ST 12345\n"
+        "Cashier: John\nDate: 2026-04-01\n"
+        "Bananas $1.99\nMilk $3.49\nBread $2.99\n"
+        "Subtotal $8.47\nTax $0.51\nTotal $8.98\n"
+        "Thank you for shopping with us today"
+    )
+    assert _ocr_garbage_score(clean) < OCR_GARBAGE_THRESHOLD
+
+
+def test_ocr_garbage_score_zero_for_empty():
+    assert _ocr_garbage_score("") == 0.0
+
+
+def test_extraction_tier_high_for_garbage_ocr():
+    patterns = _compile_patterns(DEFAULT_ESCALATION_PATTERNS)
+    r = _receipt()
+    assert _extraction_tier(_GARBAGE_BODY, r, patterns) == "high"

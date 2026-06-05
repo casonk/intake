@@ -37,6 +37,7 @@ _DEFAULT_RECEIPT_SENDER_HINTS = (
     "nelnet.studentaid.gov",
     "noreply@wise.com",
     "reserve-noreply@xanterra.com",
+    "americanexpress.com",
 )
 _DEFAULT_REPLY_MAILBOXES = (
     "[Gmail]/All Mail",
@@ -186,6 +187,7 @@ def fetch_receipts(
             [
                 *configured_subjects,
                 "we've received your payment",
+                "we processed your payment",
                 "your payment of",
                 "your scheduled payment",
                 "policy renewal reminder",
@@ -690,7 +692,7 @@ _PAYMENT_EMAIL_PATTERNS = re.compile(
 _CARD_SCHEDULED_NOTICE_RE = re.compile(
     r"\b("
     r"thanks\s+for\s+scheduling\s+your\s+payment|"
-    r"your\s+scheduled\s+payment|"
+    r"your\s+scheduled\s+payment(?!\s+was\b)|"
     r"(?:payment|card\s+payment)\s+is\s+scheduled|"
     r"is\s+scheduled\s+for"
     r")\b",
@@ -738,6 +740,12 @@ _SCHEDULED_FOR_DATE_RE = re.compile(
 _DUE_ON_DATE_RE = re.compile(r"\bdue\s+on\s+(\d{2}/\d{2}/\d{4})\b", re.IGNORECASE)
 _CAPITAL_ONE_SENDER_HINT = "capitalone@notification.capitalone.com"
 _DISCOVER_SENDER_HINT = "discover@services.discover.com"
+_AMEX_SENDER_HINT = "americanexpress.com"
+_AMEX_ACCOUNT_ENDING_RE = re.compile(r"\baccount\s+ending\s*:\s*(\d{4,5})\b", re.IGNORECASE)
+_AMEX_CARDHOLDER_RE = re.compile(
+    r"([A-Z][A-Z\s]{3,}[A-Z])\s*\n\s*Account\s+Ending\b",
+    re.MULTILINE,
+)
 _PROGRESSIVE_SENDER_HINT = "customerservice@e.progressive.com"
 _PAYPAL_SENDER_HINT = "service@paypal.com"
 _PAYPAL_SUBJECT_AMOUNT_RE = re.compile(r":\s*\$?\s*(\d+(?:\.\d{2})?)\s+[A-Z]{3}\b")
@@ -766,6 +774,7 @@ _XANTERRA_SENDER_HINT = "xanterra.com"
 _XANTERRA_WELCOME_RE = re.compile(
     r"(?im)^\s*Welcome,\s*([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z]+){1,3})\s*$"
 )
+_BINANCE_SENDER_HINT = "post.binance.us"
 _PAYPAL_YOU_PAID_RE = re.compile(
     r"\byou paid\s+\$?\s*(\d+(?:\.\d{2})?)\s+[A-Z]{3}\s+to\s+(.+)$",
     re.IGNORECASE | re.MULTILINE,
@@ -857,9 +866,12 @@ def _is_known_non_receipt_notice(subject: str, sender: str, plain_text: str) -> 
         return bool(_CARD_SCHEDULED_NOTICE_RE.search(combined))
     if _IRS_SENDER_HINT in sender_lower and not re.search(r"\$\s*\d+", combined):
         return True
+    if _VENMO_SENDER_HINT in sender_lower and re.search(
+        r"transaction\s+history", combined, re.IGNORECASE
+    ):
+        return True
     return bool(
-        _VENMO_SENDER_HINT in sender_lower
-        and re.search(r"transaction\s+history", combined, re.IGNORECASE)
+        _BINANCE_SENDER_HINT in sender_lower and re.search(r"\bstaking\b", combined, re.IGNORECASE)
     )
 
 
@@ -1961,10 +1973,56 @@ def _extract_xanterra_reservation_email(subject: str, sender: str, plain_text: s
     }
 
 
+def _extract_amex_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Return structured fields for American Express payment confirmation emails."""
+    if _AMEX_SENDER_HINT not in sender.lower():
+        return None
+    if "payment" not in subject.lower():
+        return None
+
+    amount = _extract_labeled_money_amount(plain_text, ("payment amount",))
+
+    receipt_date = None
+    date_value = _extract_labeled_block_value(plain_text, ("processed on",))
+    if date_value:
+        m = _PAYMENT_DATE_RE.search(date_value)
+        if m:
+            receipt_date = _parse_payment_date_text(m.group(0))
+    if receipt_date is None:
+        m = re.search(
+            r"processed\s+on\s+(" + _PAYMENT_DATE_TEXT_PATTERN + r")\b",
+            f"{subject}\n{plain_text}",
+            re.IGNORECASE,
+        )
+        if m:
+            receipt_date = _parse_payment_date_text(m.group(1))
+
+    purchaser = None
+    m = _AMEX_CARDHOLDER_RE.search(plain_text)
+    if m:
+        purchaser = normalize_purchaser(m.group(1).strip())
+
+    card_last4 = None
+    m = _AMEX_ACCOUNT_ENDING_RE.search(plain_text)
+    if m:
+        card_last4 = m.group(1)
+
+    return {
+        "merchant": "american express",
+        "total": amount,
+        "receipt_date": receipt_date,
+        "purchaser": purchaser,
+        "card_last4": card_last4,
+        "category": "finance/credit-card-payment",
+        "processed_by": "email-payment-amex",
+    }
+
+
 def _extract_structured_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
     """Return structured fields for known payment-notification email formats."""
     return (
         _extract_credit_card_payment_email(subject, sender, plain_text)
+        or _extract_amex_payment_email(subject, sender, plain_text)
         or _extract_progressive_payment_email(subject, sender, plain_text)
         or _extract_paypal_receipt_email(subject, sender, plain_text)
         or _extract_venmo_payment_email(subject, sender, plain_text)

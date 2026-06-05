@@ -24,6 +24,7 @@ from intake.email import (
     _apply_reply_to_receipt,
     _configured_receipt_sender_hints,
     _email_was_handled,
+    _extract_amex_payment_email,
     _extract_credit_card_payment_email,
     _extract_irs_payment_email,
     _extract_nelnet_billing_email,
@@ -645,6 +646,38 @@ def test_is_known_non_receipt_notice_venmo_payment_not_ignored():
     )
 
 
+def test_is_known_non_receipt_notice_binance_staking_ignored():
+    from intake.email import _is_known_non_receipt_notice
+
+    body = """
+Binance.US | Staking order received
+Your staking order has been received.
+Staking Amount:
+0.1280 SOL
+    """
+    assert (
+        _is_known_non_receipt_notice(
+            "Binance.US | Staking order received",
+            "do-not-reply@post.binance.us",
+            body,
+        )
+        is True
+    )
+
+
+def test_is_known_non_receipt_notice_binance_non_staking_not_ignored():
+    from intake.email import _is_known_non_receipt_notice
+
+    assert (
+        _is_known_non_receipt_notice(
+            "Your Binance.US deposit of $100.00 was confirmed",
+            "do-not-reply@post.binance.us",
+            "Your deposit of $100.00 USD has been confirmed.",
+        )
+        is False
+    )
+
+
 def test_configured_receipt_sender_hints_include_paypal_default():
     hints = _configured_receipt_sender_hints({"receipt_senders": ["merchant@example.com"]})
     assert hints == [
@@ -655,6 +688,7 @@ def test_configured_receipt_sender_hints_include_paypal_default():
         "nelnet.studentaid.gov",
         "noreply@wise.com",
         "reserve-noreply@xanterra.com",
+        "americanexpress.com",
     ]
 
 
@@ -1577,6 +1611,69 @@ def test_write_inline_email_artifact_serializes_items_in_sidecar(tmp_path):
             "unit_price": 1.99,
         }
     ]
+
+
+# ── _extract_amex_payment_email ───────────────────────────────────────────────
+
+_AMEX_PAYMENT_BODY = """\
+Thanks for your payment processed on Jun 5, 2026
+CASON A KONZER
+Account Ending: 01002
+Thank you for your payment
+Your scheduled payment was processed.
+You're all set. You can view your updated balances online.
+Payment amount:
+$69.69
+Processed on:
+Jun 5, 2026
+"""
+
+
+def test_extract_amex_payment_email_confirmation():
+    parsed = _extract_amex_payment_email(
+        "We processed your payment",
+        "AmericanExpress@welcome.americanexpress.com",
+        _AMEX_PAYMENT_BODY,
+    )
+    assert parsed is not None
+    assert parsed["merchant"] == "american express"
+    assert parsed["total"] == 69.69
+    assert parsed["receipt_date"] == date(2026, 6, 5)
+    assert parsed["purchaser"] == "cason a konzer"
+    assert parsed["card_last4"] == "01002"
+    assert parsed["category"] == "finance/credit-card-payment"
+    assert parsed["processed_by"] == "email-payment-amex"
+
+
+def test_extract_amex_payment_email_wrong_sender_returns_none():
+    parsed = _extract_amex_payment_email(
+        "We processed your payment",
+        "noreply@othersender.com",
+        _AMEX_PAYMENT_BODY,
+    )
+    assert parsed is None
+
+
+def test_extract_amex_payment_email_non_payment_subject_returns_none():
+    parsed = _extract_amex_payment_email(
+        "Your account statement is ready",
+        "AmericanExpress@welcome.americanexpress.com",
+        _AMEX_PAYMENT_BODY,
+    )
+    assert parsed is None
+
+
+def test_card_scheduled_notice_re_does_not_match_amex_was_processed():
+    from intake.email import _CARD_SCHEDULED_NOTICE_RE
+
+    assert not _CARD_SCHEDULED_NOTICE_RE.search("Your scheduled payment was processed.")
+
+
+def test_card_scheduled_notice_re_still_matches_future_scheduled():
+    from intake.email import _CARD_SCHEDULED_NOTICE_RE
+
+    assert _CARD_SCHEDULED_NOTICE_RE.search("Your scheduled payment is being processed")
+    assert _CARD_SCHEDULED_NOTICE_RE.search("payment is scheduled for Jun 7, 2026")
 
 
 # ── FetchResult ───────────────────────────────────────────────────────────────

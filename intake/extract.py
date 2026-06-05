@@ -37,6 +37,12 @@ if TYPE_CHECKING:
 
 OCR_MODEL = "tesseract"
 DEFAULT_TOTAL_ESCALATION_THRESHOLD = 250.0
+OCR_GARBAGE_THRESHOLD = 0.10
+
+# Compiled once at import time for garbage-score calculation.
+_GARBAGE_TOKEN_RE = re.compile(r"^[a-z0-9]{7,}$")
+_VOWEL_RE = re.compile(r"[aeiou]")
+_REPEATED_CHAR_RE = re.compile(r"(.)\1{5,}", re.IGNORECASE)
 
 _MODEL_RANK: dict[str, int] = {
     "tesseract": 0,
@@ -92,6 +98,25 @@ def should_reprocess(sidecar_model: str, current_model: str) -> bool:
 
 
 # ── quality / escalation heuristics ──────────────────────────────────────────
+
+
+def _ocr_garbage_score(text: str) -> float:
+    """Return the fraction of tokens that look like OCR garbage (0.0–1.0).
+
+    Garbage tokens are long all-lowercase strings with no adjacent vowels
+    (characteristic of randomised-font PDFs whose glyphs map to junk codepoints)
+    or runs of a repeated character (e.g. ``JJJJJJJJJJJ``).
+    """
+    tokens = text.split()
+    if not tokens:
+        return 0.0
+    count = sum(
+        1
+        for t in tokens
+        if (_GARBAGE_TOKEN_RE.match(t) and len(_VOWEL_RE.findall(t)) < 2)
+        or bool(_REPEATED_CHAR_RE.search(t))
+    )
+    return count / len(tokens)
 
 
 def _ocr_quality_ok(text: str, receipt: Receipt) -> bool:
@@ -153,6 +178,8 @@ def _extraction_tier(
     ):
         return "high"
     if _total_escalates(receipt.total, total_escalation_threshold):
+        return "high"
+    if _ocr_garbage_score(text) >= OCR_GARBAGE_THRESHOLD:
         return "high"
     if not _ocr_quality_ok(text, receipt):
         return "low"
