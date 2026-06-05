@@ -1676,6 +1676,15 @@ def test_card_scheduled_notice_re_still_matches_future_scheduled():
     assert _CARD_SCHEDULED_NOTICE_RE.search("payment is scheduled for Jun 7, 2026")
 
 
+def test_amex_cardholder_re_does_not_capture_preceding_lines():
+    from intake.email import _AMEX_CARDHOLDER_RE
+
+    body = "THANK YOU\nJOHN KONZER\nAccount Ending: 01002"
+    m = _AMEX_CARDHOLDER_RE.search(body)
+    assert m is not None
+    assert m.group(1) == "JOHN KONZER"
+
+
 # ── FetchResult ───────────────────────────────────────────────────────────────
 
 

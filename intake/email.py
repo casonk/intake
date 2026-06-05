@@ -743,7 +743,7 @@ _DISCOVER_SENDER_HINT = "discover@services.discover.com"
 _AMEX_SENDER_HINT = "americanexpress.com"
 _AMEX_ACCOUNT_ENDING_RE = re.compile(r"\baccount\s+ending\s*:\s*(\d{4,5})\b", re.IGNORECASE)
 _AMEX_CARDHOLDER_RE = re.compile(
-    r"([A-Z][A-Z\s]{3,}[A-Z])\s*\n\s*Account\s+Ending\b",
+    r"([A-Z][A-Z ]{3,}[A-Z])\s*\n\s*Account\s+Ending\b",
     re.MULTILINE,
 )
 _PROGRESSIVE_SENDER_HINT = "customerservice@e.progressive.com"
