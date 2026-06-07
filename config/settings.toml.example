@@ -83,8 +83,13 @@ reports_dir = "reports"
 # # Gmail label to move processed emails into (created automatically if absent)
 # processed_label = "intake/processed"
 #
-# # Gmail label to move intake-generated notification emails into.
+# # Gmail label used for intake-generated notification emails.
 # notification_label = "intake/notify"
+#
+# # Intake leaves its own notification emails untouched in INBOX long enough for
+# # Gmail/device notifications to fire, then files them into notification_label
+# # on a later poll. Set to 0 to file immediately.
+# notification_inbox_grace_minutes = 60
 #
 # # Subject keywords — any match triggers fetch (case-insensitive)
 # receipt_subjects = [

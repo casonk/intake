@@ -333,6 +333,12 @@ structured lines like `merchant: kroger`, `total: 88.05`, `purchaser: ...`,
 `card last4: 5653`, or `currency: usd` are applied automatically through the
 same audited update path.
 
+When Gmail ingestion later sees intake's own notification emails, it records
+that they are internal but leaves them untouched in `INBOX` for
+`[email].notification_inbox_grace_minutes` first so Gmail/device alerts have
+time to fire. After the grace period, the next poll files them into
+`[email].notification_label`.
+
 The initial processed-receipt email now also includes Snowbridge File Browser
 links for the receipt artifact and any sidecar-adjacent OCR/JSON artifacts
 (`*.ocr.txt`, `*.intake.json`, `*.ai.json`) that exist under the mounted

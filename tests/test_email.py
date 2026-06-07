@@ -1255,6 +1255,7 @@ def test_fetch_receipts_files_internal_notification_to_notify_label(db, tmp_path
     payload = message.as_bytes()
     read_uids: list[int] = []
     moved_uids: list[tuple[int, str]] = []
+    labeled_uids: list[tuple[int, str]] = []
 
     class _NotificationConnection:
         def __enter__(self):
@@ -1288,6 +1289,7 @@ def test_fetch_receipts_files_internal_notification_to_notify_label(db, tmp_path
         extract_attachments=fail_extract_attachments,
         mark_message_read=lambda _conn, uid: read_uids.append(uid),
         move_message=lambda _conn, uid, label: moved_uids.append((uid, label)),
+        label_message=lambda _conn, uid, label: labeled_uids.append((uid, label)),
     )
 
     settings = {
@@ -1306,9 +1308,52 @@ def test_fetch_receipts_files_internal_notification_to_notify_label(db, tmp_path
         result = fetch_receipts(settings, db, dry_run=False, verbose=False)
 
     assert result.skipped == 1
-    assert read_uids == [30999]
+    assert read_uids == []
+    assert moved_uids == []
+    assert labeled_uids == []
+    assert is_email_processed(db, uid=30999, mailbox="INBOX") is True
+    row = db.execute(
+        "SELECT status FROM email_receipts WHERE uid = ? AND mailbox = ?",
+        (30999, "INBOX"),
+    ).fetchone()
+    assert row["status"] == "internal"
+
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[30999]),
+        patch("intake.email._process_reply_messages"),
+    ):
+        result = fetch_receipts(settings, db, dry_run=False, verbose=False)
+
+    assert result.skipped == 1
+    assert labeled_uids == []
+    assert moved_uids == []
+
+    db.execute(
+        """
+        UPDATE email_receipts
+        SET processed_at = ?
+        WHERE uid = ? AND mailbox = ?
+        """,
+        ("2026-05-01T09:30:00+00:00", 30999, "INBOX"),
+    )
+    db.commit()
+
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[30999]),
+        patch("intake.email._process_reply_messages"),
+    ):
+        result = fetch_receipts(settings, db, dry_run=False, verbose=False)
+
+    assert result.skipped == 1
+    assert read_uids == []
     assert moved_uids == [(30999, "intake/notify")]
-    assert is_email_processed(db, uid=30999, mailbox="INBOX") is False
+    row = db.execute(
+        "SELECT status FROM email_receipts WHERE uid = ? AND mailbox = ?",
+        (30999, "INBOX"),
+    ).fetchone()
+    assert row["status"] == "internal-filed"
 
 
 def test_fetch_receipts_files_internal_reply_link_to_notify_label(db, tmp_path):
@@ -1331,6 +1376,7 @@ def test_fetch_receipts_files_internal_reply_link_to_notify_label(db, tmp_path):
     payload = message.as_bytes()
     read_uids: list[int] = []
     moved_uids: list[tuple[int, str]] = []
+    labeled_uids: list[tuple[int, str]] = []
 
     class _ReplyLinkConnection:
         def __enter__(self):
@@ -1364,6 +1410,7 @@ def test_fetch_receipts_files_internal_reply_link_to_notify_label(db, tmp_path):
         extract_attachments=fail_extract_attachments,
         mark_message_read=lambda _conn, uid: read_uids.append(uid),
         move_message=lambda _conn, uid, label: moved_uids.append((uid, label)),
+        label_message=lambda _conn, uid, label: labeled_uids.append((uid, label)),
     )
 
     settings = {
@@ -1382,9 +1429,15 @@ def test_fetch_receipts_files_internal_reply_link_to_notify_label(db, tmp_path):
         result = fetch_receipts(settings, db, dry_run=False, verbose=False)
 
     assert result.skipped == 1
-    assert read_uids == [31000]
-    assert moved_uids == [(31000, "intake/notify")]
-    assert is_email_processed(db, uid=31000, mailbox="INBOX") is False
+    assert read_uids == []
+    assert moved_uids == []
+    assert labeled_uids == []
+    assert is_email_processed(db, uid=31000, mailbox="INBOX") is True
+    row = db.execute(
+        "SELECT status FROM email_receipts WHERE uid = ? AND mailbox = ?",
+        (31000, "INBOX"),
+    ).fetchone()
+    assert row["status"] == "internal"
 
 
 def test_fetch_receipts_files_known_non_receipt_notice_as_ignored(db, tmp_path):

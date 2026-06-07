@@ -240,8 +240,30 @@ def fetch_receipts(
                     if _is_intake_generated_message(msg) or _is_internal_intake_notification(
                         subject, sender, settings
                     ):
-                        if not dry_run:
-                            filed = _file_message_to_processed_label(
+                        tracking = _email_message_tracking_state(
+                            db_conn,
+                            uid=uid,
+                            mailbox=mailbox,
+                            message_id=message_id,
+                        )
+                        filed = False
+                        if not dry_run and not tracking["tracked"]:
+                            record_email_receipt(
+                                db_conn,
+                                uid=uid,
+                                mailbox=mailbox,
+                                message_id=message_id,
+                                subject=subject,
+                                sender=sender,
+                                received_at=date_str,
+                                attachment_count=0,
+                                status="internal",
+                            )
+                        elif not dry_run and _internal_notification_ready_to_file(
+                            tracking,
+                            grace_seconds=_notification_inbox_grace_seconds(email_cfg),
+                        ):
+                            filed = _move_message_without_marking_read(
                                 sr,
                                 conn,
                                 uid,
@@ -249,8 +271,27 @@ def fetch_receipts(
                                 processed_label=notification_label,
                             )
                             to_expunge = to_expunge or filed
+                            if filed:
+                                record_email_receipt(
+                                    db_conn,
+                                    uid=uid,
+                                    mailbox=mailbox,
+                                    message_id=message_id,
+                                    subject=subject,
+                                    sender=sender,
+                                    received_at=date_str,
+                                    attachment_count=0,
+                                    status="internal-filed",
+                                )
                         if verbose:
-                            suffix = f"; filed to {notification_label!r}" if not dry_run else ""
+                            if dry_run:
+                                suffix = ""
+                            elif filed:
+                                suffix = f"; filed to {notification_label!r}"
+                            elif tracking["tracked"]:
+                                suffix = "; already tracked"
+                            else:
+                                suffix = ""
                             print(f"    skip (internal intake message{suffix}): {subject!r}")
                         result.skipped += 1
                         continue
@@ -492,6 +533,67 @@ def _same_mailbox_label(left: str, right: str) -> bool:
     return left.strip().strip('"').casefold() == right.strip().strip('"').casefold()
 
 
+def _notification_inbox_grace_seconds(email_cfg: dict) -> int:
+    """Return how long generated notifications should remain visible in INBOX."""
+    if email_cfg.get("notification_inbox_grace_seconds") is not None:
+        raw_value = email_cfg.get("notification_inbox_grace_seconds")
+        multiplier = 1
+    else:
+        raw_value = email_cfg.get("notification_inbox_grace_minutes", 60)
+        multiplier = 60
+    try:
+        return max(0, int(float(raw_value) * multiplier))
+    except (TypeError, ValueError):
+        return 60 * 60
+
+
+def _email_message_tracking_state(db_conn, *, uid: int, mailbox: str, message_id: str) -> dict:
+    """Return email_receipts tracking state for a message."""
+    row = db_conn.execute(
+        "SELECT status, processed_at FROM email_receipts WHERE uid = ? AND mailbox = ?",
+        (uid, mailbox),
+    ).fetchone()
+    if row is None and message_id:
+        row = db_conn.execute(
+            """
+            SELECT status, processed_at
+            FROM email_receipts
+            WHERE message_id = ?
+            ORDER BY processed_at ASC
+            LIMIT 1
+            """,
+            (message_id,),
+        ).fetchone()
+    if row is None:
+        return {"tracked": False, "status": "", "processed_at": None}
+    return {
+        "tracked": True,
+        "status": str(row["status"] or ""),
+        "processed_at": _parse_tracking_datetime(str(row["processed_at"] or "")),
+    }
+
+
+def _internal_notification_ready_to_file(tracking: dict, *, grace_seconds: int) -> bool:
+    """Return True when a tracked internal notification has aged past the grace period."""
+    if tracking.get("status") != "internal":
+        return False
+    processed_at = tracking.get("processed_at")
+    if not isinstance(processed_at, datetime):
+        return False
+    age = datetime.now(UTC) - processed_at.astimezone(UTC)
+    return age.total_seconds() >= grace_seconds
+
+
+def _parse_tracking_datetime(value: str) -> datetime | None:
+    """Parse an email_receipts timestamp."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _file_message_to_processed_label(
     sr,
     conn,
@@ -505,6 +607,21 @@ def _file_message_to_processed_label(
     Returns True when the source mailbox needs expunge because a move occurred.
     """
     sr.mark_message_read(conn, uid)
+    if not processed_label or _same_mailbox_label(source_mailbox, processed_label):
+        return False
+    sr.move_message(conn, uid, processed_label)
+    return True
+
+
+def _move_message_without_marking_read(
+    sr,
+    conn,
+    uid: int,
+    *,
+    source_mailbox: str,
+    processed_label: str,
+) -> bool:
+    """Move *uid* to *processed_label* without marking it read."""
     if not processed_label or _same_mailbox_label(source_mailbox, processed_label):
         return False
     sr.move_message(conn, uid, processed_label)
