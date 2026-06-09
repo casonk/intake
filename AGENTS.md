@@ -13,6 +13,7 @@
 ```bash
 intake process   # OCR → parse → classify → move → upsert DB → write sidecar
 intake backfill  # ingest receipts already in category folders (skips sidecared files)
+intake translate # translate OCR text/receipt artifacts or backfill language/translation fields
 intake report    # generate Markdown + HTML spending summary
 intake audit     # list intake PDFs without processing
 ```

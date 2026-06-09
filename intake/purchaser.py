@@ -72,31 +72,20 @@ _STAFF_LABEL_TOKENS = frozenset(
     }
 )
 
-_KNOWN_PURCHASER_ALIASES: dict[str, tuple[str, ...]] = {
-    "cason konzer": (
-        "cason",
-        "cason konzer",
-        "casonkonzer",
-        "casonkonzer@gmail.com",
-        "cason konzep",
-        "konzer / cason andrew",
-        "cason andrew konzer",
-        "konzer cason andrew",
-    ),
-    "Alaric g Thornwood": (
-        "Alaric g Thornwood",
-        "Al Thornwood",
-    ),
-    "Michael Harrington": (
-        "Michael Harrington",
-        "Mike Harrington",
-        "Mike Harringtonn",
-        "Michael Harrington jr",
-        "Michael j Harrington jr",
-        "Michael j. Harrington jr.",
-        "Michael Marcus Harrington jr",
-    ),
-}
+_KNOWN_PURCHASER_ALIASES: dict[str, tuple[str, ...]] = {}
+
+
+def register_purchaser_aliases(aliases: dict[str, list[str]]) -> None:
+    """Populate the alias table from settings (call once at startup).
+
+    Each key is the canonical name; the value is a list of alternate spellings,
+    OCR variants, email addresses, and comma-inverted forms that should resolve
+    to that canonical name.
+    """
+    _KNOWN_PURCHASER_ALIASES.clear()
+    _KNOWN_PURCHASER_ALIASES.update(
+        {canonical: tuple(variants) for canonical, variants in aliases.items()}
+    )
 
 
 def _collapse_spaces(text: str) -> str:

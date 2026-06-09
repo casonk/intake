@@ -64,6 +64,8 @@ def write_debug_artifacts(
     raw_text: str,
     processed_by: str,
     tier: str,
+    language: str | None = None,
+    translated_text: str | None = None,
     ai_attempts: list[dict] | None = None,
 ) -> tuple[Path, Path]:
     """Write OCR and AI debug artifacts next to *pdf*."""
@@ -80,6 +82,8 @@ def write_debug_artifacts(
         "filename": pdf.name,
         "processed_by": processed_by,
         "tier": tier,
+        "language": language or "und",
+        "translated_text": translated_text,
         "used_ai": bool(attempts),
         "latest_used_ai": bool(new_attempts),
         "attempt_count": len(attempts),

@@ -29,6 +29,7 @@ from intake.db import (
 )
 from intake.naming import allocate_canonical_path
 from intake.purchaser import normalize_purchaser
+from intake.translation import maybe_translate_receipt
 
 _DEFAULT_RECEIPT_SENDER_HINTS = (
     "service@paypal.com",
@@ -2275,6 +2276,8 @@ def _upsert_html_receipt(
                             'with keys: "merchant", "total" (float), "receipt_date" (YYYY-MM-DD), '
                             '"receipt_time" (HH:MM), "purchaser", "card_last4", '
                             '"currency" (ISO-4217 code e.g. "USD", "CAD", "EUR", "JPY"; default "USD"), '
+                            '"language" ("en", "ja", or "und"), '
+                            '"translated_text" (concise English translation when the receipt body is non-English; otherwise null), '
                             '"items" (array of {"description","amount","quantity","unit_price"}), '
                             '"certifications" (array of {"issuer","label","source_text"}), '
                             '"staff" (array of {"role","name","source_text"} for server, waitress, waiter, cashier, or clerk fields). '
@@ -2304,6 +2307,14 @@ def _upsert_html_receipt(
         if inferred:
             receipt = replace(receipt, purchaser=inferred)
 
+    receipt = maybe_translate_receipt(
+        receipt,
+        provider=settings.get("translation_provider") or "ollama",
+        model=settings.get("translation_model") or "aya-expanse:8b",
+        base_url=settings.get("translation_base_url") or "http://localhost:11434",
+        timeout_seconds=int(settings.get("translation_timeout_seconds") or 60),
+    )
+
     row = {
         "filename": synthetic_name,
         "scan_date": (receipt.receipt_date or receipt.scan_date).isoformat(),
@@ -2316,6 +2327,8 @@ def _upsert_html_receipt(
         "purchaser": receipt.purchaser,
         "card_last4": receipt.card_last4,
         "currency": receipt.currency,
+        "language": receipt.language,
+        "translated_text": receipt.translated_text,
         "items": receipt.items,
         "certifications": receipt.certifications,
         "staff": receipt.staff,

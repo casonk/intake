@@ -50,6 +50,19 @@ reports_dir = "reports"
 #
 # total_escalation_threshold = 250.0   # set to 0 to disable high-total escalation
 
+# ── Non-English OCR translation (defaults to local Ollama) ───────────────────
+# For receipts whose OCR is not primarily English, intake stores:
+#   - raw_text / *.ocr.txt        → original OCR
+#   - translated_text             → line-faithful English translation
+#
+# By default this uses the shared local crew-chief/Ollama service to avoid API
+# usage. Set translation_provider = "none" to disable translation persistence.
+#
+# translation_provider = "ollama"
+# translation_model = "aya-expanse:8b"
+# translation_base_url = "http://localhost:11434"
+# translation_timeout_seconds = 60
+
 # ── Escalation patterns ───────────────────────────────────────────────────────
 # Regex patterns matched against the extracted merchant name.  Any match forces
 # the high-fidelity model regardless of overall OCR quality.
@@ -157,6 +170,11 @@ reports_dir = "reports"
 # # Optional subject prefix
 # # subject_prefix = "[intake] "
 #
+# # Queue processed-receipt Gmail notices for the hourly shock-relay digest
+# # instead of sending one email per receipt. Reply-link follow-ups still send
+# # immediately.
+# # digest = true
+#
 # # The initial "Receipt processed" email includes the Snowbridge File Browser
 # # link when the receipt path resolves under receipt_dir.
 #
@@ -189,3 +207,17 @@ reports_dir = "reports"
 # #   INTAKE_RECEIPTS_JSON
 # #   INTAKE_RECEIPT_COUNT
 # #   INTAKE_TRIGGER
+
+# ── Purchaser name aliases (private — do not commit to public repos) ──────────
+# Maps canonical purchaser names (as stored in the DB) to lists of alternate
+# spellings, OCR variants, email addresses, and comma-inverted forms.
+# Keep this section in your local settings.toml only.
+#
+# [purchaser_aliases]
+# "jane sample" = [
+#   "jane",
+#   "jane sample",
+#   "janesample",
+#   "janesample@gmail.com",
+#   "sample, jane",
+# ]

@@ -40,6 +40,8 @@ def test_write_and_read_sidecar(tmp_pdf):
         "merchant": "Acme",
         "total": 9.99,
         "category": "general",
+        "language": "ja",
+        "translated_text": "Acme\nTotal 9.99",
         "items": [{"description": "Widget", "amount": 9.99}],
     }
     path = write_sidecar(tmp_pdf, data)
@@ -51,6 +53,8 @@ def test_write_and_read_sidecar(tmp_pdf):
     payload = read_sidecar(tmp_pdf)
     assert payload["merchant"] == "Acme"
     assert payload["total"] == 9.99
+    assert payload["language"] == "ja"
+    assert payload["translated_text"] == "Acme\nTotal 9.99"
     assert payload["items"] == [{"description": "Widget", "amount": 9.99}]
     assert "processed_at" in payload
 
@@ -84,6 +88,8 @@ def test_write_debug_artifacts(tmp_pdf):
         raw_text="Store\nTOTAL 10.00",
         processed_by="gpt-4o-mini",
         tier="low",
+        language="ja",
+        translated_text="Store\nTotal 10.00",
         ai_attempts=[{"model": "gpt-4o-mini", "response": {"merchant": "store"}}],
     )
 
@@ -91,6 +97,8 @@ def test_write_debug_artifacts(tmp_pdf):
     payload = json.loads(ai_path.read_text(encoding="utf-8"))
     assert payload["processed_by"] == "gpt-4o-mini"
     assert payload["tier"] == "low"
+    assert payload["language"] == "ja"
+    assert payload["translated_text"] == "Store\nTotal 10.00"
     assert payload["used_ai"] is True
     assert payload["latest_used_ai"] is True
     assert payload["attempt_count"] == 1

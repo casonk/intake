@@ -5,12 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
+from functools import cache
 from pathlib import Path
 
 from intake.certification import (
     ReceiptCertification,
     extract_certifications,
 )
+from intake.language import ReceiptLocaleHint, detect_receipt_locale
 from intake.purchaser import is_probable_staff_name, normalize_purchaser
 from intake.staff import ReceiptStaff, extract_staff
 
@@ -37,6 +39,8 @@ class Receipt:
     purchaser: str | None = None  # cardholder name if found on receipt
     card_last4: str | None = None  # last 4 digits of payment card if found
     currency: str = "USD"  # ISO-4217 currency code detected from OCR text
+    language: str = "und"  # best-effort OCR language code
+    translated_text: str | None = None  # English translation for non-English OCR
     items: list[ReceiptItem] = field(default_factory=list)
     certifications: list[ReceiptCertification] = field(default_factory=list)
     staff: list[ReceiptStaff] = field(default_factory=list)
@@ -57,15 +61,21 @@ class Receipt:
         return canonical_filename_for_datetime(base_dt, suffix)
 
 
-def parse_receipt(filename: str, raw_text: str, pdf_path: Path | None = None) -> Receipt:
+def parse_receipt(
+    filename: str,
+    raw_text: str,
+    pdf_path: Path | None = None,
+    locale_hint: ReceiptLocaleHint | None = None,
+) -> Receipt:
     """Parse filename and raw OCR text into a Receipt."""
+    locale_hint = locale_hint or detect_receipt_locale(raw_text)
     scan_date = _parse_scan_date(filename, pdf_path)
     merchant = _parse_merchant(raw_text)
     total = _parse_total(raw_text)
     receipt_date, receipt_time = _parse_receipt_datetime(raw_text)
     purchaser = _parse_purchaser(raw_text)
     card_last4 = _parse_card_last4(raw_text)
-    currency = _parse_currency(raw_text)
+    currency = _parse_currency(raw_text, locale_hint=locale_hint)
     items = _parse_items(raw_text)
     certifications = extract_certifications(raw_text)
     staff = extract_staff(raw_text)
@@ -80,6 +90,7 @@ def parse_receipt(filename: str, raw_text: str, pdf_path: Path | None = None) ->
         purchaser=purchaser,
         card_last4=card_last4,
         currency=currency,
+        language=locale_hint.language or "und",
         items=items,
         certifications=certifications,
         staff=staff,
@@ -110,6 +121,7 @@ _CURRENCY_SYMBOL_MAP: dict[str, str] = {
     "₼": "AZN",
     "₾": "GEL",
     "¥": "JPY",
+    "￥": "JPY",
     "円": "JPY",
 }
 
@@ -284,6 +296,26 @@ _ISO_4217_CODES: frozenset[str] = frozenset(
 )
 
 # Explicit "Currency: EUR" label on a receipt.
+_FULLWIDTH_TRANSLATION = str.maketrans(
+    {
+        "０": "0",
+        "１": "1",
+        "２": "2",
+        "３": "3",
+        "４": "4",
+        "５": "5",
+        "６": "6",
+        "７": "7",
+        "８": "8",
+        "９": "9",
+        "．": ".",
+        "，": ",",
+        "：": ":",
+        "￥": "¥",
+        "－": "-",
+    }
+)
+
 _CURRENCY_LABEL_RE = re.compile(r"\bcurrency\s*[:\-]?\s*([A-Z]{3})\b", re.IGNORECASE)
 
 # Uppercase ISO-4217 code immediately after or before an amount.
@@ -294,7 +326,15 @@ _AMOUNT_CODE_RE = re.compile(
 )
 
 
-def _parse_currency(raw_text: str) -> str:
+def _normalize_ocr_numbers(raw_text: str) -> str:
+    return str(raw_text or "").translate(_FULLWIDTH_TRANSLATION)
+
+
+def _parse_currency(
+    raw_text: str,
+    *,
+    locale_hint: ReceiptLocaleHint | None = None,
+) -> str:
     """Detect receipt currency from OCR text; returns ISO-4217 code.
 
     Detection order (highest → lowest confidence):
@@ -303,21 +343,24 @@ def _parse_currency(raw_text: str) -> str:
     3. Explicit "Currency: EUR" label
     4. Uppercase ISO-4217 code adjacent to an amount ("47.23 EUR")
     """
+    normalized_text = _normalize_ocr_numbers(raw_text)
     for symbol, code in _CURRENCY_SYMBOL_MAP.items():
-        if symbol in raw_text:
+        if symbol in normalized_text:
             return code
     for pattern, code in _CURRENCY_TEXT_PATTERNS:
-        if pattern.search(raw_text):
+        if pattern.search(normalized_text):
             return code
-    m = _CURRENCY_LABEL_RE.search(raw_text)
+    m = _CURRENCY_LABEL_RE.search(normalized_text)
     if m:
         code = m.group(1).upper()
         if code in _ISO_4217_CODES:
             return code
-    for m in _AMOUNT_CODE_RE.finditer(raw_text):
+    for m in _AMOUNT_CODE_RE.finditer(normalized_text):
         code = (m.group(1) or m.group(2) or "").upper()
         if code in _ISO_4217_CODES:
             return code
+    if locale_hint and locale_hint.currency in _ISO_4217_CODES:
+        return locale_hint.currency
     return "USD"
 
 
@@ -564,6 +607,12 @@ def _parse_merchant(raw_text: str) -> str:
 
     for line in raw_text.splitlines():
         stripped = clean_merchant_text(line)
+        if not stripped:
+            continue
+        if _LINE_AMOUNT_RE.match(_normalize_ocr_numbers(line)):
+            continue
+        if not re.search(r"[^\W\d_]", stripped, re.UNICODE):
+            continue
         if stripped:
             return stripped[:60].lower()
     return "unknown"
@@ -572,11 +621,26 @@ def _parse_merchant(raw_text: str) -> str:
 # ── total ─────────────────────────────────────────────────────────────────────
 
 _LINE_AMOUNT_RE = re.compile(
-    r"^\s*(?P<label>[^0-9$][^\n$]{0,120}?)\s*[:\-]?\s*\$?\s*(?P<amount>-?\d{1,6}(?:[.,]\d{1,2})?)\s*(?:[A-Z]{3})?\s*$",
+    r"^\s*(?P<label>[^0-9$¥€£₹₩][^\n$¥€£₹₩]{0,120}?)\s*[:\-]?\s*"
+    r"(?:[$¥€£₹₩]\s*)?"
+    r"(?P<amount>-?(?:\d{1,3}(?:,\d{3})+|\d{1,6})(?:[.,]\d{1,2})?)"
+    r"\s*(?:円|[A-Z]{3})?\s*$",
     re.IGNORECASE,
 )
 
-_TOTAL_LABEL_TERMS = ("grand total", "order total", "amount due", "balance due", "balance", "total")
+_TOTAL_LABEL_TERMS = (
+    "grand total",
+    "order total",
+    "amount due",
+    "balance due",
+    "balance",
+    "total",
+    "gesamt",
+    "gesamtsumme",
+    "summe",
+    "total ttc",
+    "合計",
+)
 # Higher-priority labels that represent what was charged, not what remains owed.
 # "Balance Due: $0.00" on a fully-paid receipt should not beat "Invoice Total: $65.00".
 _TOTAL_PRIORITY_TERMS = (
@@ -589,6 +653,20 @@ _TOTAL_PRIORITY_TERMS = (
     "total due",
     "total amount",
     "total charge",
+    "gesamt",
+    "gesamtsumme",
+    "summe",
+    "zahlbetrag",
+    "total ttc",
+    "montant total",
+    "合計",
+    "総合計",
+    "税込合計",
+    "お買上げ計",
+    "お買い上げ計",
+    "請求金額",
+    "領収金額",
+    "お支払い",
 )
 # Receipt OCR sometimes exposes the actual charged amount only on the payment
 # tender line, e.g. "MASTERCARD 88.05", while a nearby balance line can be a
@@ -606,10 +684,24 @@ _PAYMENT_TOTAL_TERMS = (
     "cashless",
 )
 # Fallback terms — used only when no priority term yields a positive value.
-_TOTAL_FALLBACK_TERMS = ("balance due", "balance", "total")
+_TOTAL_FALLBACK_TERMS = (
+    "balance due",
+    "balance",
+    "total",
+    "gesamt",
+    "gesamtsumme",
+    "summe",
+    "total ttc",
+    "合計",
+    "計",
+    "現計",
+)
 _TOTAL_EXCLUDE_TERMS = (
     "subtotal",
     "sub total",
+    "sous total",
+    "sous-total",
+    "zwischensumme",
     "loyalty",
     "points",
     "reward",
@@ -623,12 +715,28 @@ _TOTAL_EXCLUDE_TERMS = (
     "promo",
     "promotion",
     "change",
+    "rückgeld",
+    "ruckgeld",
+    "rendu",
     "customer",
     "payment",
     "cash",
+    "espèces",
+    "especes",
+    "mwst",
+    "ust",
+    "tva",
+    "小計",
+    "消費税",
+    "税",
+    "割引",
+    "値引",
+    "ポイント",
+    "釣銭",
+    "お釣り",
 )
-_SUBTOTAL_TERMS = ("subtotal", "sub total")
-_TAX_TOTAL_TERMS = ("total tax", "tax total")
+_SUBTOTAL_TERMS = ("subtotal", "sub total", "sous total", "sous-total", "zwischensumme", "小計")
+_TAX_TOTAL_TERMS = ("total tax", "tax total", "mwst", "ust", "tva", "消費税", "税")
 _DISCOUNT_TOTAL_TERMS = ("total discount", "discount total", "total savings", "savings total")
 _EXPLICIT_AMOUNT_PAID_TERMS = ("amount paid",)
 _EXPLICIT_AMOUNT_DUE_TERMS = ("amount due",)
@@ -647,8 +755,10 @@ _STATUS_UNPAID_RE = re.compile(r"\bstatus\s*:\s*unpaid\b", re.IGNORECASE)
 
 
 def _parse_amount(raw: str) -> float | None:
-    cleaned = raw.strip()
-    if "," in cleaned and "." not in cleaned:
+    cleaned = _normalize_ocr_numbers(raw).strip()
+    if re.fullmatch(r"-?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?", cleaned):
+        cleaned = cleaned.replace(",", "")
+    elif "," in cleaned and "." not in cleaned:
         cleaned = cleaned.replace(",", ".")
     else:
         cleaned = cleaned.replace(",", "")
@@ -661,7 +771,8 @@ def _parse_amount(raw: str) -> float | None:
 def _iter_labeled_amounts(raw_text: str) -> list[tuple[str, float]]:
     entries: list[tuple[str, float]] = []
     for line in raw_text.splitlines():
-        match = _LINE_AMOUNT_RE.match(line)
+        normalized_line = _normalize_ocr_numbers(line)
+        match = _LINE_AMOUNT_RE.match(normalized_line)
         if not match:
             continue
         amount = _parse_amount(match.group("amount"))
@@ -670,13 +781,23 @@ def _iter_labeled_amounts(raw_text: str) -> list[tuple[str, float]]:
         label = " ".join(
             match.group("label").replace("|", "l").replace("]", "l").strip().lower().split()
         )
-        if any(term in label for term in _PAYMENT_TOTAL_TERMS) and re.search(
+        if any(_label_has_term(label, term) for term in _PAYMENT_TOTAL_TERMS) and re.search(
             r"[xX*]{2,}|[hH]{2,}", match.group("label")
         ):
             continue
         if label:
             entries.append((label, amount))
     return entries
+
+
+@cache
+def _term_pattern(term: str) -> re.Pattern[str]:
+    escaped = re.escape(term).replace(r"\ ", r"\s+")
+    return re.compile(rf"(?<!\w){escaped}(?!\w)")
+
+
+def _label_has_term(label: str, term: str) -> bool:
+    return bool(_term_pattern(term).search(label))
 
 
 def _last_amount_with_terms(
@@ -687,8 +808,8 @@ def _last_amount_with_terms(
 ) -> float | None:
     match_value: float | None = None
     for label, amount in entries:
-        if any(term in label for term in include_terms) and not any(
-            term in label for term in exclude_terms
+        if any(_label_has_term(label, term) for term in include_terms) and not any(
+            _label_has_term(label, term) for term in exclude_terms
         ):
             match_value = amount
     return match_value
@@ -703,8 +824,8 @@ def _sum_amounts_with_terms(
     matches = [
         amount
         for label, amount in entries
-        if any(term in label for term in include_terms)
-        and not any(term in label for term in exclude_terms)
+        if any(_label_has_term(label, term) for term in include_terms)
+        and not any(_label_has_term(label, term) for term in exclude_terms)
     ]
     if not matches:
         return None

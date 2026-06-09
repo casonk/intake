@@ -92,9 +92,9 @@ def _normalise(text: str) -> str:
 def clean_merchant_text(text: str) -> str:
     """Strip surrounding OCR noise while preserving the merchant words."""
     cleaned = re.sub(r"\s+", " ", text).strip()
-    cleaned = re.sub(r"^[^A-Za-z0-9]+", "", cleaned)
-    cleaned = re.sub(r"[^A-Za-z0-9]+$", "", cleaned)
-    return cleaned
+    cleaned = re.sub(r"^[^\w]+", "", cleaned, flags=re.UNICODE)
+    cleaned = re.sub(r"[^\w]+$", "", cleaned, flags=re.UNICODE)
+    return cleaned.strip("_")
 
 
 def is_blacklisted_merchant(text: str) -> bool:

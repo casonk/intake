@@ -11,6 +11,7 @@ from intake.notify import (
     format_processed_receipt_message,
     format_processed_receipt_subject,
     format_receipt_file_link_reply_message,
+    gmail_digest_enabled,
     gmail_notifications_enabled,
     gmail_reply_available,
     send_corrupt_intake_gmail_notification,
@@ -88,6 +89,12 @@ def test_gmail_reply_available_with_email_config_fallback():
         }
     }
     assert gmail_reply_available(settings) is True
+
+
+def test_gmail_digest_enabled():
+    assert gmail_digest_enabled({}) is False
+    assert gmail_digest_enabled({"gmail": {"digest": True}}) is True
+    assert gmail_digest_enabled({"gmail": {"digest_enabled": True}}) is True
 
 
 def test_format_processed_receipt_message_includes_key_fields():
@@ -330,6 +337,73 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
     assert text is True
 
 
+def test_send_processed_receipt_gmail_notification_queues_digest(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.local.yaml"
+    config_path.write_text("imap:\n  username: me@example.com\n", encoding="utf-8")
+    queue_script = tmp_path / "queue_digest.py"
+    queue_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, capture_output, text):
+        calls.append((cmd, capture_output, text))
+        return Result()
+
+    monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
+
+    settings = {
+        "gmail": {
+            "shock_relay_config": str(config_path),
+            "recipient": "me@example.com",
+            "subject_prefix": "[intake] ",
+            "digest": True,
+        }
+    }
+
+    sent = send_processed_receipt_gmail_notification(
+        settings,
+        _receipt(),
+        category="grocery/supermarket",
+        receipt_dir="grocery/supermarket/20260318_1834.pdf",
+        filename="20260318_1834.pdf",
+        processed_by="tesseract",
+    )
+
+    assert sent == 1
+    cmd, capture_output, text = calls[0]
+    assert cmd[:11] == [
+        sys.executable,
+        str(queue_script),
+        "--header",
+        "X-Portfolio-Service: intake",
+        "--header",
+        "X-Crew-Chief-Intent: notify",
+        "--header",
+        "X-Intake-Receipt-Filename: 20260318_1834.pdf",
+        "--header",
+        "X-Intake-Receipt-Dir: grocery/supermarket/20260318_1834.pdf",
+        "--service",
+    ]
+    assert cmd[11:16] == [
+        "intake",
+        "--kind",
+        "receipt-processed",
+        "--summary",
+        "[intake] Receipt processed: kroger $4.33",
+    ]
+    assert cmd[16] == "me@example.com"
+    assert cmd[17] == "[intake] Receipt processed: kroger $4.33"
+    assert "Receipt processed" in cmd[18]
+    assert cmd[19:] == ["--config", str(config_path)]
+    assert capture_output is True
+    assert text is True
+
+
 def test_send_receipt_file_link_gmail_reply_invokes_sender(monkeypatch, tmp_path):
     config_path = tmp_path / "config.local.yaml"
     config_path.write_text("imap:\n  username: me@example.com\n", encoding="utf-8")
@@ -366,7 +440,7 @@ def test_send_receipt_file_link_gmail_reply_invokes_sender(monkeypatch, tmp_path
 
     link = send_receipt_file_link_gmail_reply(
         settings,
-        recipient="Cason Konzer <casonkonzer@gmail.com>",
+        recipient="Alex Sample <alexsample@gmail.com>",
         subject="Re: [intake] Receipt processed: dewdney liquor store $39.07",
         receipt_row={
             "filename": "20260419_2018.jpg",
@@ -396,7 +470,7 @@ def test_send_receipt_file_link_gmail_reply_invokes_sender(monkeypatch, tmp_path
         "In-Reply-To: <reply@example.com>",
         "--header",
         "References: <orig@example.com> <reply@example.com>",
-        "casonkonzer@gmail.com",
+        "alexsample@gmail.com",
     ]
     assert cmd[15] == "Re: [intake] Receipt processed: dewdney liquor store $39.07"
     assert "https://files.snowbridge.internal/files/receipt/general/20260419_2018.jpg" in cmd[16]

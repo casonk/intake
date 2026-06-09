@@ -105,3 +105,24 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 - Avoid broad category keywords such as color words in cannabis rules; use explicit cannabis merchant/product terms and add known App Store/KeePass signals under software so full-text classification does not misfire.
 - Itemized receipt summaries in report tables must be capped before rendering, not just wrapped with CSS; long product names otherwise force operational tables wider than the viewport.
 - Inline email receipt sidecars must serialize structured fields such as items, certifications, and staff before JSON writes; a post-DB sidecar failure can leave the receipt row present while Gmail filing and `email_receipts` recording never happen.
+
+### 2026-06-07 — Processed-receipt email bursts should use the shared Gmail digest
+
+- When receipt processing can emit many Gmail notifications in a burst, enable `[gmail].digest = true` so processed-receipt notices are queued through shock-relay and sent as an aggregate.
+- Keep reply-link follow-ups immediate; they are user-requested responses rather than routine operational alerts.
+
+### 2026-06-08 — Japanese cash-tender labels are not transaction totals
+
+- Japanese receipt parsing must distinguish purchase totals such as `合計` / `税込合計` from cash-tender labels such as `お預り` / `お預かり`; the tendered cash amount can be larger than the receipt total and should not override a valid total.
+- Japanese-only merchant lines should not be discarded by ASCII-only merchant cleanup; otherwise the parser can fall through to amount lines and store numeric text as the merchant.
+- A language/locale hint is useful for currency defaults, but if downstream review needs to know a receipt was Japanese, persist a language field instead of only using a transient parse hint.
+- For non-English receipts, keep `raw_text` / `*.ocr.txt` as the original source artifact and store the English translation in a separate structured field such as `translated_text`; overwriting OCR text destroys the audit trail needed for later parser fixes.
+- Default non-English translation to the shared local `crew-chief` Ollama service when available, and keep translation as secondary metadata only; merchant, total, and currency should still come from deterministic parsing plus explicit review/high-tier correction paths rather than from the translation text alone.
+- Historical locale backfills on noisy phone photos should not blindly re-run the OCR parser and overwrite trusted merchant/total fields; OCR-only refreshes can get worse. For old low-quality receipts, use a vision-capable model or explicit visual review to fill `language` / `translated_text`, and only change merchant/total when the prior value is missing or the new evidence is clearly stronger.
+- `currency = JPY` is a strong clue but not proof that a receipt is Japanese; false positives can come from OCR/currency heuristics on ordinary USD receipts. Before mass locale backfills, review outliers visually or with an image-capable model and correct the false positives back to `USD` / `en` instead of assuming the whole bucket is Japanese.
+- Historical translation/locale cleanup should live behind a first-class CLI (`intake translate backfill`) rather than one-off scripts, and other repos that only need receipt/image OCR translation should prefer shelling out to `intake translate text|receipt --json` instead of building a separate receipt-specific translator.
+
+### 2026-06-09 — Locale receipt terms need boundary-aware matching
+
+- Receipt label matching should treat short locale terms such as `USt`, `TVA`, `TTC`, or `bar` as whole labels/words, not raw substrings; naive substring checks can misread unrelated English labels like `customer` as tax lines and silently corrupt computed totals.
+- When adding new locale support, extend both locale detection and total/subtotal/tax exclusion vocabularies together; language detection alone is not enough if the parser still only understands English/Japanese amount labels.

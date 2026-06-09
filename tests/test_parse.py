@@ -265,6 +265,57 @@ def test_paid_notice_prefers_total_amount_paid_over_amount_due():
     assert r.total == pytest.approx(18.95)
 
 
+def test_japanese_receipt_keeps_merchant_and_prefers_total_over_cash_tender():
+    text = "\n".join(
+        [
+            "ローソン",
+            "合計 ￥1,280",
+            "お預り 2000",
+            "お釣り 720",
+        ]
+    )
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert r.merchant == "ローソン"
+    assert r.total == pytest.approx(1280.0)
+    assert r.currency == "JPY"
+    assert r.language == "ja"
+
+
+def test_german_receipt_detected_as_german_and_parses_total():
+    text = "\n".join(
+        [
+            "Bäckerei Müller",
+            "Zwischensumme 3,50 EUR",
+            "MwSt 0,56",
+            "Gesamt 4,06",
+            "Rückgeld 0,94",
+        ]
+    )
+    r = parse_receipt("20260401_0910.pdf", text)
+    assert r.merchant == "bäckerei müller"
+    assert r.total == pytest.approx(4.06)
+    assert r.currency == "EUR"
+    assert r.language == "de"
+
+
+def test_french_receipt_detected_as_french_and_parses_total():
+    text = "\n".join(
+        [
+            "Boulangerie du Marché",
+            "Sous-total 8,20 €",
+            "TVA 0,80",
+            "Total TTC 9,00",
+            "Espèces 10,00",
+            "Rendu 1,00",
+        ]
+    )
+    r = parse_receipt("20260401_0915.pdf", text)
+    assert r.merchant == "boulangerie du marché"
+    assert r.total == pytest.approx(9.0)
+    assert r.currency == "EUR"
+    assert r.language == "fr"
+
+
 def test_loyalty_points_total_ignored():
     text = "\n".join(
         [
@@ -407,8 +458,8 @@ def test_purchaser_extracted():
 
 
 def test_purchaser_alias_normalized_by_ocr_parser():
-    r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: CASON\nTotal $5.00")
-    assert r.purchaser == "cason konzer"
+    r = parse_receipt("20260401_0900.pdf", "Store\nCardholder: JANE\nTotal $5.00")
+    assert r.purchaser == "jane sample"
 
 
 def test_purchaser_extracted_from_bill_to_email_block():
@@ -416,14 +467,14 @@ def test_purchaser_extracted_from_bill_to_email_block():
         [
             "Credit Note",
             "Anthropic, PBC Bill to",
-            "548 Market Street casonkonzer@gmail.com's Organization",
+            "548 Market Street janesample@gmail.com's Organization",
             "PMB 90375 4350 Bald Eagle Lake Road",
-            "support@anthropic.com casonkonzer@gmail.com",
+            "support@anthropic.com janesample@gmail.com",
             "Refund issued - Visa - 9369 $200.00",
         ]
     )
     r = parse_receipt("20260322_2241.pdf", text)
-    assert r.purchaser == "cason konzer"
+    assert r.purchaser == "jane sample"
 
 
 def test_purchaser_absent_when_not_present():

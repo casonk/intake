@@ -156,19 +156,19 @@ def test_looks_like_receipt_false_for_quoted_intake_notification():
         ),
         (
             "You paid Mirjam Zinner $20.00",
-            "Hi Cason,\nYou paid Mirjam Zinner $20.00\nFor: dinner",
+            "Hi Alex,\nYou paid Mirjam Zinner $20.00\nFor: dinner",
         ),
         (
             "Mirjam Zinner paid you $15.00",
-            "Hi Cason,\nMirjam Zinner paid you $15.00",
+            "Hi Alex,\nMirjam Zinner paid you $15.00",
         ),
         (
             "Alex charged you $50.00",
-            "Hi Cason,\nAlex charged you $50.00",
+            "Hi Alex,\nAlex charged you $50.00",
         ),
         (
             "Money added to your account",
-            "Hello Cason,\nYou added 123.45 USD to your account.",
+            "Hello Alex,\nYou added 123.45 USD to your account.",
         ),
         (
             "Your Reservation Confirmation",
@@ -191,7 +191,7 @@ def test_looks_like_receipt_true_for_credit_card_payment_emails(subject, text):
         (
             "Your Scheduled Payment",
             "Discover Card <discover@services.discover.com>",
-            "CASON KONZER, your online Discover card payment is scheduled\n"
+            "ALEX SAMPLE, your online Discover card payment is scheduled\n"
             "Payment Info\nAmount: $69.69",
         ),
         (
@@ -210,12 +210,12 @@ def test_extract_credit_card_payment_email_capital_one_posted():
     body = """
     VentureOne Credit Card...5653
     Thanks for your payment of $69.69
-    CASON,
+    ALEX SAMPLE,
     Payment amount:
     $69.69
     Posted date:
     April 16, 2026
-    This email was sent to casonkonzer@gmail.com
+    This email was sent to alexsample@gmail.com
     """
     parsed = _extract_credit_card_payment_email(
         "We've received your payment",
@@ -226,7 +226,7 @@ def test_extract_credit_card_payment_email_capital_one_posted():
         "merchant": "capital one",
         "total": 69.69,
         "receipt_date": date(2026, 4, 16),
-        "purchaser": "cason konzer",
+        "purchaser": "alex sample",
         "card_last4": "5653",
         "category": "finance/credit-card-payment",
     }
@@ -235,7 +235,7 @@ def test_extract_credit_card_payment_email_capital_one_posted():
 def test_extract_credit_card_payment_email_discover_scheduled_is_ignored():
     body = """
     Account ending in 7875
-    CASON KONZER, your online Discover card payment is scheduled
+    ALEX SAMPLE, your online Discover card payment is scheduled
     Payment Info
     Amount: $69.69
     Payment Post Date: April 16, 2026
@@ -270,7 +270,7 @@ def test_extract_progressive_payment_email_renewal_reminder():
     $1,028.00
     Minimum Installment
     $193.55
-    Cason, your rate went down by $48!
+    Alex Sample, your rate went down by $48!
     """
     parsed = _extract_progressive_payment_email(
         "Progressive policy renewal reminder",
@@ -281,7 +281,7 @@ def test_extract_progressive_payment_email_renewal_reminder():
         "merchant": "progressive",
         "total": 193.55,
         "receipt_date": date(2026, 5, 1),
-        "purchaser": "cason konzer",
+        "purchaser": "alex sample",
         "card_last4": None,
         "category": "auto/insurance",
     }
@@ -289,7 +289,7 @@ def test_extract_progressive_payment_email_renewal_reminder():
 
 def test_extract_paypal_receipt_email_transaction_receipt():
     body = """
-    Hello, Cason Konzer
+    Alex Sample,
 
     You paid $12.99 USD to Spotify USA Inc
 
@@ -303,7 +303,7 @@ def test_extract_paypal_receipt_email_transaction_receipt():
     Total
     $12.99 USD
 
-    Your payment was sent from casonkonzer@gmail.com
+    Your payment was sent from alexsample@gmail.com
     """
     parsed = _extract_paypal_receipt_email(
         "Spotify USA Inc: $12.99 USD",
@@ -314,7 +314,7 @@ def test_extract_paypal_receipt_email_transaction_receipt():
         "merchant": "Spotify USA Inc",
         "total": 12.99,
         "receipt_date": date(2026, 4, 23),
-        "purchaser": "cason konzer",
+        "purchaser": "alex sample",
         "card_last4": None,
         "category": None,
     }
@@ -406,7 +406,7 @@ def test_extract_venmo_payment_email_wrong_sender_returns_none():
 
 def test_extract_wise_payment_email_money_added():
     body = """
-    Hello Cason Andrew,
+    Hello Alex Sample,
 
     You added 123.45 USD to your account.
 
@@ -438,7 +438,7 @@ def test_extract_wise_payment_email_wrong_sender_returns_none():
 
 def test_extract_xanterra_reservation_email_confirmation():
     body = """
-    Welcome, Cason Konzer
+    Welcome, Alex Sample
 
     Yellowstone National Park Lodges
     Bridge Bay Campground
@@ -460,7 +460,7 @@ def test_extract_xanterra_reservation_email_confirmation():
         "merchant": "Yellowstone National Park Lodges",
         "total": 43.88,
         "receipt_date": None,
-        "purchaser": "cason konzer",
+        "purchaser": "alex sample",
         "card_last4": None,
         "category": "outdoor/park",
         "processed_by": "email-reservation",
@@ -549,12 +549,12 @@ def test_extract_irs_payment_email_wrong_sender_returns_none():
 
 def test_extract_nelnet_billing_email_statement():
     body = """
-CASON
+ALEX
 Account:\xa0EXXXXX6972
 Due Date:\xa06/1/2026
 Amount Due:\xa0$0.00
 Your Nelnet monthly billing statement is now available.
-This email was sent to: CASONKONZER@GMAIL.COM
+This email was sent to: ALEXSAMPLE@GMAIL.COM
     """
     parsed = _extract_nelnet_billing_email(
         "Your student loan billing statement is now available",
@@ -565,7 +565,7 @@ This email was sent to: CASONKONZER@GMAIL.COM
         "merchant": "Nelnet",
         "total": 0.00,
         "receipt_date": date(2026, 6, 1),
-        "purchaser": "cason konzer",
+        "purchaser": None,
         "card_last4": None,
         "category": None,
     }
@@ -732,7 +732,7 @@ def test_internal_intake_notification_is_skipped():
     assert (
         _is_internal_intake_notification(
             "[intake] Receipt processed: capital one $69.69",
-            "casonkonzer@gmail.com",
+            "alexsample@gmail.com",
             settings,
         )
         is True
@@ -1590,7 +1590,7 @@ def test_upsert_html_receipt_handles_xanterra_reservation(db, tmp_path, monkeypa
         "Xanterra Reservations <Reserve-NoReply@xanterra.com>",
         "Wed, 20 May 2026 19:01:20 -0600",
         """
-        Welcome, Cason Konzer
+        Welcome, Alex Sample
         Yellowstone National Park Lodges
         Bridge Bay Campground
         Nightly Rate $38.00
@@ -1612,7 +1612,7 @@ def test_upsert_html_receipt_handles_xanterra_reservation(db, tmp_path, monkeypa
     assert row["category"] == "outdoor/park"
     assert row["receipt_dir"] == "email/outdoor/park"
     assert row["processed_by"] == "email-reservation"
-    assert row["purchaser"] == "cason konzer"
+    assert row["purchaser"] == "alex sample"
     assert sidecar is not None
     assert sidecar["items"] == [
         {
@@ -1670,7 +1670,7 @@ def test_write_inline_email_artifact_serializes_items_in_sidecar(tmp_path):
 
 _AMEX_PAYMENT_BODY = """\
 Thanks for your payment processed on Jun 5, 2026
-CASON A KONZER
+ALEX J SAMPLE
 Account Ending: 01002
 Thank you for your payment
 Your scheduled payment was processed.
@@ -1692,7 +1692,7 @@ def test_extract_amex_payment_email_confirmation():
     assert parsed["merchant"] == "american express"
     assert parsed["total"] == 69.69
     assert parsed["receipt_date"] == date(2026, 6, 5)
-    assert parsed["purchaser"] == "cason a konzer"
+    assert parsed["purchaser"] == "alex j sample"
     assert parsed["card_last4"] == "01002"
     assert parsed["category"] == "finance/credit-card-payment"
     assert parsed["processed_by"] == "email-payment-amex"
@@ -1732,10 +1732,10 @@ def test_card_scheduled_notice_re_still_matches_future_scheduled():
 def test_amex_cardholder_re_does_not_capture_preceding_lines():
     from intake.email import _AMEX_CARDHOLDER_RE
 
-    body = "THANK YOU\nJOHN KONZER\nAccount Ending: 01002"
+    body = "THANK YOU\nALEX J SAMPLE\nAccount Ending: 01002"
     m = _AMEX_CARDHOLDER_RE.search(body)
     assert m is not None
-    assert m.group(1) == "JOHN KONZER"
+    assert m.group(1) == "ALEX J SAMPLE"
 
 
 # ── FetchResult ───────────────────────────────────────────────────────────────

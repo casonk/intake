@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS receipts (
     items_json      TEXT,
     certifications_json TEXT,
     staff_json      TEXT,
+    language        TEXT NOT NULL DEFAULT 'und',
+    translated_text TEXT,
     processed_by    TEXT NOT NULL DEFAULT 'tesseract',
     processed_at    TEXT NOT NULL
 );
@@ -135,6 +137,8 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_receipts_file_hash ON receipts(file_hash)",
     "ALTER TABLE receipts ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'",
     "ALTER TABLE receipts ADD COLUMN staff_json TEXT",
+    "ALTER TABLE receipts ADD COLUMN language TEXT NOT NULL DEFAULT 'und'",
+    "ALTER TABLE receipts ADD COLUMN translated_text TEXT",
 ]
 
 
@@ -246,6 +250,10 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
         normalized_data["merchant"] = str(normalized_data["merchant"]).strip().lower()[:120]
     if "purchaser" in normalized_data:
         normalized_data["purchaser"] = normalize_purchaser(normalized_data.get("purchaser"))
+    if "language" in normalized_data:
+        normalized_data["language"] = str(normalized_data.get("language") or "und").strip().lower()
+    if "translated_text" in normalized_data and normalized_data.get("translated_text") is not None:
+        normalized_data["translated_text"] = str(normalized_data["translated_text"]).strip() or None
     items_json = _serialize_items(normalized_data.pop("items", None))
     if items_json is None and "items_json" in normalized_data:
         items_json = _serialize_items(_decode_items_json(normalized_data.pop("items_json")))
@@ -262,11 +270,11 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
         INSERT INTO receipts
             (filename, scan_date, merchant, total, category, receipt_dir, file_hash,
              raw_text, items_json, certifications_json, staff_json, processed_by, purchaser, card_last4,
-             currency, processed_at)
+             currency, language, translated_text, processed_at)
         VALUES
             (:filename, :scan_date, :merchant, :total, :category, :receipt_dir, :file_hash,
              :raw_text, :items_json, :certifications_json, :staff_json, :processed_by, :purchaser, :card_last4,
-             :currency, :processed_at)
+             :currency, :language, :translated_text, :processed_at)
         ON CONFLICT(filename) DO UPDATE SET
             scan_date    = excluded.scan_date,
             merchant     = excluded.merchant,
@@ -282,6 +290,8 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             purchaser    = excluded.purchaser,
             card_last4   = excluded.card_last4,
             currency     = excluded.currency,
+            language     = excluded.language,
+            translated_text = excluded.translated_text,
             processed_at = excluded.processed_at
         """,
         {
@@ -289,6 +299,8 @@ def upsert_receipt(conn: sqlite3.Connection, data: dict) -> None:
             "purchaser": None,
             "card_last4": None,
             "currency": "USD",
+            "language": "und",
+            "translated_text": None,
             "file_hash": None,
             "items_json": items_json,
             "certifications_json": certifications_json,
@@ -306,7 +318,7 @@ def get_receipt(conn: sqlite3.Connection, filename: str) -> dict | None:
         """
         SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
                raw_text, items_json, certifications_json, staff_json, processed_by, purchaser, card_last4,
-               currency, processed_at, reviewed_at
+               currency, language, translated_text, processed_at, reviewed_at
         FROM receipts
         WHERE filename = ?
         """,
@@ -331,7 +343,7 @@ def get_receipt_by_file_hash(
         f"""
         SELECT filename, scan_date, merchant, total, category, receipt_dir, file_hash,
                raw_text, items_json, certifications_json, staff_json, processed_by, purchaser, card_last4,
-               currency, processed_at, reviewed_at
+               currency, language, translated_text, processed_at, reviewed_at
         FROM receipts
         {where}
         ORDER BY processed_at ASC, filename ASC
@@ -429,6 +441,8 @@ def update_receipt_fields(
         "purchaser",
         "card_last4",
         "currency",
+        "language",
+        "translated_text",
         "items",
         "certifications",
         "staff",
@@ -613,7 +627,8 @@ def query_summary(conn: sqlite3.Connection) -> dict:
 
     recent = rows("""
         SELECT scan_date, merchant, category, total, filename, receipt_dir,
-               purchaser, card_last4, items_json, certifications_json, staff_json,
+               purchaser, card_last4, language, translated_text,
+               items_json, certifications_json, staff_json,
                processed_by, processed_at
         FROM receipts
         ORDER BY scan_date DESC, processed_at DESC
@@ -622,7 +637,8 @@ def query_summary(conn: sqlite3.Connection) -> dict:
 
     merchant_receipts = rows("""
         SELECT merchant, scan_date, category, total, filename, receipt_dir,
-               purchaser, card_last4, items_json, certifications_json, staff_json,
+               purchaser, card_last4, language, translated_text,
+               items_json, certifications_json, staff_json,
                processed_by, processed_at
         FROM receipts
         ORDER BY COALESCE(merchant, ''), scan_date DESC, processed_at DESC, filename DESC
@@ -667,7 +683,7 @@ def query_all_receipts(conn: sqlite3.Connection) -> list[dict]:
     """Return all receipts for the audit page, newest first."""
     rows = conn.execute("""
             SELECT scan_date, merchant, category, total, filename, receipt_dir,
-                   purchaser, card_last4, items_json, staff_json,
+                   purchaser, card_last4, language, translated_text, items_json, staff_json,
                    processed_by, processed_at, reviewed_at
             FROM receipts
             ORDER BY scan_date DESC, processed_at DESC, filename DESC
