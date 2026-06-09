@@ -38,4 +38,3 @@ def test_detect_receipt_locale_french_terms():
     assert hint.language == "fr"
     assert hint.currency is None
     assert hint.confidence >= 0.8
-

@@ -36,8 +36,12 @@ def _receipt(**kwargs) -> Receipt:
 
 def test_needs_translation_only_for_non_english_without_translation():
     assert needs_translation(language="ja", translated_text=None, raw_text="ローソン") is True
-    assert needs_translation(language="de", translated_text=None, raw_text="Gesamt 4,06 EUR") is True
-    assert needs_translation(language="fr", translated_text=None, raw_text="Total TTC 9,00 €") is True
+    assert (
+        needs_translation(language="de", translated_text=None, raw_text="Gesamt 4,06 EUR") is True
+    )
+    assert (
+        needs_translation(language="fr", translated_text=None, raw_text="Total TTC 9,00 €") is True
+    )
     assert needs_translation(language="en", translated_text=None, raw_text="Lawson") is False
     assert needs_translation(language="ja", translated_text="Lawson", raw_text="ローソン") is False
 
