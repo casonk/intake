@@ -126,3 +126,7 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 
 - Receipt label matching should treat short locale terms such as `USt`, `TVA`, `TTC`, or `bar` as whole labels/words, not raw substrings; naive substring checks can misread unrelated English labels like `customer` as tax lines and silently corrupt computed totals.
 - When adding new locale support, extend both locale detection and total/subtotal/tax exclusion vocabularies together; language detection alone is not enough if the parser still only understands English/Japanese amount labels.
+
+### 2026-06-09 — Intake CI formatting must be checked with the workflow commands too
+
+- `pre-commit run --all-files` is necessary but not sufficient for this repo's hosted CI; before pushing Python changes, also run the workflow-equivalent `ruff format --check .` and `black --check --diff .` because the separate GitHub Actions formatter job can still catch files that local hooks leave untouched.
