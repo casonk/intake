@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 from intake.ocr import extract_text
 from intake.parse import Receipt, parse_receipt
+from intake.translation import maybe_translate_receipt
 
 if TYPE_CHECKING:
     from intake.parse_card import Card
@@ -195,6 +196,10 @@ def extract_receipt(
     openai_model_low: str = "gpt-4o-mini",
     openai_model_mid: str = "gpt-4o",
     openai_model_high: str = "gpt-4.1",
+    translation_provider: str = "ollama",
+    translation_model: str = "aya-expanse:8b",
+    translation_base_url: str = "http://localhost:11434",
+    translation_timeout_seconds: int = 60,
     escalation_patterns: list[str] | None = None,
     fuzzy_rules: dict | None = None,
     fuzzy_threshold: float = 0.82,
@@ -264,7 +269,14 @@ def extract_receipt(
         tier = "low"
 
     if tier == "ok" or not openai_api_key:
-        return _attach_debug(receipt, ai_attempts=[]), OCR_MODEL, tier
+        receipt = maybe_translate_receipt(
+            _attach_debug(receipt, ai_attempts=[]),
+            provider=translation_provider,
+            model=translation_model,
+            base_url=translation_base_url,
+            timeout_seconds=translation_timeout_seconds,
+        )
+        return receipt, OCR_MODEL, tier
 
     model = openai_model_high if tier == "high" else openai_model_low
     ai_attempts: list[dict] = []
@@ -293,13 +305,23 @@ def extract_receipt(
             receipt = _canonicalize_merchant(receipt)
             receipt = _attach_debug(receipt, ai_attempts=ai_attempts)
 
-        return _attach_debug(receipt, ai_attempts=ai_attempts), model, tier
-    except Exception:  # noqa: BLE001
-        return (
+        receipt = maybe_translate_receipt(
             _attach_debug(receipt, ai_attempts=ai_attempts),
-            OCR_MODEL,
-            tier,
-        )  # preserve tier so next run retries
+            provider=translation_provider,
+            model=translation_model,
+            base_url=translation_base_url,
+            timeout_seconds=translation_timeout_seconds,
+        )
+        return receipt, model, tier
+    except Exception:  # noqa: BLE001
+        receipt = maybe_translate_receipt(
+            _attach_debug(receipt, ai_attempts=ai_attempts),
+            provider=translation_provider,
+            model=translation_model,
+            base_url=translation_base_url,
+            timeout_seconds=translation_timeout_seconds,
+        )
+        return (receipt, OCR_MODEL, tier)  # preserve tier so next run retries
 
 
 def extract_letter(

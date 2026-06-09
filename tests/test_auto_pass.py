@@ -90,6 +90,8 @@ def test_load_settings_promotes_misnested_top_level_keys(tmp_path, monkeypatch):
                 'openai_api_key_entry = "api/openai"',
                 'auto_pass_profile = "work"',
                 'openai_model_low = "gpt-4o-mini"',
+                'translation_provider = "ollama"',
+                'translation_model = "aya-expanse:8b"',
                 "fuzzy_threshold = 0.91",
                 "",
             ]
@@ -108,6 +110,8 @@ def test_load_settings_promotes_misnested_top_level_keys(tmp_path, monkeypatch):
     assert settings["openai_api_key_entry"] == "api/openai"
     assert settings["auto_pass_profile"] == "work"
     assert settings["openai_model_low"] == "gpt-4o-mini"
+    assert settings["translation_provider"] == "ollama"
+    assert settings["translation_model"] == "aya-expanse:8b"
     assert settings["fuzzy_threshold"] == 0.91
     assert settings["openai_api_key"] == "sk-test-456"
     assert settings["web"] == {"host": "127.0.0.1", "port": 5200}

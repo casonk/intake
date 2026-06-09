@@ -155,6 +155,12 @@ def gmail_reply_available(settings: dict) -> bool:
     return bool(_gmail_config_path(settings))
 
 
+def gmail_digest_enabled(settings: dict) -> bool:
+    """Return True when processed-receipt Gmail notices should be digested."""
+    cfg = _gmail_config(settings)
+    return bool(cfg.get("digest", False) or cfg.get("digest_enabled", False))
+
+
 def format_processed_receipt_message(
     receipt: Receipt,
     *,
@@ -333,7 +339,8 @@ def send_processed_receipt_gmail_notification(
 
     cfg = _gmail_config(settings)
     config_path = Path(_gmail_config_path(settings)).expanduser()
-    send_script = config_path.with_name("send_email.py")
+    send_script_name = "queue_digest.py" if gmail_digest_enabled(settings) else "send_email.py"
+    send_script = config_path.with_name(send_script_name)
     if not config_path.exists():
         raise RuntimeError(f"Gmail config not found: {config_path}")
     if not send_script.exists():
@@ -383,17 +390,33 @@ def send_processed_receipt_gmail_notification(
             f"{_INTAKE_FILENAME_HEADER}: {filename}",
             "--header",
             f"{_INTAKE_RECEIPT_DIR_HEADER}: {receipt_dir}",
-            recipient,
-            subject,
-            message,
-            "--config",
-            str(config_path),
         ]
+        if gmail_digest_enabled(settings):
+            cmd.extend(
+                [
+                    "--service",
+                    "intake",
+                    "--kind",
+                    "receipt-processed",
+                    "--summary",
+                    subject,
+                ]
+            )
+        cmd.extend(
+            [
+                recipient,
+                subject,
+                message,
+                "--config",
+                str(config_path),
+            ]
+        )
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             error = (result.stderr or result.stdout or "").strip()
             detail = f": {error}" if error else ""
-            raise RuntimeError(f"Gmail notification failed for {recipient}{detail}")
+            action = "digest queueing" if gmail_digest_enabled(settings) else "notification"
+            raise RuntimeError(f"Gmail {action} failed for {recipient}{detail}")
         sent += 1
 
     return sent

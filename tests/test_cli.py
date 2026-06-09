@@ -1,6 +1,7 @@
 """Tests for intake.cli path resolution and clockwork-backed unit generation."""
 
 import importlib.util
+import json
 from argparse import Namespace
 from datetime import date
 from pathlib import Path
@@ -152,6 +153,111 @@ def test_web_host_and_port_read_settings():
     assert cli._web_port(settings, None) == 5300
     assert cli._web_host(settings, "127.0.0.3") == "127.0.0.3"
     assert cli._web_port(settings, 5400) == 5400
+
+
+def test_stored_receipt_needs_refresh_for_historical_japanese_row():
+    settings = {"translation_provider": "ollama"}
+    sidecar = {"language": "und", "currency": "JPY", "translated_text": None}
+    row = {
+        "raw_text": "ローソン\n合計 1280円\nお預り 2000\nお釣り 720",
+        "language": "und",
+        "currency": "JPY",
+        "translated_text": None,
+    }
+
+    assert cli._stored_receipt_needs_refresh(sidecar, row, settings) is True
+
+
+def test_cmd_translate_text_prints_json(monkeypatch, capsys):
+    args = Namespace(
+        text="ローソン\n合計 1280円",
+        text_file=None,
+        language="ja",
+        provider="ollama",
+        model="aya-expanse:8b",
+        base_url="http://localhost:11434",
+        timeout_seconds=45,
+        json=True,
+    )
+    monkeypatch.setattr(
+        "intake.translation.translate_receipt_text",
+        lambda *_args, **_kwargs: (
+            "Lawson\nTotal 1,280 yen",
+            {"provider": "ollama", "model": "aya-expanse:8b"},
+        ),
+    )
+
+    cli._cmd_translate_text(args, {})
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["translation"] == "Lawson\nTotal 1,280 yen"
+    assert payload["metadata"]["provider"] == "ollama"
+    assert payload["source_language"] == "ja"
+
+
+def test_cmd_translate_backfill_updates_row_and_sidecar(tmp_path, monkeypatch, capsys):
+    receipt_root = tmp_path / "receipts"
+    artifact = receipt_root / "general" / "20260605_0914.jpg"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"fake-image")
+
+    db_path = tmp_path / "intake.db"
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260605_0914.jpg",
+            "scan_date": "2026-06-05",
+            "merchant": "lawson",
+            "total": 680.0,
+            "category": "general",
+            "receipt_dir": "general/20260605_0914.jpg",
+            "raw_text": "ローソン\n合計 680円",
+            "processed_by": "tesseract",
+            "currency": "JPY",
+            "language": "und",
+        },
+    )
+
+    monkeypatch.setattr("intake.classify.load_merchant_aliases", lambda: {})
+    monkeypatch.setattr(
+        "intake.translation.translate_receipt_artifact",
+        lambda *_args, **_kwargs: (
+            "LAWSON\nTotal\n¥680",
+            {"provider": "ollama", "model": "aya-expanse:8b", "source": "artifact"},
+        ),
+    )
+
+    args = Namespace(
+        receipt_dir=str(receipt_root),
+        db=str(db_path),
+        provider="ollama",
+        model="aya-expanse:8b",
+        base_url="http://localhost:11434",
+        timeout_seconds=60,
+        filename=["20260605_0914.jpg"],
+        limit=None,
+        dry_run=False,
+        force=False,
+    )
+    settings = {
+        "translation_provider": "ollama",
+        "translation_model": "aya-expanse:8b",
+        "translation_base_url": "http://localhost:11434",
+        "translation_timeout_seconds": 60,
+    }
+
+    cli._cmd_translate_backfill(args, settings)
+
+    updated = get_receipt(init_db(db_path), "20260605_0914.jpg")
+    assert updated["language"] == "ja"
+    assert updated["translated_text"] == "LAWSON\nTotal\n¥680"
+
+    sidecar = read_sidecar(artifact)
+    assert sidecar is not None
+    assert sidecar["language"] == "ja"
+    assert sidecar["translated_text"] == "LAWSON\nTotal\n¥680"
+    assert "Translated 20260605_0914.jpg" in capsys.readouterr().out
 
 
 def test_install_clockwork_manifest_writes_units_when_clockwork_is_available(monkeypatch, tmp_path):
@@ -972,7 +1078,7 @@ def test_cmd_dedup_merge_promotes_keeper_fields_and_leaves_files(tmp_path):
             "receipt_dir": "general/20260402_2244.pdf",
             "raw_text": "Anthropic credit note",
             "processed_by": "tesseract",
-            "purchaser": "cason",
+            "purchaser": "jane",
         },
     )
     conn.close()
@@ -1000,7 +1106,7 @@ def test_cmd_dedup_merge_promotes_keeper_fields_and_leaves_files(tmp_path):
             "category": "general",
             "receipt_dir": "general/20260402_2244.pdf",
             "processed_by": "tesseract",
-            "purchaser": "cason",
+            "purchaser": "jane",
             "tier": "ok",
         },
     )
@@ -1024,14 +1130,14 @@ def test_cmd_dedup_merge_promotes_keeper_fields_and_leaves_files(tmp_path):
     keeper_sidecar = read_sidecar(keeper_pdf)
 
     assert keeper_row is not None
-    assert keeper_row["purchaser"] == "cason konzer"
+    assert keeper_row["purchaser"] == "jane sample"
     assert dup_row is None
     assert keeper_pdf.exists()
     assert dup_pdf.exists()
     assert keeper_sidecar is not None
-    assert keeper_sidecar["purchaser"] == "cason konzer"
+    assert keeper_sidecar["purchaser"] == "jane sample"
     assert history[0]["source"] == "dedup-merge"
-    assert history[0]["changes"]["purchaser"] == {"old": None, "new": "cason konzer"}
+    assert history[0]["changes"]["purchaser"] == {"old": None, "new": "jane sample"}
 
 
 def test_cmd_dedup_merge_prefers_local_pdf_over_email_row_and_audits_delete(tmp_path):
@@ -1053,7 +1159,7 @@ def test_cmd_dedup_merge_prefers_local_pdf_over_email_row_and_audits_delete(tmp_
             "receipt_dir": "general/20260410_1616.pdf",
             "raw_text": "fcm travel pdf",
             "processed_by": "tesseract",
-            "purchaser": "cason konzer",
+            "purchaser": "jane sample",
             "card_last4": "7464",
         },
     )
@@ -1068,7 +1174,7 @@ def test_cmd_dedup_merge_prefers_local_pdf_over_email_row_and_audits_delete(tmp_
             "receipt_dir": "email/general",
             "raw_text": "fcm travel email",
             "processed_by": "gpt-4.1",
-            "purchaser": "cason konzer",
+            "purchaser": "jane sample",
             "card_last4": "7464",
         },
     )
@@ -1083,7 +1189,7 @@ def test_cmd_dedup_merge_prefers_local_pdf_over_email_row_and_audits_delete(tmp_
             "category": "general",
             "receipt_dir": "general/20260410_1616.pdf",
             "processed_by": "tesseract",
-            "purchaser": "cason konzer",
+            "purchaser": "jane sample",
             "card_last4": "7464",
             "tier": "ok",
         },
@@ -1200,7 +1306,7 @@ def test_cmd_dedup_remove_moves_duplicate_to_exhaust_and_records_audit(tmp_path,
             "receipt_dir": "general/20260402_2244.pdf",
             "raw_text": "Anthropic credit note",
             "processed_by": "tesseract",
-            "purchaser": "cason",
+            "purchaser": "jane",
         },
     )
     conn.close()
@@ -1228,7 +1334,7 @@ def test_cmd_dedup_remove_moves_duplicate_to_exhaust_and_records_audit(tmp_path,
             "category": "general",
             "receipt_dir": "general/20260402_2244.pdf",
             "processed_by": "tesseract",
-            "purchaser": "cason",
+            "purchaser": "jane",
             "tier": "ok",
         },
     )
@@ -1259,10 +1365,10 @@ def test_cmd_dedup_remove_moves_duplicate_to_exhaust_and_records_audit(tmp_path,
     keeper_sidecar = read_sidecar(keeper_pdf)
 
     assert keeper_row is not None
-    assert keeper_row["purchaser"] == "cason konzer"
+    assert keeper_row["purchaser"] == "jane sample"
     assert dup_row is None
     assert keeper_sidecar is not None
-    assert keeper_sidecar["purchaser"] == "cason konzer"
+    assert keeper_sidecar["purchaser"] == "jane sample"
     assert exhausted_sidecar is not None
     assert exhausted_sidecar["filename"] == "20260402_2244.pdf"
     assert exhausted_sidecar["receipt_dir"] == "exhaust/duplicates/general/20260402_2244.pdf"
@@ -1658,7 +1764,7 @@ def test_cmd_staff_backfills_staff_and_fixes_staff_purchaser(tmp_path, monkeypat
             "receipt_dir": "general/20260401_1200.pdf",
             "raw_text": "",
             "processed_by": "tesseract",
-            "purchaser": "cason konzer",
+            "purchaser": "jane sample",
             "card_last4": "5653",
         },
     )
@@ -1716,10 +1822,10 @@ def test_cmd_staff_backfills_staff_and_fixes_staff_purchaser(tmp_path, monkeypat
     assert row["staff"] == [
         {"role": "server", "name": "isabel j", "source_text": "Server: Isabel J"}
     ]
-    assert row["purchaser"] == "cason konzer"
+    assert row["purchaser"] == "jane sample"
     assert sidecar is not None
     assert sidecar["staff"] == row["staff"]
-    assert sidecar["purchaser"] == "cason konzer"
+    assert sidecar["purchaser"] == "jane sample"
     assert history[0]["source"] == "staff-backfill"
 
     out = capsys.readouterr().out
@@ -1811,12 +1917,12 @@ def test_cmd_normalize_purchasers_updates_db_and_sidecar(tmp_path, capsys):
             "receipt_dir": "general/20260422_1000.pdf",
             "raw_text": "",
             "processed_by": "gpt-4.1",
-            "purchaser": "cason konzer",
+            "purchaser": "jane sample",
         },
     )
     conn.execute(
         "UPDATE receipts SET purchaser = ? WHERE filename = ?",
-        ("konzer / cason andrew", pdf.name),
+        ("sample / jane a", pdf.name),
     )
     conn.commit()
     conn.close()
@@ -1830,7 +1936,7 @@ def test_cmd_normalize_purchasers_updates_db_and_sidecar(tmp_path, capsys):
             "category": "general",
             "receipt_dir": "general/20260422_1000.pdf",
             "processed_by": "gpt-4.1",
-            "purchaser": "konzer / cason andrew",
+            "purchaser": "sample / jane a",
         },
     )
 
@@ -1846,9 +1952,9 @@ def test_cmd_normalize_purchasers_updates_db_and_sidecar(tmp_path, capsys):
     sidecar = read_sidecar(pdf)
 
     assert row is not None
-    assert row["purchaser"] == "cason konzer"
+    assert row["purchaser"] == "jane sample"
     assert sidecar is not None
-    assert sidecar["purchaser"] == "cason konzer"
+    assert sidecar["purchaser"] == "jane sample"
     assert history[0]["source"] == "purchaser-normalize"
 
     out = capsys.readouterr().out

@@ -103,8 +103,8 @@ def test_merge_ai_result_lowercases_purchaser():
 
 
 def test_merge_ai_result_canonicalizes_purchaser_alias():
-    r = merge_ai_result(_receipt(), {"purchaser": "casonkonzer@gmail.com"})
-    assert r.purchaser == "cason konzer"
+    r = merge_ai_result(_receipt(), {"purchaser": "janesample@gmail.com"})
+    assert r.purchaser == "jane sample"
 
 
 def test_merge_ai_result_skips_empty_purchaser():
@@ -157,6 +157,18 @@ def test_merge_ai_result_merges_staff():
     assert len(r.staff) == 1
     assert r.staff[0].role == "server"
     assert r.staff[0].name == "isabel j"
+
+
+def test_merge_ai_result_records_language_and_translation():
+    r = merge_ai_result(
+        _receipt(raw_text="ローソン\n合計 1280円"),
+        {
+            "language": "japanese",
+            "translated_text": "Lawson\nTotal 1,280 yen",
+        },
+    )
+    assert r.language == "ja"
+    assert r.translated_text == "Lawson\nTotal 1,280 yen"
 
 
 def test_merge_ai_result_clears_unpaid_notice_total():
@@ -247,7 +259,7 @@ def test_purchaser_was_blacklisted_false_for_missing_key():
 
 
 def test_purchaser_was_blacklisted_false_for_known_alias_email():
-    assert purchaser_was_blacklisted({"purchaser": "casonkonzer@gmail.com"}) is False
+    assert purchaser_was_blacklisted({"purchaser": "janesample@gmail.com"}) is False
 
 
 def test_purchaser_was_blacklisted_false_for_real_name():

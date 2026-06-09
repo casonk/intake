@@ -30,6 +30,10 @@ _PROMOTED_TOP_LEVEL_SETTINGS = {
     "openai_model_low",
     "openai_model_mid",
     "total_escalation_threshold",
+    "translation_base_url",
+    "translation_model",
+    "translation_provider",
+    "translation_timeout_seconds",
 }
 
 
@@ -350,6 +354,8 @@ def _sync_receipt_sidecar(receipt_root: Path, row: dict) -> Path | None:
             "processed_by": row["processed_by"],
             "purchaser": row.get("purchaser"),
             "card_last4": row.get("card_last4"),
+            "language": row.get("language") or "und",
+            "translated_text": row.get("translated_text"),
             "items": row.get("items"),
             "certifications": row.get("certifications"),
             "staff": row.get("staff"),
@@ -642,6 +648,8 @@ def _receipt_row_from_receipt(
         "purchaser": receipt.purchaser,
         "card_last4": receipt.card_last4,
         "currency": receipt.currency,
+        "language": receipt.language,
+        "translated_text": receipt.translated_text,
         "items": receipt_items_to_dicts(receipt.items),
         "certifications": receipt_certifications_to_dicts(receipt.certifications),
         "staff": receipt_staff_to_dicts(receipt.staff),
@@ -764,6 +772,8 @@ def _write_receipt_debug_artifacts(pdf: Path, receipt, *, processed_by: str, tie
         raw_text=receipt.raw_text,
         processed_by=processed_by,
         tier=tier,
+        language=receipt.language,
+        translated_text=receipt.translated_text,
         ai_attempts=_debug_ai_attempts(receipt),
     )
 
@@ -1036,6 +1046,10 @@ def _get_extract_kwargs(settings: dict) -> dict:
         ),
         "openai_model_mid": settings.get("openai_model_mid") or "gpt-4o",
         "openai_model_high": settings.get("openai_model_high") or "gpt-4.1",
+        "translation_provider": settings.get("translation_provider") or "ollama",
+        "translation_model": settings.get("translation_model") or "aya-expanse:8b",
+        "translation_base_url": settings.get("translation_base_url") or "http://localhost:11434",
+        "translation_timeout_seconds": int(settings.get("translation_timeout_seconds") or 60),
         "escalation_patterns": settings.get("escalation_patterns") or None,
         "fuzzy_threshold": float(settings.get("fuzzy_threshold", 0.82)),
         "total_escalation_threshold": (
@@ -1068,6 +1082,366 @@ def _high_model(settings: dict) -> str:
     return settings.get("openai_model_high") or "gpt-4.1"
 
 
+def _stored_receipt_needs_refresh(sc: dict, row: dict | None, settings: dict) -> bool:
+    """Return True when stored OCR/metadata says a skipped receipt should re-run.
+
+    This catches historical rows that predate persisted language/translation
+    fields. A sidecar may look current while the DB still has OCR text that now
+    clearly identifies a non-English receipt worth re-parsing and translating.
+    """
+    if not row:
+        return False
+
+    from intake.language import detect_receipt_locale
+    from intake.translation import needs_translation, translation_enabled
+
+    raw_text = str(row.get("raw_text") or "").strip()
+    stored_language = str(row.get("language") or sc.get("language") or "und").strip().lower()
+    stored_translation = row.get("translated_text") or sc.get("translated_text")
+    stored_currency = str(row.get("currency") or sc.get("currency") or "").strip().upper()
+
+    if translation_enabled(settings.get("translation_provider")) and needs_translation(
+        language=stored_language,
+        translated_text=stored_translation,
+        raw_text=raw_text,
+    ):
+        return True
+    if stored_currency == "JPY" and stored_language in {"", "und"} and not stored_translation:
+        return True
+
+    if not raw_text:
+        return False
+
+    locale_hint = detect_receipt_locale(raw_text)
+    if locale_hint.language not in {"", "und"} and stored_language in {"", "und"}:
+        return True
+    return bool(locale_hint.currency and locale_hint.currency != stored_currency)
+
+
+def _resolved_translation_provider(settings: dict, requested: str | None) -> str:
+    from intake.translation import normalize_translation_provider
+
+    normalized_requested = str(requested or "").strip().lower()
+    if normalized_requested and normalized_requested != "auto":
+        return normalize_translation_provider(normalized_requested)
+    return normalize_translation_provider(settings.get("translation_provider"))
+
+
+def _resolved_translation_model(settings: dict, *, provider: str, requested: str | None) -> str:
+    if requested:
+        return requested
+    if provider == "openai":
+        return settings.get("openai_model_high") or "gpt-4.1"
+    return settings.get("translation_model") or "aya-expanse:8b"
+
+
+def _translation_command_kwargs(args: argparse.Namespace, settings: dict) -> dict:
+    provider = _resolved_translation_provider(settings, getattr(args, "provider", None))
+    if provider == "openai" and not (settings.get("openai_api_key") or None):
+        print(
+            "ERROR: translation provider 'openai' requires openai_api_key in settings.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return {
+        "provider": provider,
+        "model": _resolved_translation_model(
+            settings,
+            provider=provider,
+            requested=getattr(args, "model", None),
+        ),
+        "base_url": getattr(args, "base_url", None)
+        or settings.get("translation_base_url")
+        or "http://localhost:11434",
+        "timeout_seconds": int(
+            getattr(args, "timeout_seconds", None)
+            or settings.get("translation_timeout_seconds")
+            or 60
+        ),
+        "openai_api_key": settings.get("openai_api_key") or None,
+    }
+
+
+def _print_translation_result(
+    translation: str,
+    metadata: dict | None,
+    *,
+    json_output: bool,
+    source_language: str | None = None,
+) -> None:
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "translation": translation,
+                    "metadata": metadata or {},
+                    "source_language": source_language or "und",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    print(translation)
+
+
+def _cmd_translate_text(args: argparse.Namespace, settings: dict) -> None:
+    from intake.language import detect_receipt_locale
+    from intake.translation import translate_receipt_text
+
+    if args.text:
+        raw_text = args.text
+    else:
+        raw_text = Path(args.text_file).read_text(encoding="utf-8", errors="replace")
+
+    locale_hint = detect_receipt_locale(raw_text)
+    language = args.language or locale_hint.language or "und"
+    translate_kwargs = _translation_command_kwargs(args, settings)
+    if translate_kwargs["provider"] == "none":
+        print("ERROR: translate text requires a real provider, not 'none'.", file=sys.stderr)
+        raise SystemExit(2)
+    translated, metadata = translate_receipt_text(
+        raw_text,
+        language=language,
+        **translate_kwargs,
+    )
+    if not translated:
+        print("ERROR: translation failed or returned empty output.", file=sys.stderr)
+        raise SystemExit(1)
+    _print_translation_result(
+        translated,
+        metadata,
+        json_output=args.json,
+        source_language=language,
+    )
+
+
+def _cmd_translate_receipt(args: argparse.Namespace, settings: dict) -> None:
+    from intake.language import detect_receipt_locale
+    from intake.ocr import extract_text
+    from intake.translation import translate_receipt_artifact
+
+    receipt_path = Path(args.path).expanduser()
+    raw_text = extract_text(receipt_path)
+    locale_hint = detect_receipt_locale(raw_text)
+    language = args.language or locale_hint.language or "und"
+    translate_kwargs = _translation_command_kwargs(args, settings)
+    if translate_kwargs["provider"] == "none":
+        print("ERROR: translate receipt requires a real provider, not 'none'.", file=sys.stderr)
+        raise SystemExit(2)
+    translated, metadata = translate_receipt_artifact(
+        receipt_path,
+        raw_text=raw_text,
+        language=language,
+        **translate_kwargs,
+    )
+    if not translated:
+        print("ERROR: translation failed or returned empty output.", file=sys.stderr)
+        raise SystemExit(1)
+    _print_translation_result(
+        translated,
+        metadata,
+        json_output=args.json,
+        source_language=language,
+    )
+
+
+def _cmd_translate_backfill(args: argparse.Namespace, settings: dict) -> None:
+    from dataclasses import replace
+
+    from intake.ai import extract_with_openai, merge_ai_result
+    from intake.classify import load_merchant_aliases
+    from intake.db import init_db, update_receipt_fields
+    from intake.language import detect_receipt_locale
+    from intake.merchant import consolidate_merchant
+    from intake.ocr import extract_text
+    from intake.parse import parse_receipt
+    from intake.translation import translate_receipt_artifact, translate_receipt_text
+
+    receipt_root = None
+    if args.receipt_dir or settings.get("receipt_dir"):
+        receipt_root = _require_receipt_dir(settings, args.receipt_dir)
+
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
+    conn = init_db(db_path)
+    row_cursor = conn.execute("""
+        SELECT filename, scan_date, merchant, total, category, receipt_dir, raw_text,
+               currency, language, translated_text, processed_by, processed_at,
+               purchaser, card_last4, items_json, certifications_json, staff_json
+        FROM receipts
+        ORDER BY scan_date DESC, processed_at DESC, filename DESC
+        """)
+    rows = [dict(row) for row in row_cursor.fetchall()]
+
+    if args.filename:
+        wanted = {name for name in args.filename}
+        rows = [row for row in rows if row["filename"] in wanted]
+    else:
+        candidate_settings = dict(settings)
+        candidate_settings["translation_provider"] = _resolved_translation_provider(
+            settings, args.provider
+        )
+        rows = [
+            row
+            for row in rows
+            if args.force or _stored_receipt_needs_refresh({}, row, candidate_settings)
+        ]
+
+    if args.limit is not None:
+        rows = rows[: args.limit]
+
+    if not rows:
+        print("No translation backfill candidates found.")
+        conn.close()
+        return
+
+    merchant_aliases = load_merchant_aliases()
+    translate_kwargs = _translation_command_kwargs(args, settings)
+    provider = translate_kwargs["provider"]
+
+    updated = skipped = failed = 0
+    pf_events: list[dict] = []
+
+    for row in rows:
+        receipt_path = None
+        receipt_dir_rel = str(row.get("receipt_dir") or "")
+        if (
+            receipt_root is not None
+            and receipt_dir_rel
+            and not receipt_dir_rel.startswith("email/")
+        ):
+            candidate = receipt_root / receipt_dir_rel
+            if candidate.exists():
+                receipt_path = candidate
+
+        try:
+            raw_text = str(row.get("raw_text") or "")
+            note_parts: list[str] = []
+            if raw_text:
+                note_parts.append("stored OCR")
+            elif receipt_path is not None:
+                raw_text = extract_text(receipt_path)
+                if raw_text:
+                    note_parts.append("fresh OCR")
+
+            locale_hint = detect_receipt_locale(raw_text)
+            candidate_language = str(row.get("language") or "und").strip().lower() or "und"
+            candidate_currency = str(row.get("currency") or "").strip().upper()
+            translated_text = str(row.get("translated_text") or "").strip() or None
+
+            receipt = parse_receipt(row["filename"], raw_text, pdf_path=receipt_path)
+            receipt = replace(
+                receipt,
+                merchant=consolidate_merchant(receipt.merchant, merchant_aliases),
+            )
+
+            if (
+                provider == "openai"
+                and receipt_path is not None
+                and translate_kwargs["openai_api_key"]
+            ):
+                ai_data = extract_with_openai(
+                    receipt_path,
+                    raw_text,
+                    translate_kwargs["openai_api_key"],
+                    translate_kwargs["model"],
+                )
+                receipt = merge_ai_result(receipt, ai_data)
+                receipt = replace(
+                    receipt,
+                    merchant=consolidate_merchant(receipt.merchant, merchant_aliases),
+                )
+                note_parts.append(f"{translate_kwargs['model']} vision extract")
+
+            if receipt.language not in {"", "und"}:
+                candidate_language = receipt.language
+            elif locale_hint.language not in {"", "und"}:
+                candidate_language = locale_hint.language
+
+            if receipt.currency:
+                candidate_currency = receipt.currency
+            elif locale_hint.currency:
+                candidate_currency = locale_hint.currency
+
+            if provider != "none" and (args.force or not translated_text):
+                if receipt_path is not None:
+                    translated_text, _metadata = translate_receipt_artifact(
+                        receipt_path,
+                        raw_text=raw_text,
+                        language=candidate_language,
+                        **translate_kwargs,
+                    )
+                elif raw_text:
+                    translated_text, _metadata = translate_receipt_text(
+                        raw_text,
+                        language=candidate_language,
+                        **translate_kwargs,
+                    )
+                if translated_text:
+                    note_parts.append(f"{provider} translation")
+
+            updates: dict[str, object | None] = {}
+            current_language = str(row.get("language") or "und").strip().lower() or "und"
+            current_currency = str(row.get("currency") or "").strip().upper()
+            current_translation = str(row.get("translated_text") or "").strip() or None
+            current_merchant = str(row.get("merchant") or "").strip()
+
+            if candidate_language and candidate_language != current_language:
+                updates["language"] = candidate_language
+            if candidate_currency and candidate_currency != current_currency:
+                updates["currency"] = candidate_currency
+            if translated_text and (args.force or not current_translation):
+                updates["translated_text"] = translated_text
+            elif args.force and candidate_language == "en" and current_translation:
+                updates["translated_text"] = None
+            if not current_merchant and receipt.merchant:
+                updates["merchant"] = consolidate_merchant(receipt.merchant, merchant_aliases)
+            if row.get("total") is None and receipt.total is not None:
+                updates["total"] = receipt.total
+
+            if not updates:
+                skipped += 1
+                if args.dry_run:
+                    print(f"  [dry-run] {row['filename']}: no changes")
+                continue
+
+            if args.dry_run:
+                labels = ", ".join(f"{key}={updates[key]!r}" for key in sorted(updates))
+                print(f"  [dry-run] {row['filename']}: {labels}")
+                continue
+
+            note = (
+                "translation/locale backfill via " + " + ".join(note_parts)
+                if note_parts
+                else "translation/locale backfill"
+            )
+            updated_row, changes = update_receipt_fields(
+                conn,
+                row["filename"],
+                updates,
+                source="translate-backfill",
+                note=note,
+            )
+            if not changes:
+                skipped += 1
+                continue
+
+            if receipt_root is not None:
+                _sync_receipt_sidecar(receipt_root, updated_row)
+            updated += 1
+            pf_events.append(_receipt_event_from_row(updated_row, tier="translate-backfill"))
+            print(f"  Translated {row['filename']}: {', '.join(sorted(changes))}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ERROR translating {row['filename']}: {exc}", file=sys.stderr)
+            failed += 1
+
+    conn.close()
+    _trigger_personal_finance(settings, pf_events, trigger="translate")
+    print(
+        f"\nTranslation backfill complete: {updated} updated, {skipped} skipped, {failed} error(s)."
+    )
+
+
 def _skip_sidecar(sc: dict, settings: dict, pdf_path: Path | None = None) -> bool:
     """Return True if a sidecar indicates the receipt is already up-to-date.
 
@@ -1086,9 +1460,16 @@ def _skip_sidecar(sc: dict, settings: dict, pdf_path: Path | None = None) -> boo
         _filename_escalates,
         model_rank,
     )
+    from intake.translation import needs_translation, translation_enabled
 
     tier = sc.get("tier", "ok")
     sidecar_model = sc.get("processed_by", OCR_MODEL)
+    if translation_enabled(settings.get("translation_provider")) and needs_translation(
+        language=sc.get("language"),
+        translated_text=sc.get("translated_text"),
+        raw_text="present" if sc.get("language") else None,
+    ):
+        return False
     if tier == "ok":
         # Re-queue if filename now matches escalation and we have an AI key
         if pdf_path and settings.get("openai_api_key"):
@@ -1510,10 +1891,18 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
 
     # Open DB early so we can detect sidecared receipts that are absent from the DB.
     conn = init_db(db_path)
-    db_receipt_dirs: set[str] = {
-        row[0]
-        for row in conn.execute("SELECT receipt_dir FROM receipts WHERE receipt_dir IS NOT NULL")
-    }
+    db_rows_by_receipt_dir: dict[str, dict] = {}
+    db_rows_by_filename: dict[str, dict] = {}
+    for row in conn.execute("""
+        SELECT filename, receipt_dir, raw_text, currency, language, translated_text
+        FROM receipts
+        """):
+        decoded = dict(row)
+        if decoded.get("receipt_dir"):
+            db_rows_by_receipt_dir[str(decoded["receipt_dir"])] = decoded
+        if decoded.get("filename"):
+            db_rows_by_filename[str(decoded["filename"])] = decoded
+    db_receipt_dirs = set(db_rows_by_receipt_dir)
 
     pending: list[Path] = []
     sidecar_only: list[Path] = []  # sidecar present + up-to-date, but not in DB
@@ -1521,7 +1910,12 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
     for pdf in all_pdfs:
         sc = read_sidecar(pdf)
         rel = str(pdf.relative_to(receipt_dir))
-        if sc is not None and _skip_sidecar(sc, settings, pdf_path=pdf):
+        existing_row = db_rows_by_receipt_dir.get(rel) or db_rows_by_filename.get(pdf.name)
+        if (
+            sc is not None
+            and _skip_sidecar(sc, settings, pdf_path=pdf)
+            and not _stored_receipt_needs_refresh(sc, existing_row, settings)
+        ):
             if rel not in db_receipt_dirs:
                 sidecar_only.append(pdf)
             else:
@@ -1617,6 +2011,8 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
             "purchaser": sc.get("purchaser"),
             "card_last4": sc.get("card_last4"),
             "currency": sc.get("currency", "USD"),
+            "language": sc.get("language", "und"),
+            "translated_text": sc.get("translated_text"),
             "items": sc.get("items"),
             "certifications": sc.get("certifications"),
             "staff": sc.get("staff"),
@@ -1640,8 +2036,13 @@ def _cmd_backfill(args: argparse.Namespace, settings: dict) -> None:
         original_filename = pdf.name
         print(f"  Backfilling: {rel}")
         try:
+            existing_row = db_rows_by_receipt_dir.get(str(rel)) or db_rows_by_filename.get(pdf.name)
             receipt, model, tier = extract_receipt(
-                pdf, **extract_kwargs, fuzzy_rules=rules, merchant_aliases=merchant_aliases
+                pdf,
+                raw_text=(existing_row or {}).get("raw_text") or None,
+                **extract_kwargs,
+                fuzzy_rules=rules,
+                merchant_aliases=merchant_aliases,
             )
             receipt = _backfill_purchaser_from_card(conn, receipt)
             dest = _canonical_receipt_destination(
@@ -3901,6 +4302,110 @@ def main() -> None:
         help="Send notifications for each backfilled receipt (default: off — historical data)",
     )
 
+    # translate
+    p_tr = sub.add_parser(
+        "translate",
+        help="Translate OCR text/receipt artifacts and backfill locale metadata",
+    )
+    p_tr_sub = p_tr.add_subparsers(dest="translate_command", required=True)
+
+    p_tr_text = p_tr_sub.add_parser(
+        "text",
+        help="Translate OCR or receipt text into English and print the result",
+    )
+    tr_text_source = p_tr_text.add_mutually_exclusive_group(required=True)
+    tr_text_source.add_argument("--text", metavar="TEXT", help="Inline text to translate")
+    tr_text_source.add_argument(
+        "--text-file",
+        metavar="PATH",
+        help="Path to a UTF-8 text file containing OCR or source text",
+    )
+    p_tr_text.add_argument(
+        "--language",
+        metavar="CODE",
+        help="Source language hint such as ja or en (default: auto-detect when possible)",
+    )
+    p_tr_text.add_argument(
+        "--provider",
+        choices=["auto", "ollama", "openai", "none"],
+        default="auto",
+        help="Translation provider (default: settings translation_provider)",
+    )
+    p_tr_text.add_argument("--model", metavar="NAME", help="Override translation model")
+    p_tr_text.add_argument("--base-url", metavar="URL", help="Override Ollama base URL")
+    p_tr_text.add_argument(
+        "--timeout-seconds",
+        metavar="N",
+        type=int,
+        help="Override translation timeout in seconds",
+    )
+    p_tr_text.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    p_tr_receipt = p_tr_sub.add_parser(
+        "receipt",
+        help="Translate a receipt image/PDF into English and print the result",
+    )
+    p_tr_receipt.add_argument("path", metavar="PATH", help="Receipt image or PDF path")
+    p_tr_receipt.add_argument(
+        "--language",
+        metavar="CODE",
+        help="Source language hint such as ja or en (default: auto-detect from OCR)",
+    )
+    p_tr_receipt.add_argument(
+        "--provider",
+        choices=["auto", "ollama", "openai", "none"],
+        default="auto",
+        help="Translation provider (default: settings translation_provider)",
+    )
+    p_tr_receipt.add_argument("--model", metavar="NAME", help="Override translation model")
+    p_tr_receipt.add_argument("--base-url", metavar="URL", help="Override Ollama base URL")
+    p_tr_receipt.add_argument(
+        "--timeout-seconds",
+        metavar="N",
+        type=int,
+        help="Override translation timeout in seconds",
+    )
+    p_tr_receipt.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    p_tr_backfill = p_tr_sub.add_parser(
+        "backfill",
+        help="Backfill language/translation fields for existing receipt rows",
+    )
+    p_tr_backfill.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
+    p_tr_backfill.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_tr_backfill.add_argument(
+        "--provider",
+        choices=["auto", "ollama", "openai", "none"],
+        default="auto",
+        help="Translation provider (default: settings translation_provider)",
+    )
+    p_tr_backfill.add_argument("--model", metavar="NAME", help="Override translation model")
+    p_tr_backfill.add_argument("--base-url", metavar="URL", help="Override Ollama base URL")
+    p_tr_backfill.add_argument(
+        "--timeout-seconds",
+        metavar="N",
+        type=int,
+        help="Override translation timeout in seconds",
+    )
+    p_tr_backfill.add_argument(
+        "--filename",
+        action="append",
+        metavar="FILENAME",
+        help="Restrict to one or more explicit receipt filenames (repeatable)",
+    )
+    p_tr_backfill.add_argument(
+        "--limit",
+        metavar="N",
+        type=int,
+        help="Process only the most recent N matching rows",
+    )
+    p_tr_backfill.add_argument("--dry-run", action="store_true", help="Preview changes only")
+    p_tr_backfill.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run translation even when translated_text is already present",
+    )
+
     # itemize
     p_itm = sub.add_parser(
         "itemize",
@@ -4194,6 +4699,10 @@ def main() -> None:
     args = parser.parse_args()
     settings = _load_settings()
 
+    from intake.purchaser import register_purchaser_aliases  # noqa: PLC0415
+
+    register_purchaser_aliases(settings.get("purchaser_aliases", {}))
+
     if args.command == "process":
         _cmd_process(args, settings)
     elif args.command == "report":
@@ -4202,6 +4711,13 @@ def main() -> None:
         _cmd_serve(args, settings)
     elif args.command == "backfill":
         _cmd_backfill(args, settings)
+    elif args.command == "translate":
+        if args.translate_command == "text":
+            _cmd_translate_text(args, settings)
+        elif args.translate_command == "receipt":
+            _cmd_translate_receipt(args, settings)
+        elif args.translate_command == "backfill":
+            _cmd_translate_backfill(args, settings)
     elif args.command == "itemize":
         _cmd_itemize(args, settings)
     elif args.command == "certify":

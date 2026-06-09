@@ -117,7 +117,7 @@ def test_infer_purchaser_from_card_last4_returns_most_recent_known_holder(tmp_pa
             "category": "auto/az",
             "receipt_dir": "auto/az/20250711_1814.pdf",
             "card_last4": "5653",
-            "purchaser": "cason konzer",
+            "purchaser": "jane sample",
             "raw_text": "",
             "processed_by": "tesseract",
         },
@@ -132,7 +132,7 @@ def test_infer_purchaser_from_card_last4_returns_most_recent_known_holder(tmp_pa
             "category": "dining/fast-food",
             "receipt_dir": "dining/fast-food/20260406_0902.pdf",
             "card_last4": "5653",
-            "purchaser": "cason",
+            "purchaser": "jane",
             "raw_text": "",
             "processed_by": "gpt-4.1",
         },
@@ -140,7 +140,7 @@ def test_infer_purchaser_from_card_last4_returns_most_recent_known_holder(tmp_pa
 
     purchaser = infer_purchaser_from_card_last4(conn, "5653")
 
-    assert purchaser == "cason konzer"
+    assert purchaser == "jane sample"
 
 
 def test_update_receipt_fields_normalizes_purchaser_alias(tmp_path):
@@ -162,13 +162,13 @@ def test_update_receipt_fields_normalizes_purchaser_alias(tmp_path):
     updated, changes = update_receipt_fields(
         conn,
         "20260409_1707.pdf",
-        {"purchaser": "casonkonzer@gmail.com"},
+        {"purchaser": "janesample@gmail.com"},
         source="manual-correct",
         note="normalize purchaser alias",
     )
 
-    assert updated["purchaser"] == "cason konzer"
-    assert changes["purchaser"] == {"old": None, "new": "cason konzer"}
+    assert updated["purchaser"] == "jane sample"
+    assert changes["purchaser"] == {"old": None, "new": "jane sample"}
 
 
 def test_upsert_receipt_round_trips_items(tmp_path):
@@ -198,6 +198,32 @@ def test_upsert_receipt_round_trips_items(tmp_path):
         {"description": "Bananas", "amount": 2.99, "quantity": None, "unit_price": None},
         {"description": "Milk", "amount": 4.39, "quantity": None, "unit_price": None},
     ]
+
+
+def test_upsert_receipt_round_trips_language_and_translation(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260409_1707.pdf",
+            "scan_date": "2026-04-09",
+            "merchant": "ローソン",
+            "total": 1280.0,
+            "category": "general",
+            "receipt_dir": "general/20260409_1707.pdf",
+            "raw_text": "ローソン\n合計 1280円",
+            "processed_by": "gpt-4o-mini",
+            "currency": "JPY",
+            "language": "ja",
+            "translated_text": "Lawson\nTotal 1,280 yen",
+        },
+    )
+
+    row = get_receipt(conn, "20260409_1707.pdf")
+
+    assert row is not None
+    assert row["language"] == "ja"
+    assert row["translated_text"] == "Lawson\nTotal 1,280 yen"
 
 
 def test_update_receipt_fields_records_itemization_attempt(tmp_path):

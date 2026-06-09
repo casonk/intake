@@ -202,6 +202,32 @@ openai_model_high = "gpt-4.1"
 Those keys are intake-wide settings, so keep them above the first table header
 in the TOML file.
 
+**Translate non-English OCR locally by default** via the shared `crew-chief`
+Ollama service:
+
+```toml
+translation_provider = "ollama"
+translation_model = "aya-expanse:8b"
+translation_base_url = "http://localhost:11434"
+translation_timeout_seconds = 60
+```
+
+With that enabled, `raw_text` and `*.ocr.txt` remain the original OCR, while
+`translated_text` stores the English translation for non-English receipts.
+
+**Use intake as a translation service** from the terminal or from other repos
+that want machine-readable output:
+
+```bash
+intake translate text --text $'ローソン\n合計 1280円'
+intake translate receipt /path/to/receipt.jpg
+intake translate receipt /path/to/receipt.jpg --provider openai --json
+```
+
+`text` translates OCR/source text directly. `receipt` OCRs/renders the artifact
+first, then translates it. `--json` prints a simple payload that other repos can
+shell out to and parse without importing `intake` as a Python dependency.
+
 **Audit intake** — list pending receipt files without processing them:
 
 ```bash
@@ -289,6 +315,19 @@ The command stores `staff` metadata in the DB and sidecars and also clears a
 purchaser value when it exactly matches an extracted staff name, falling back to
 card-history purchaser inference when possible.
 
+**Backfill historical locale/translation fields** for tracked receipts:
+
+```bash
+intake translate backfill --dry-run
+intake translate backfill --filename 20260605_0914.jpg
+intake translate backfill --provider openai
+```
+
+By default this follows the configured translation provider (normally local
+Ollama). For noisy phone photos or suspected false positives, use
+`--provider openai` so a live image-capable model can correct `language` /
+`currency` and persist a higher-quality English translation.
+
 New inbox duplicates are short-circuited at ingest: if a PDF arriving in
 `receipt/intake/` matches the `file_hash` of an already-tracked receipt,
 `intake process` moves the new copy into `exhaust/duplicates/...`, writes a
@@ -324,6 +363,10 @@ recipient = "you@example.com"
 # Optional when [email].shock_relay_config is already configured for receipt
 # email ingestion; otherwise point it at shock-relay's gmail-imap config:
 # shock_relay_config = "/path/to/shock-relay/services/gmail-imap/config.local.yaml"
+
+# Queue processed-receipt notices for the shock-relay Gmail digest instead of
+# sending one email per receipt.
+# digest = true
 ```
 
 Reply to those Gmail notifications to leave hints or correction requests on the
@@ -344,10 +387,19 @@ links for the receipt artifact and any sidecar-adjacent OCR/JSON artifacts
 (`*.ocr.txt`, `*.intake.json`, `*.ai.json`) that exist under the mounted
 receipt root.
 
+When `[gmail].digest = true`, intake writes each processed-receipt notice to
+shock-relay's local Gmail digest queue and the scheduled digest sender emits one
+aggregate email on its configured cadence.
+
 The `*.ai.json` artifact is cumulative. Each new AI model attempt is appended
 instead of replacing the prior attempt history, and the file includes a
 `models` summary with fidelity weights (`low=1`, `mid=2`, `high=3`) for later
 comparison or weighted review.
+
+For non-English receipts, intake now persists the detected `language` plus an
+English `translated_text` in the DB and sidecar when AI extraction is
+available; the original OCR remains in `receipts.raw_text` and the companion
+`*.ocr.txt` artifact.
 
 If the reply asks for the OCR/image/file itself, intake now sends a follow-up
 Gmail reply with the same Snowbridge receipt, OCR, and JSON links.

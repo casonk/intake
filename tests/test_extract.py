@@ -142,6 +142,40 @@ def test_extract_receipt_attempts_ai_when_items_missing(
 
 @patch("intake.extract.extract_text")
 @patch("intake.extract.parse_receipt")
+@patch("intake.extract.maybe_translate_receipt")
+def test_extract_receipt_attempts_local_translation_for_non_english_receipt(
+    mock_translate, mock_parse, mock_ocr, tmp_path
+):
+    good_text = _fake_good_text()
+    base_receipt = _receipt(merchant="lawson", total=12.8, raw_text=good_text)
+    base_receipt.language = "ja"
+    base_receipt.items = [ReceiptItem(description="Onigiri", amount=1.99)]
+    mock_ocr.return_value = good_text
+    mock_parse.return_value = base_receipt
+    translated = _receipt(merchant="lawson", total=12.8, raw_text=good_text)
+    translated.language = "ja"
+    translated.translated_text = "Lawson\nTotal 1,280 yen"
+    translated.items = base_receipt.items
+    mock_translate.return_value = translated
+
+    pdf = tmp_path / "20260401_1000.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    receipt, model, tier = extract_receipt(
+        pdf,
+        openai_api_key=None,
+        translation_provider="ollama",
+        translation_model="aya-expanse:8b",
+    )
+
+    assert model == OCR_MODEL
+    assert tier == "ok"
+    assert mock_translate.call_count == 1
+    assert receipt.translated_text == "Lawson\nTotal 1,280 yen"
+
+
+@patch("intake.extract.extract_text")
+@patch("intake.extract.parse_receipt")
 def test_extract_receipt_no_ai_fallback_without_key(mock_parse, mock_ocr, tmp_path):
     mock_ocr.return_value = "bad"
     mock_parse.return_value = _receipt(merchant="unknown", total=None, raw_text="bad")
