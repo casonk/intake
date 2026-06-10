@@ -141,6 +141,10 @@ keywords = []
 label    = "Credit Card Payments"
 keywords = ["scheduled payment", "received your payment"]
 
+[categories.finance.credit-reporting]
+label    = "Credit Reporting"
+keywords = ["credit report", "credit score", "creditwise", "fico"]
+
 [categories.general]
 label    = "General / Uncategorized"
 keywords = []

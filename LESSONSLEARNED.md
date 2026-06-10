@@ -130,3 +130,8 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 ### 2026-06-09 — Intake CI formatting must be checked with the workflow commands too
 
 - `pre-commit run --all-files` is necessary but not sufficient for this repo's hosted CI; before pushing Python changes, also run the workflow-equivalent `ruff format --check .` and `black --check --diff .` because the separate GitHub Actions formatter job can still catch files that local hooks leave untouched.
+
+### 2026-06-10 — Credit-reporting alerts need provider-specific intake paths
+
+- Credit-reporting emails from providers like Equifax, Experian, and Capital One CreditWise are not receipts and usually do not match generic receipt/payment heuristics; they need explicit subject/sender candidate search terms plus a structured non-spend parser.
+- For these alerts, store them as finance metadata (`finance/credit-reporting`) with `total = NULL` rather than forcing a faux spend amount or filing them as ignored mail.

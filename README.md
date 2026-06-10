@@ -60,10 +60,12 @@ trail instead of ingesting both as separate receipts.
 
 Email ingestion also handles issuer, money-movement, and reservation payment
 notifications for supported providers. Capital One, Discover, Venmo, Wise, IRS,
-Nelnet, and Xanterra messages are treated as structured records where possible,
-with provider, amount, posted/due/booking date, purchaser, and card/account
-hints extracted from the email body. Scheduled/upcoming notices are filed as
-ignored email records and are not added to receipt spending.
+Nelnet, Xanterra, Equifax, Experian, and Capital One CreditWise messages are
+treated as structured records where possible, with provider, amount,
+posted/due/booking date, purchaser, and card/account hints extracted from the
+email body. Credit-reporting alerts are stored as non-spend finance records.
+Scheduled/upcoming notices are filed as ignored email records and are not added
+to receipt spending.
 
 TODO: keep expanding regression coverage for live payment-confirmation variants
 from Capital One, Discover, and Progressive as new provider templates arrive.
