@@ -115,6 +115,10 @@ reports_dir = "reports"
 #   "your payment of",
 #   # Scheduled/upcoming payment notices are fetched so they can be filed as ignored.
 #   "your scheduled payment",
+#   # Credit-reporting alerts are fetched as structured non-spend finance records.
+#   "credit report",
+#   "credit score",
+#   "FICO",
 #   "policy renewal reminder",
 #   "reservation confirmation",
 # ]

@@ -26,6 +26,7 @@ from intake.email import (
     _email_was_handled,
     _extract_amex_payment_email,
     _extract_credit_card_payment_email,
+    _extract_credit_reporting_email,
     _extract_irs_payment_email,
     _extract_nelnet_billing_email,
     _extract_paypal_receipt_email,
@@ -42,6 +43,7 @@ from intake.email import (
     _is_known_non_receipt_notice,
     _looks_like_receipt,
     _mailbox_select_candidates,
+    _preferred_credit_reporting_category,
     _preferred_payment_category,
     _reply_requests_file_link,
     _reply_thread_token,
@@ -258,6 +260,84 @@ def test_preferred_payment_category_prefers_credit_card_subcategory():
         }
     }
     assert _preferred_payment_category(rules) == "finance/credit-card-payment"
+
+
+def test_preferred_credit_reporting_category_prefers_credit_reporting_subcategory():
+    rules = {
+        "finance": {
+            "label": "Finance & Transfers",
+            "keywords": [],
+            "credit-reporting": {"label": "Credit Reporting", "keywords": []},
+        }
+    }
+    assert _preferred_credit_reporting_category(rules) == "finance/credit-reporting"
+
+
+def test_extract_credit_reporting_email_equifax():
+    body = """
+    Credit Monitoring Alert
+    CASON, you have a new credit report and score available.
+    Sign into your myEquifax account for details.
+    """
+    parsed = _extract_credit_reporting_email(
+        "New Equifax Credit Report and Score Available",
+        "no-reply@equifax.com",
+        body,
+    )
+    assert parsed == {
+        "merchant": "equifax",
+        "total": None,
+        "receipt_date": None,
+        "purchaser": "cason",
+        "card_last4": None,
+        "category": "finance/credit-reporting",
+        "processed_by": "email-credit-reporting",
+    }
+
+
+def test_extract_credit_reporting_email_experian():
+    body = """
+    Keep it up, Cason—here’s what’s new
+    YOUR FICO(R) SCORE
+    INCREASED
+    See your alerts
+    """
+    parsed = _extract_credit_reporting_email(
+        "Your FICO® Score went up. Nice work!",
+        "Experian Alerts <support@s.usa.experian.com>",
+        body,
+    )
+    assert parsed == {
+        "merchant": "experian",
+        "total": None,
+        "receipt_date": None,
+        "purchaser": "cason",
+        "card_last4": None,
+        "category": "finance/credit-reporting",
+        "processed_by": "email-credit-reporting",
+    }
+
+
+def test_extract_credit_reporting_email_capital_one_creditwise():
+    body = """
+    Confirming your brand-new credit score.
+    Cason,
+    Here's a quick look at your credit score activity monitored by CreditWise from Capital One.
+    """
+    parsed = _extract_credit_reporting_email(
+        "Cason, your credit score has improved",
+        "Capital One <capitalone@notification.capitalone.com>",
+        body,
+    )
+    assert parsed == {
+        "merchant": "capital one creditwise",
+        "total": None,
+        "receipt_date": None,
+        "purchaser": "cason",
+        "card_last4": None,
+        "category": "finance/credit-reporting",
+        "processed_by": "email-credit-reporting",
+    }
 
 
 def test_extract_progressive_payment_email_renewal_reminder():
@@ -689,6 +769,8 @@ def test_configured_receipt_sender_hints_include_paypal_default():
         "noreply@wise.com",
         "reserve-noreply@xanterra.com",
         "americanexpress.com",
+        "no-reply@equifax.com",
+        "support@s.usa.experian.com",
     ]
 
 
@@ -1630,6 +1712,54 @@ def test_upsert_html_receipt_handles_xanterra_reservation(db, tmp_path, monkeypa
     ]
     assert captured_events[0][0] == "email"
     assert captured_events[0][1][0]["scan_date"] == "2026-05-20"
+
+
+def test_upsert_html_receipt_handles_credit_reporting_email(db, tmp_path, monkeypatch):
+    import intake.classify as classify_mod
+
+    receipt_root = tmp_path / "receipts"
+
+    monkeypatch.setattr(
+        classify_mod,
+        "load_rules",
+        lambda: {"finance": {"credit-reporting": {"label": "Credit Reporting", "keywords": []}}},
+    )
+    monkeypatch.setattr(classify_mod, "load_merchant_aliases", lambda: {})
+    monkeypatch.setattr(
+        "intake.notify.send_processed_receipt_notifications", lambda *a, **k: ({}, {})
+    )
+    monkeypatch.setattr("intake.personal_finance.trigger_personal_finance", lambda *a, **k: None)
+
+    _upsert_html_receipt(
+        db,
+        32602,
+        "INBOX",
+        "New Equifax Credit Report and Score Available",
+        "no-reply@equifax.com",
+        "Wed, 10 Jun 2026 20:08:58 +0000",
+        """
+        Credit Monitoring Alert
+        CASON, you have a new credit report and score available.
+        Sign into your myEquifax account for details.
+        """,
+        {"receipt_dir": str(receipt_root)},
+    )
+
+    row = get_receipt(db, "email_32602_INBOX.txt")
+    artifact = receipt_root / "email" / "finance" / "credit-reporting" / "email_32602_INBOX.txt"
+    sidecar = read_sidecar(artifact)
+
+    assert row is not None
+    assert row["scan_date"] == "2026-06-10"
+    assert row["merchant"] == "equifax"
+    assert row["total"] is None
+    assert row["category"] == "finance/credit-reporting"
+    assert row["receipt_dir"] == "email/finance/credit-reporting"
+    assert row["processed_by"] == "email-credit-reporting"
+    assert row["purchaser"] == "cason"
+    assert sidecar is not None
+    assert sidecar["merchant"] == "equifax"
+    assert sidecar["category"] == "finance/credit-reporting"
 
 
 def test_write_inline_email_artifact_serializes_items_in_sidecar(tmp_path):

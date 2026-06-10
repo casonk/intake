@@ -39,6 +39,8 @@ _DEFAULT_RECEIPT_SENDER_HINTS = (
     "noreply@wise.com",
     "reserve-noreply@xanterra.com",
     "americanexpress.com",
+    "no-reply@equifax.com",
+    "support@s.usa.experian.com",
 )
 _DEFAULT_REPLY_MAILBOXES = (
     "[Gmail]/All Mail",
@@ -191,6 +193,9 @@ def fetch_receipts(
                 "we processed your payment",
                 "your payment of",
                 "your scheduled payment",
+                "credit report",
+                "credit score",
+                "FICO",
                 "policy renewal reminder",
                 "reservation confirmation",
             ]
@@ -381,7 +386,12 @@ def fetch_receipts(
                     # HTML inline receipt (no PDF attachments or alongside them)
                     if html_body and not dry_run:
                         plain = html_to_text(html_body)
-                        if _looks_like_receipt(plain):
+                        structured_email = _extract_structured_finance_email(
+                            subject,
+                            sender,
+                            plain,
+                        )
+                        if structured_email is not None or _looks_like_receipt(plain):
                             _upsert_html_receipt(
                                 db_conn,
                                 uid,
@@ -391,6 +401,7 @@ def fetch_receipts(
                                 date_str,
                                 plain,
                                 settings,
+                                structured_email=structured_email,
                             )
                             result.html_processed += 1
                             inline_processed = True
@@ -859,6 +870,10 @@ _DUE_ON_DATE_RE = re.compile(r"\bdue\s+on\s+(\d{2}/\d{2}/\d{4})\b", re.IGNORECAS
 _CAPITAL_ONE_SENDER_HINT = "capitalone@notification.capitalone.com"
 _DISCOVER_SENDER_HINT = "discover@services.discover.com"
 _AMEX_SENDER_HINT = "americanexpress.com"
+_EQUIFAX_SENDER_HINT = "no-reply@equifax.com"
+_EXPERIAN_SENDER_HINT = "support@s.usa.experian.com"
+_TRANSUNION_SENDER_HINT = "transunion"
+_CREDIT_KARMA_SENDER_HINT = "creditkarma"
 _AMEX_ACCOUNT_ENDING_RE = re.compile(r"\baccount\s+ending\s*:\s*(\d{4,5})\b", re.IGNORECASE)
 _AMEX_CARDHOLDER_RE = re.compile(
     r"([A-Z][A-Z ]{3,}[A-Z])\s*\n\s*Account\s+Ending\b",
@@ -891,6 +906,13 @@ _WISE_MONEY_ADDED_RE = re.compile(
 _XANTERRA_SENDER_HINT = "xanterra.com"
 _XANTERRA_WELCOME_RE = re.compile(
     r"(?im)^\s*Welcome,\s*([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z]+){1,3})\s*$"
+)
+_CREDIT_REPORTING_ALLCAPS_GREETING_RE = re.compile(
+    r"(?m)^\s*([A-Z]{3,}(?:\s+[A-Z]{2,}){0,2})\s*,\s*$"
+)
+_CREDIT_REPORTING_INLINE_GREETING_RE = re.compile(
+    r"\b(?:keep it up|hi|hello)\s*,?\s*([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})\b",
+    re.IGNORECASE,
 )
 _BINANCE_SENDER_HINT = "post.binance.us"
 _PAYPAL_YOU_PAID_RE = re.compile(
@@ -1682,6 +1704,14 @@ def _preferred_payment_category(rules: dict) -> str:
     return "general"
 
 
+def _preferred_credit_reporting_category(rules: dict) -> str:
+    """Return the best configured category for credit-reporting notification emails."""
+    for candidate in ("finance/credit-reporting", "general/credit-reporting", "finance"):
+        if _category_exists(rules, candidate):
+            return candidate
+    return "general"
+
+
 def _parse_payment_date_text(text: str) -> date | None:
     """Parse a month-name payment date used in issuer notification emails."""
     cleaned = " ".join(text.replace("\n", " ").split())
@@ -1773,6 +1803,22 @@ def _extract_payment_purchaser(plain_text: str) -> str | None:
             return normalized
     match = _PAYMENT_GREETING_RE.search(plain_text)
     if match:
+        normalized = normalize_purchaser(match.group(1))
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _extract_credit_reporting_purchaser(plain_text: str) -> str | None:
+    """Extract the purchaser from a credit-reporting alert email."""
+    purchaser = _extract_payment_purchaser(plain_text)
+    if purchaser is not None:
+        return purchaser
+
+    for pattern in (_CREDIT_REPORTING_ALLCAPS_GREETING_RE, _CREDIT_REPORTING_INLINE_GREETING_RE):
+        match = pattern.search(plain_text)
+        if not match:
+            continue
         normalized = normalize_purchaser(match.group(1))
         if normalized is not None:
             return normalized
@@ -2136,8 +2182,56 @@ def _extract_amex_payment_email(subject: str, sender: str, plain_text: str) -> d
     }
 
 
-def _extract_structured_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
-    """Return structured fields for known payment-notification email formats."""
+def _extract_credit_reporting_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Return structured fields for known credit-reporting notification emails."""
+    sender_lower = sender.lower()
+    combined = f"{subject}\n{plain_text}"
+    combined_lower = combined.lower()
+
+    merchant: str | None = None
+    if _EQUIFAX_SENDER_HINT in sender_lower and (
+        "credit report" in combined_lower or "credit score" in combined_lower
+    ):
+        merchant = "equifax"
+    elif _EXPERIAN_SENDER_HINT in sender_lower and (
+        "fico" in combined_lower
+        or "credit score" in combined_lower
+        or "see your alerts" in combined_lower
+    ):
+        merchant = "experian"
+    elif _TRANSUNION_SENDER_HINT in sender_lower and (
+        "credit report" in combined_lower
+        or "credit score" in combined_lower
+        or "credit monitoring" in combined_lower
+    ):
+        merchant = "transunion"
+    elif _CREDIT_KARMA_SENDER_HINT in sender_lower and (
+        "credit report" in combined_lower
+        or "credit score" in combined_lower
+        or "credit monitoring" in combined_lower
+    ):
+        merchant = "credit karma"
+    elif _CAPITAL_ONE_SENDER_HINT in sender_lower and (
+        "creditwise" in combined_lower and "credit score" in combined_lower
+    ):
+        merchant = "capital one creditwise"
+
+    if merchant is None:
+        return None
+
+    return {
+        "merchant": merchant,
+        "total": None,
+        "receipt_date": None,
+        "purchaser": _extract_credit_reporting_purchaser(plain_text),
+        "card_last4": None,
+        "category": "finance/credit-reporting",
+        "processed_by": "email-credit-reporting",
+    }
+
+
+def _extract_structured_finance_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Return structured fields for known finance/payment notification emails."""
     return (
         _extract_credit_card_payment_email(subject, sender, plain_text)
         or _extract_amex_payment_email(subject, sender, plain_text)
@@ -2148,6 +2242,7 @@ def _extract_structured_payment_email(subject: str, sender: str, plain_text: str
         or _extract_nelnet_billing_email(subject, sender, plain_text)
         or _extract_wise_payment_email(subject, sender, plain_text)
         or _extract_xanterra_reservation_email(subject, sender, plain_text)
+        or _extract_credit_reporting_email(subject, sender, plain_text)
     )
 
 
@@ -2206,7 +2301,16 @@ def _write_inline_email_receipt_artifact(
 
 
 def _upsert_html_receipt(
-    db_conn, uid, mailbox, subject, sender, date_str, plain_text, settings
+    db_conn,
+    uid,
+    mailbox,
+    subject,
+    sender,
+    date_str,
+    plain_text,
+    settings,
+    *,
+    structured_email: dict | None = None,
 ) -> None:
     """Try to extract fields from an inline HTML receipt and upsert into DB."""
     from dataclasses import replace  # noqa: PLC0415
@@ -2229,25 +2333,31 @@ def _upsert_html_receipt(
     receipt = parse_receipt(synthetic_name, plain_text)
     if email_header_date is not None:
         receipt = replace(receipt, scan_date=email_header_date)
-    payment_email = _extract_structured_payment_email(subject, sender, plain_text)
-    if payment_email is not None:
+    finance_email = structured_email or _extract_structured_finance_email(
+        subject,
+        sender,
+        plain_text,
+    )
+    if finance_email is not None:
         receipt = replace(
             receipt,
-            merchant=payment_email["merchant"],
-            total=payment_email["total"],
-            receipt_date=payment_email["receipt_date"],
-            purchaser=payment_email["purchaser"],
-            card_last4=payment_email["card_last4"],
-            items=payment_email.get("items", []),
+            merchant=finance_email["merchant"],
+            total=finance_email["total"],
+            receipt_date=finance_email["receipt_date"],
+            purchaser=finance_email["purchaser"],
+            card_last4=finance_email["card_last4"],
+            items=finance_email.get("items", []),
         )
-        preferred_category = payment_email.get("category")
+        preferred_category = finance_email.get("category")
         if isinstance(preferred_category, str) and _category_exists(rules, preferred_category):
             category = preferred_category
         elif preferred_category == "finance/credit-card-payment":
             category = _preferred_payment_category(rules)
+        elif preferred_category == "finance/credit-reporting":
+            category = _preferred_credit_reporting_category(rules)
         else:
             category = classify(receipt.merchant or "", rules, full_text=plain_text)
-        processed_by = payment_email.get("processed_by") or (
+        processed_by = finance_email.get("processed_by") or (
             "email-payment" if preferred_category else "email-parse"
         )
     else:
@@ -2259,7 +2369,7 @@ def _upsert_html_receipt(
 
     # Try AI extraction if API key available
     api_key = settings.get("openai_api_key")
-    if api_key and payment_email is None:
+    if api_key and finance_email is None:
         import openai  # noqa: PLC0415
 
         from intake.ai import merge_ai_result  # noqa: PLC0415
