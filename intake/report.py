@@ -478,6 +478,14 @@ _HTML_TEMPLATE = """\
     scroll-margin-top: 92px;
   }
   a:hover { text-decoration: underline; }
+  /* ── column resize ── */
+  th { position: relative; }
+  .col-resizer { position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;user-select:none; }
+  .col-resizer:hover,.col-resizer.rsz-active { background:rgba(24,33,47,.18); }
+  table.resizing { user-select:none;cursor:col-resize; }
+  /* ── cell expand ── */
+  td.expanded { white-space:normal!important;max-width:none!important;overflow:visible!important; }
+  td.expanded .item-summary { -webkit-line-clamp:unset!important;display:block!important; }
 </style>
 </head>
 <body>
@@ -786,6 +794,34 @@ _HTML_TEMPLATE = """\
     </tbody>
   </table>
 </main>
+<script>
+(function () {
+  function initColResize(tbl) {
+    tbl.querySelectorAll('th').forEach(function (th) {
+      var r = document.createElement('div');
+      r.className = 'col-resizer';
+      th.appendChild(r);
+      r.addEventListener('mousedown', function (e) {
+        var x0 = e.clientX, w0 = th.offsetWidth;
+        tbl.classList.add('resizing');
+        r.classList.add('rsz-active');
+        var mv = function (ev) { th.style.width = th.style.minWidth = Math.max(40, w0 + ev.clientX - x0) + 'px'; };
+        var up = function () { tbl.classList.remove('resizing'); r.classList.remove('rsz-active'); document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+        document.addEventListener('mousemove', mv);
+        document.addEventListener('mouseup', up);
+        e.preventDefault();
+      });
+    });
+  }
+  function initCellExpand(tbl) {
+    tbl.addEventListener('click', function (e) {
+      var td = e.target.closest('td');
+      if (td) { td.classList.toggle('expanded'); }
+    });
+  }
+  document.querySelectorAll('.detail-table').forEach(function (t) { initColResize(t); initCellExpand(t); });
+}());
+</script>
 </body>
 </html>
 """
@@ -970,6 +1006,16 @@ _MERCHANT_DIRECTORY_HTML_TEMPLATE = """\
     border: 1px dashed rgba(24, 33, 47, 0.16);
     color: var(--muted);
   }
+  /* ── column resize ── */
+  th { position: relative; }
+  .col-resizer { position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;user-select:none; }
+  .col-resizer:hover,.col-resizer.rsz-active { background:rgba(24,33,47,.18); }
+  table.resizing { user-select:none;cursor:col-resize; }
+  /* ── cell expand ── */
+  td.expanded { white-space:normal!important;max-width:none!important;overflow:visible!important; }
+  td.expanded .item-summary { -webkit-line-clamp:unset!important;display:block!important; }
+  /* ── auto-size filter input ── */
+  #merchant-filter { field-sizing:content;min-width:180px;width:auto; }
 </style>
 </head>
 <body>
@@ -1028,16 +1074,43 @@ _MERCHANT_DIRECTORY_HTML_TEMPLATE = """\
   </section>
 </main>
 <script>
-  const merchantFilter = document.getElementById("merchant-filter");
+(function () {
+  function initColResize(tbl) {
+    tbl.querySelectorAll('th').forEach(function (th) {
+      var r = document.createElement('div');
+      r.className = 'col-resizer';
+      th.appendChild(r);
+      r.addEventListener('mousedown', function (e) {
+        var x0 = e.clientX, w0 = th.offsetWidth;
+        tbl.classList.add('resizing');
+        r.classList.add('rsz-active');
+        var mv = function (ev) { th.style.width = th.style.minWidth = Math.max(40, w0 + ev.clientX - x0) + 'px'; };
+        var up = function () { tbl.classList.remove('resizing'); r.classList.remove('rsz-active'); document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+        document.addEventListener('mousemove', mv);
+        document.addEventListener('mouseup', up);
+        e.preventDefault();
+      });
+    });
+  }
+  function initCellExpand(tbl) {
+    tbl.addEventListener('click', function (e) {
+      var td = e.target.closest('td');
+      if (td) { td.classList.toggle('expanded'); }
+    });
+  }
+  document.querySelectorAll('table').forEach(function (t) { initColResize(t); initCellExpand(t); });
+
+  var merchantFilter = document.getElementById("merchant-filter");
   if (merchantFilter) {
-    const rows = Array.from(document.querySelectorAll("[data-merchant-row]"));
-    merchantFilter.addEventListener("input", () => {
-      const query = merchantFilter.value.trim().toLowerCase();
-      for (const row of rows) {
-        row.hidden = query !== "" && !row.dataset.search.includes(query);
+    var rows = Array.from(document.querySelectorAll("[data-merchant-row]"));
+    merchantFilter.addEventListener("input", function () {
+      var query = merchantFilter.value.trim().toLowerCase();
+      for (var i = 0; i < rows.length; i++) {
+        rows[i].hidden = query !== "" && !rows[i].dataset.search.includes(query);
       }
     });
   }
+}());
 </script>
 </body>
 </html>
@@ -1273,6 +1346,14 @@ _MERCHANT_DETAIL_HTML_TEMPLATE = """\
     border: 1px dashed rgba(24, 33, 47, 0.16);
     color: var(--muted);
   }
+  /* ── column resize ── */
+  th { position: relative; }
+  .col-resizer { position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;user-select:none; }
+  .col-resizer:hover,.col-resizer.rsz-active { background:rgba(24,33,47,.18); }
+  table.resizing { user-select:none;cursor:col-resize; }
+  /* ── cell expand ── */
+  td.expanded { white-space:normal!important;max-width:none!important;overflow:visible!important; }
+  td.expanded .item-summary { -webkit-line-clamp:unset!important;display:block!important; }
 </style>
 </head>
 <body>
@@ -1419,6 +1500,34 @@ _MERCHANT_DETAIL_HTML_TEMPLATE = """\
     {% endif %}
   </section>
 </main>
+<script>
+(function () {
+  function initColResize(tbl) {
+    tbl.querySelectorAll('th').forEach(function (th) {
+      var r = document.createElement('div');
+      r.className = 'col-resizer';
+      th.appendChild(r);
+      r.addEventListener('mousedown', function (e) {
+        var x0 = e.clientX, w0 = th.offsetWidth;
+        tbl.classList.add('resizing');
+        r.classList.add('rsz-active');
+        var mv = function (ev) { th.style.width = th.style.minWidth = Math.max(40, w0 + ev.clientX - x0) + 'px'; };
+        var up = function () { tbl.classList.remove('resizing'); r.classList.remove('rsz-active'); document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+        document.addEventListener('mousemove', mv);
+        document.addEventListener('mouseup', up);
+        e.preventDefault();
+      });
+    });
+  }
+  function initCellExpand(tbl) {
+    tbl.addEventListener('click', function (e) {
+      var td = e.target.closest('td');
+      if (td) { td.classList.toggle('expanded'); }
+    });
+  }
+  document.querySelectorAll('table').forEach(function (t) { initColResize(t); initCellExpand(t); });
+}());
+</script>
 </body>
 </html>
 """
@@ -1486,7 +1595,7 @@ _AUDIT_HTML_TEMPLATE = """\
   }
   .filter-row { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
   .filter-field { display:flex; flex-direction:column; gap:4px; }
-  .filter-field--grow { flex:1; min-width:160px; }
+  .filter-field--grow { flex:0 0 auto; }
   .filter-field label { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
   .filter-field input,
   .filter-field select {
@@ -1566,6 +1675,14 @@ _AUDIT_HTML_TEMPLATE = """\
     border:1px dashed rgba(24,33,47,0.16);
   }
   section[id], h2[id] { scroll-margin-top:80px; }
+  /* ── column resize ── */
+  .detail-table th { position: relative; }
+  .col-resizer { position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;user-select:none; }
+  .col-resizer:hover,.col-resizer.rsz-active { background:rgba(24,33,47,.18); }
+  .detail-table.resizing { user-select:none;cursor:col-resize; }
+  /* ── cell expand ── */
+  .detail-table td.expanded { white-space:normal!important;max-width:none!important;overflow:visible!important; }
+  .detail-table td.expanded .item-summary { -webkit-line-clamp:unset!important;display:block!important; }
 </style>
 </head>
 <body>
@@ -1747,6 +1864,56 @@ _AUDIT_HTML_TEMPLATE = """\
   document.querySelector('th[data-col="scan_date"]').classList.add('sort-desc');
 
   apply();
+
+  // ── col resize ──
+  function initColResize(tbl) {
+    tbl.querySelectorAll('th').forEach(function (th) {
+      var r = document.createElement('div');
+      r.className = 'col-resizer';
+      th.appendChild(r);
+      r.addEventListener('mousedown', function (e) {
+        var x0 = e.clientX, w0 = th.offsetWidth;
+        tbl.classList.add('resizing');
+        r.classList.add('rsz-active');
+        var mv = function (ev) { th.style.width = th.style.minWidth = Math.max(40, w0 + ev.clientX - x0) + 'px'; };
+        var up = function () { tbl.classList.remove('resizing'); r.classList.remove('rsz-active'); document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+        document.addEventListener('mousemove', mv);
+        document.addEventListener('mouseup', up);
+        e.preventDefault();
+      });
+    });
+  }
+  // ── cell expand (event delegation — works after tbody is rebuilt) ──
+  function initCellExpand(el) {
+    el.addEventListener('click', function (e) {
+      var td = e.target.closest('td');
+      if (td) { td.classList.toggle('expanded'); }
+    });
+  }
+  // ── auto-size text inputs ──
+  function initAutosize(el) {
+    var s = document.createElement('span');
+    var cs = window.getComputedStyle(el);
+    s.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;pointer-events:none;'
+      + 'font:' + cs.font + ';padding:0 ' + cs.paddingRight + ';';
+    document.body.appendChild(s);
+    var extra = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 4;
+    var sync = function () {
+      s.textContent = el.value || el.placeholder || '';
+      el.style.width = Math.max(120, s.offsetWidth + extra) + 'px';
+    };
+    el.addEventListener('input', sync);
+    sync();
+  }
+
+  var auditTable = document.getElementById('audit-table');
+  if (auditTable) { initColResize(auditTable); }
+  var auditTbody = document.getElementById('audit-tbody');
+  if (auditTbody) { initCellExpand(auditTbody); }
+  ['f-merchant', 'f-purchaser'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) { initAutosize(el); }
+  });
 }());
 </script>
 </body>
