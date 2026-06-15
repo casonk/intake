@@ -15,7 +15,6 @@ from datetime import UTC, date, datetime
 from email import message_from_bytes
 from email.policy import default as default_policy
 from email.utils import parsedate_to_datetime
-from html.parser import HTMLParser
 from pathlib import Path
 
 from intake.db import (
@@ -27,7 +26,21 @@ from intake.db import (
     record_receipt_update,
     update_receipt_fields,
 )
-from intake.naming import allocate_canonical_path
+from intake.email_filing import (
+    file_message_to_processed_label,
+    move_message_without_marking_read,
+    safe_save,
+    safe_save_receipt_pdf,
+    same_mailbox_label,
+)
+from intake.email_provider import (
+    fetch_message_by_uid,
+    find_message_in_mailboxes,
+    load_shock_relay,
+    mailbox_select_candidates,
+    select_mailbox,
+)
+from intake.email_text import html_to_text as _html_to_text
 from intake.purchaser import normalize_purchaser
 from intake.translation import maybe_translate_receipt
 
@@ -62,62 +75,16 @@ _CREW_CHIEF_INTENT_HEADER = "X-Crew-Chief-Intent"
 _INTAKE_SERVICE_VALUE = "intake"
 _INTAKE_GENERATED_INTENTS = {"notify", "reply-link"}
 
-# ── HTML → plain text ─────────────────────────────────────────────────────────
-
-
-class _StripHTML(HTMLParser):
-    """Minimal HTML → plain-text stripper (no extra deps)."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._parts: list[str] = []
-        self._skip = False
-
-    def handle_starttag(self, tag: str, attrs: list) -> None:
-        if tag in ("script", "style"):
-            self._skip = True
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style"):
-            self._skip = False
-        if tag in ("br", "p", "div", "tr", "li", "h1", "h2", "h3", "h4"):
-            self._parts.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip:
-            self._parts.append(data)
-
-    def text(self) -> str:
-        raw = "".join(self._parts)
-        # Collapse excessive whitespace while preserving newlines
-        lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in raw.splitlines()]
-        return "\n".join(ln for ln in lines if ln)
-
 
 def html_to_text(html: str) -> str:
-    parser = _StripHTML()
-    parser.feed(html)
-    return parser.text()
+    return _html_to_text(html)
 
 
 # ── shock-relay import helper ──────────────────────────────────────────────────
 
 
 def _load_shock_relay(config_path: str):
-    """Import shock-relay common module by adding its dir to sys.path."""
-    module_dir = str(Path(config_path).parent.resolve())
-    if module_dir not in sys.path:
-        sys.path.insert(0, module_dir)
-    try:
-        import common as sr  # noqa: PLC0415
-
-        return sr
-    except ImportError as exc:
-        raise RuntimeError(
-            f"Cannot import shock-relay common from {module_dir}: {exc}\n"
-            "Ensure the shock-relay repo is accessible and the path in "
-            "settings.toml [email] shock_relay_config is correct."
-        ) from exc
+    return load_shock_relay(config_path)
 
 
 # ── core fetch logic ───────────────────────────────────────────────────────────
@@ -541,8 +508,7 @@ def _email_was_handled(saved_count: int, inline_processed: bool) -> bool:
 
 
 def _same_mailbox_label(left: str, right: str) -> bool:
-    """Return True when two Gmail IMAP mailbox names refer to the same label."""
-    return left.strip().strip('"').casefold() == right.strip().strip('"').casefold()
+    return same_mailbox_label(left, right)
 
 
 def _notification_inbox_grace_seconds(email_cfg: dict) -> int:
@@ -614,15 +580,13 @@ def _file_message_to_processed_label(
     source_mailbox: str,
     processed_label: str,
 ) -> bool:
-    """Mark *uid* read and move it to *processed_label* when needed.
-
-    Returns True when the source mailbox needs expunge because a move occurred.
-    """
-    sr.mark_message_read(conn, uid)
-    if not processed_label or _same_mailbox_label(source_mailbox, processed_label):
-        return False
-    sr.move_message(conn, uid, processed_label)
-    return True
+    return file_message_to_processed_label(
+        sr,
+        conn,
+        uid,
+        source_mailbox=source_mailbox,
+        processed_label=processed_label,
+    )
 
 
 def _move_message_without_marking_read(
@@ -633,23 +597,17 @@ def _move_message_without_marking_read(
     source_mailbox: str,
     processed_label: str,
 ) -> bool:
-    """Move *uid* to *processed_label* without marking it read."""
-    if not processed_label or _same_mailbox_label(source_mailbox, processed_label):
-        return False
-    sr.move_message(conn, uid, processed_label)
-    return True
+    return move_message_without_marking_read(
+        sr,
+        conn,
+        uid,
+        source_mailbox=source_mailbox,
+        processed_label=processed_label,
+    )
 
 
 def _safe_save(dest_dir: Path, filename: str, data: bytes) -> Path:
-    """Write *data* to *dest_dir/filename*, avoiding clobbers with a suffix."""
-    safe = re.sub(r"[^\w\-. ]", "_", filename).strip() or "attachment.pdf"
-    dest = dest_dir / safe
-    if dest.exists():
-        stem, suffix = dest.stem, dest.suffix
-        ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-        dest = dest_dir / f"{stem}_{ts}{suffix}"
-    dest.write_bytes(data)
-    return dest
+    return safe_save(dest_dir, filename, data)
 
 
 def _safe_save_receipt_pdf(
@@ -659,19 +617,7 @@ def _safe_save_receipt_pdf(
     *,
     received_at: str | None = None,
 ) -> Path:
-    """Write a receipt PDF using the canonical ``YYYYMMDD_HHMM.pdf`` convention."""
-    try:
-        parsed = parsedate_to_datetime(received_at) if received_at else datetime.now()
-        base_dt = parsed.replace(tzinfo=None) if isinstance(parsed, datetime) else datetime.now()
-    except (TypeError, ValueError, IndexError, OverflowError):
-        base_dt = datetime.now()
-    dest = allocate_canonical_path(
-        dest_dir,
-        base_dt=base_dt.replace(second=0, microsecond=0, tzinfo=None),
-        suffix=Path(filename).suffix or ".pdf",
-    )
-    dest.write_bytes(data)
-    return dest
+    return safe_save_receipt_pdf(dest_dir, filename, data, received_at=received_at)
 
 
 def _safe_archive_token(value: object) -> str:
@@ -1101,45 +1047,15 @@ def _reply_thread_token(msg, message_id: str) -> str:
 
 
 def _mailbox_select_candidates(mailbox: str) -> list[str]:
-    """Return raw and quoted mailbox names for IMAP select/examine calls."""
-    cleaned = str(mailbox or "").strip()
-    if not cleaned:
-        return []
-    candidates = [cleaned]
-    if " " in cleaned and not cleaned.startswith('"'):
-        candidates.append(f'"{cleaned}"')
-    return candidates
+    return mailbox_select_candidates(mailbox)
 
 
 def _select_mailbox(conn, mailbox: str, *, readonly: bool) -> tuple[str, object]:
-    """Select *mailbox*, retrying with IMAP-safe quoting when needed."""
-    last_status = "NO"
-    last_data = []
-    last_exc: Exception | None = None
-    for candidate in _mailbox_select_candidates(mailbox):
-        try:
-            status, data = conn.select(candidate, readonly=readonly)
-        except Exception as exc:
-            last_exc = exc
-            continue
-        if status == "OK":
-            return status, data
-        last_status, last_data = status, data
-    if last_exc is not None:
-        raise last_exc
-    return last_status, last_data
+    return select_mailbox(conn, mailbox, readonly=readonly)
 
 
 def _fetch_message_by_uid(conn, mailbox: str, uid: int, *, readonly: bool) -> object:
-    """Select *mailbox* and fetch the RFC822 payload for *uid*."""
-    status, _ = _select_mailbox(conn, mailbox, readonly=readonly)
-    if status != "OK":
-        raise RuntimeError(f"Cannot select mailbox {mailbox!r}")
-
-    fetch_status, msg_data = conn.uid("fetch", str(uid), "(RFC822)")
-    if fetch_status != "OK":
-        raise RuntimeError(f"Cannot fetch uid {uid} from {mailbox!r}")
-    return msg_data
+    return fetch_message_by_uid(conn, mailbox, uid, readonly=readonly)
 
 
 def _find_message_in_mailboxes(
@@ -1151,35 +1067,14 @@ def _find_message_in_mailboxes(
     recent_limit: int,
     search_charset,
 ) -> dict[str, object] | None:
-    """Locate *message_id* across candidate mailboxes with quoted-select fallback."""
-    canonical_message_id = sr.normalize_message_id_header(message_id)
-    for mailbox in mailboxes:
-        try:
-            status, _ = _select_mailbox(conn, mailbox, readonly=True)
-        except Exception:
-            continue
-        if status != "OK":
-            continue
-        status, data = conn.uid("search", search_charset, "ALL")
-        if status != "OK":
-            continue
-        uids = sr.parse_int_uid_list(data)
-        if not uids:
-            continue
-        for uid in reversed(uids[-recent_limit:]):
-            msg_data = _fetch_message_by_uid(conn, mailbox, uid, readonly=True)
-            payload = sr.extract_fetch_payload(msg_data)
-            if not payload:
-                continue
-            normalized = sr.normalize_message(mailbox, uid, payload)
-            if sr.normalize_message_id_header(normalized.get("message_id")) != canonical_message_id:
-                continue
-            return {
-                "mailbox": mailbox,
-                "uid": uid,
-                "message_id": canonical_message_id,
-            }
-    return None
+    return find_message_in_mailboxes(
+        conn,
+        sr,
+        mailboxes,
+        message_id,
+        recent_limit=recent_limit,
+        search_charset=search_charset,
+    )
 
 
 def _resolve_reply_receipt_filename(

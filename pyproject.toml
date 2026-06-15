@@ -60,5 +60,8 @@ indent-style = "space"
 where = ["."]
 include = ["intake*"]
 
+[tool.setuptools.package-data]
+intake = ["templates/report/*.j2"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

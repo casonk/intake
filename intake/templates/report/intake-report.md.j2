@@ -1,0 +1,76 @@
+# Intake Receipt Report
+
+[Summary](#summary) | [Visual Overview](#visual-overview) | [Merchant Directory]({{ data.merchant_directory_md_path }}) | [Merchant Trends](#merchant-spend-over-time) | [Merchant Months](#merchant-month-breakdown) | [Recent Receipts](#recent-receipts-last-50)
+
+## Summary
+
+| Field | Value |
+|---|---|
+| Total Receipts | {{ data.total_receipts }} |
+| Total Spend | {{ data.total_spend_display }} |
+| Date Range | {{ data.date_min or "—" }} → {{ data.date_max or "—" }} |
+| Itemization Attempted | {{ data.itemization_attempted }} / {{ data.total_receipts }} |
+| Itemized Receipts | {{ data.itemized_receipts }} / {{ data.total_receipts }} ({{ data.itemized_share_display }}) |
+| Total Line Items | {{ data.total_line_items }} |
+{% if data.receipt_root_markdown -%}
+| Receipt Root | {{ data.receipt_root_markdown }} |
+{% endif -%}
+{% if data.intake_markdown -%}
+| Intake Inbox | {{ data.intake_markdown }} |
+{% endif %}
+
+## Spending by Category
+
+| Category | Count | Total Spend | % of Total | Chart |
+|---|---|---|---|---|
+{% for row in data.by_category -%}
+| {{ row.category_markdown }} | {{ row.count }} | {{ row.total_spend_display }} | {{ row.share_display }} | {{ row.chart_bar or "—" }} |
+{% endfor %}
+
+## Spending by Month
+
+| Month | Count | Total Spend | Chart |
+|---|---|---|---|
+{% for row in data.by_month -%}
+| {{ row.month_label }} | {{ row.count }} | {{ row.total_spend_display }} | {{ row.chart_bar or "—" }} |
+{% endfor %}
+
+## Top 10 Merchants
+
+| Merchant | Count | Total Spend | % of Total | Chart |
+|---|---|---|---|---|
+{% for row in data.top_merchants -%}
+| {{ row.merchant_markdown }} | {{ row.count }} | {{ row.total_spend_display }} | {{ row.share_display }} | {{ row.chart_bar or "—" }} |
+{% endfor %}
+
+## Merchant Spend Over Time
+
+| Merchant | Active Months | Total Spend | Monthly Breakdown |
+|---|---|---|---|
+{% for row in data.merchant_trends -%}
+| {{ row.merchant_markdown }} | {{ row.active_months }} | {{ row.total_spend_display }} | {{ row.breakdown_markdown or "—" }} |
+{% endfor %}
+
+## Extraction Model Breakdown
+
+| Model | Receipt Count | Share | Chart |
+|---|---|---|---|
+{% for row in data.by_model -%}
+| {{ row.model_label }} | {{ row.count }} | {{ row.share_display }} | {{ row.chart_bar or "—" }} |
+{% endfor %}
+
+## Merchant Month Breakdown
+
+| Merchant | Month | Receipt Count | Total Spend |
+|---|---|---|---|
+{% for row in data.merchant_monthly -%}
+| {{ row.merchant_markdown }} | {{ row.month_label }} | {{ row.count }} | {{ row.total_spend_display }} |
+{% endfor %}
+
+## Recent Receipts (last 50)
+
+| Date | Merchant | Category | Total | Purchaser | Card | Staff | Items | File | Folder | Model | Processed At |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+{% for row in data.recent -%}
+| {{ row.scan_date }} | {{ row.merchant_markdown }} | {{ row.category_markdown }} | {% if row.total is not none %}{{ row.total_display }}{% else %}—{% endif %} | {{ row.purchaser or "—" }} | {{ row.card_last4 or "—" }} | {{ row.staff_markdown }} | {{ row.items_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
+{% endfor %}
