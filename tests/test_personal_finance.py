@@ -56,6 +56,7 @@ def test_build_receipt_event_includes_expected_fields():
     )
     assert event["merchant"] == "kroger"
     assert event["total"] == 4.33
+    assert event["currency"] == "USD"
     assert event["category"] == "grocery/supermarket"
     assert event["receipt_time"] == "18:34"
     assert event["tier"] == "ok"

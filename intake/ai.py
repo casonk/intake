@@ -48,7 +48,7 @@ def extract_with_openai(
                 '  "receipt_time"  — time printed on the receipt in HH:MM 24-hr format (string)\n'
                 '  "purchaser"     — cardholder or customer name if visible (string)\n'
                 '  "card_last4"    — last 4 digits of the payment card if visible (string)\n'
-                '  "currency"       — ISO-4217 currency code (e.g. "USD", "CAD", "EUR", "JPY"); default "USD" if not shown\n'
+                '  "currency"       — ISO-4217 currency code (e.g. "USD", "CAD", "EUR", "JPY"); use null if not shown or uncertain\n'
                 '  "language"      — dominant receipt language code ("en", "ja", or "und")\n'
                 '  "translated_text" — concise English translation of the non-English receipt text; use null when the receipt is already primarily English or unreadable\n'
                 '  "items"         — array of itemized line objects with keys '
@@ -147,7 +147,12 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
 
     currency = ai.get("currency")
     if currency and isinstance(currency, str) and re.fullmatch(r"[A-Z]{3}", currency.upper()):
-        kwargs["currency"] = currency.upper()
+        normalized_currency = currency.upper()
+        # The prompt used to tell models to default to USD. Do not let that
+        # weak default erase stronger deterministic parser evidence such as
+        # Japanese text, yen symbols, or an existing non-USD currency.
+        if not (normalized_currency == "USD" and receipt.currency.upper() != "USD"):
+            kwargs["currency"] = normalized_currency
 
     language = ai.get("language")
     if isinstance(language, str):

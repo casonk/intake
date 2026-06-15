@@ -155,6 +155,25 @@ def test_web_host_and_port_read_settings():
     assert cli._web_port(settings, 5400) == 5400
 
 
+def test_receipt_event_from_row_includes_currency():
+    event = cli._receipt_event_from_row(
+        {
+            "filename": "20260614_1350.jpg",
+            "receipt_dir": "general/20260614_1350.jpg",
+            "scan_date": "2026-06-14",
+            "merchant": "山梨家富士宮店",
+            "total": 2130.0,
+            "currency": "JPY",
+            "category": "general",
+            "processed_by": "gpt-4o-mini",
+        },
+        tier="manual-correct",
+    )
+
+    assert event["total"] == 2130.0
+    assert event["currency"] == "JPY"
+
+
 def test_stored_receipt_needs_refresh_for_historical_japanese_row():
     settings = {"translation_provider": "ollama"}
     sidecar = {"language": "und", "currency": "JPY", "translated_text": None}
@@ -396,6 +415,7 @@ def test_cmd_correct_updates_db_and_sidecar_and_records_audit(tmp_path, capsys):
             "receipt_dir": "grocery/supermarket/20260409_1707.pdf",
             "raw_text": "BALANCE 86.05\nMASTERCARD 88.05",
             "processed_by": "tesseract",
+            "currency": "USD",
         },
     )
     conn.close()
@@ -409,6 +429,7 @@ def test_cmd_correct_updates_db_and_sidecar_and_records_audit(tmp_path, capsys):
             "category": "grocery/supermarket",
             "receipt_dir": "grocery/supermarket/20260409_1707.pdf",
             "processed_by": "tesseract",
+            "currency": "USD",
             "tier": "ok",
         },
     )
@@ -425,6 +446,7 @@ def test_cmd_correct_updates_db_and_sidecar_and_records_audit(tmp_path, capsys):
             clear_purchaser=False,
             card_last4=None,
             clear_card_last4=False,
+            currency="CAD",
             certification=None,
             clear_certifications=False,
             note="card charge wins over balance line",
@@ -442,9 +464,11 @@ def test_cmd_correct_updates_db_and_sidecar_and_records_audit(tmp_path, capsys):
     assert row["total"] == 88.05
     assert sidecar is not None
     assert sidecar["total"] == 88.05
+    assert sidecar["currency"] == "CAD"
     assert sidecar["tier"] == "ok"
     assert history[0]["source"] == "manual-correct"
     assert history[0]["changes"]["total"] == {"old": 86.05, "new": 88.05}
+    assert history[0]["changes"]["currency"] == {"old": "USD", "new": "CAD"}
 
     out = capsys.readouterr().out
     assert "Updated 20260409_1707.pdf" in out

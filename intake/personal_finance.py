@@ -62,6 +62,7 @@ def build_receipt_event(
         "receipt_time": receipt.receipt_time.strftime("%H:%M") if receipt.receipt_time else None,
         "merchant": receipt.merchant,
         "total": receipt.total,
+        "currency": receipt.currency,
         "category": category,
         "processed_by": processed_by,
         "tier": tier,
