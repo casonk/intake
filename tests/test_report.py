@@ -398,6 +398,52 @@ def test_generate_reports_distinguishes_unknown_totals_from_true_zero(tmp_path):
     assert "| Mar 2021 | 1 | $0.00 |" in bloomberg_md
 
 
+def test_generate_reports_formats_jpy_rows_without_adding_to_usd_rollups(tmp_path):
+    db_path = tmp_path / "intake.db"
+    output_dir = tmp_path / "reports"
+
+    conn = init_db(db_path)
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260401_0900.pdf",
+            "scan_date": "2026-04-01",
+            "merchant": "kroger",
+            "total": 10.00,
+            "currency": "USD",
+            "category": "grocery",
+            "receipt_dir": "grocery/20260401_0900.pdf",
+            "raw_text": "kroger",
+            "processed_by": "tesseract",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260402_0900.pdf",
+            "scan_date": "2026-04-02",
+            "merchant": "ローソン",
+            "total": 1280.0,
+            "currency": "JPY",
+            "category": "general",
+            "receipt_dir": "general/20260402_0900.pdf",
+            "raw_text": "ローソン\n合計 1280円",
+            "processed_by": "tesseract",
+        },
+    )
+    generate_reports(conn, output_dir, fmt="both", receipt_root=tmp_path / "receipts")
+    conn.close()
+
+    md = (output_dir / "intake-report.md").read_text(encoding="utf-8")
+    html = (output_dir / "intake-report.html").read_text(encoding="utf-8")
+
+    assert "| Total Spend | $10.00 |" in md
+    assert "¥1,280" in md
+    assert "¥1,280" in html
+    assert "$1,280.00" not in md
+    assert "$1,280.00" not in html
+
+
 def test_generate_reports_render_certifications_on_merchant_page(tmp_path):
     db_path = tmp_path / "intake.db"
     output_dir = tmp_path / "reports"

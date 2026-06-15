@@ -28,6 +28,23 @@ _ARTIFACT_LINK_LABELS = {
 }
 
 
+def format_money(value: float | int | None, currency: str | None = "USD") -> str:
+    """Format a receipt amount with its stored currency."""
+    if value is None:
+        return "unknown"
+    code = str(currency or "USD").strip().upper() or "USD"
+    amount = float(value)
+    if code == "USD":
+        return f"${amount:,.2f}"
+    if code == "JPY":
+        return f"¥{amount:,.0f}"
+    if code == "EUR":
+        return f"€{amount:,.2f}"
+    if code == "GBP":
+        return f"£{amount:,.2f}"
+    return f"{code} {amount:,.2f}"
+
+
 def _section_config(settings: dict, section: str) -> dict:
     cfg = settings.get(section)
     return cfg if isinstance(cfg, dict) else {}
@@ -172,7 +189,7 @@ def format_processed_receipt_message(
     artifact_links: dict[str, str] | None = None,
 ) -> str:
     """Build the notification body for a processed receipt."""
-    total = f"${receipt.total:.2f}" if receipt.total is not None else "unknown"
+    total = format_money(receipt.total, receipt.currency)
     when = (receipt.receipt_date or receipt.scan_date).isoformat()
     if receipt.receipt_time is not None:
         when = f"{when} {receipt.receipt_time.strftime('%H:%M')}"
@@ -205,7 +222,11 @@ def format_processed_receipt_subject(
 ) -> str:
     """Build the Gmail subject line for a processed receipt."""
     merchant = receipt.merchant or "unknown merchant"
-    total = f"${receipt.total:.2f}" if receipt.total is not None else "unknown total"
+    total = (
+        format_money(receipt.total, receipt.currency)
+        if receipt.total is not None
+        else "unknown total"
+    )
     return f"{subject_prefix}Receipt processed: {merchant} {total}"
 
 
@@ -219,7 +240,7 @@ def format_receipt_file_link_reply_message(
     filename = str(receipt_row.get("filename") or "unknown")
     merchant = str(receipt_row.get("merchant") or "unknown")
     total = receipt_row.get("total")
-    total_display = f"${float(total):.2f}" if total is not None else "unknown"
+    total_display = format_money(total, receipt_row.get("currency"))
     lines = [
         "Snowbridge receipt link requested",
         f"Receipt: {filename}",

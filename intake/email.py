@@ -2385,7 +2385,7 @@ def _upsert_html_receipt(
                             "Extract receipt fields from this email body and return ONLY valid JSON "
                             'with keys: "merchant", "total" (float), "receipt_date" (YYYY-MM-DD), '
                             '"receipt_time" (HH:MM), "purchaser", "card_last4", '
-                            '"currency" (ISO-4217 code e.g. "USD", "CAD", "EUR", "JPY"; default "USD"), '
+                            '"currency" (ISO-4217 code e.g. "USD", "CAD", "EUR", "JPY"; use null if not shown or uncertain), '
                             '"language" ("en", "ja", or "und"), '
                             '"translated_text" (concise English translation when the receipt body is non-English; otherwise null), '
                             '"items" (array of {"description","amount","quantity","unit_price"}), '

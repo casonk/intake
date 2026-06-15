@@ -171,6 +171,19 @@ def test_merge_ai_result_records_language_and_translation():
     assert r.translated_text == "Lawson\nTotal 1,280 yen"
 
 
+def test_merge_ai_result_does_not_downgrade_jpy_to_default_usd():
+    r = merge_ai_result(
+        _receipt(currency="JPY", raw_text="ローソン\n合計 1280円"),
+        {"currency": "USD"},
+    )
+    assert r.currency == "JPY"
+
+
+def test_merge_ai_result_accepts_explicit_non_usd_currency():
+    r = merge_ai_result(_receipt(currency="USD"), {"currency": "JPY"})
+    assert r.currency == "JPY"
+
+
 def test_merge_ai_result_clears_unpaid_notice_total():
     r = merge_ai_result(
         _receipt(

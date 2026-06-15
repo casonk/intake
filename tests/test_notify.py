@@ -40,6 +40,14 @@ def _receipt() -> Receipt:
     )
 
 
+def _jpy_receipt() -> Receipt:
+    receipt = _receipt()
+    receipt.merchant = "ローソン"
+    receipt.total = 1280.0
+    receipt.currency = "JPY"
+    return receipt
+
+
 def test_signal_notifications_enabled_with_minimal_config():
     settings = {
         "signal": {
@@ -155,6 +163,20 @@ def test_format_processed_receipt_subject_includes_prefix_and_total():
     assert subject == "[intake] Receipt processed: kroger $4.33"
 
 
+def test_format_processed_receipt_notification_uses_receipt_currency():
+    message = format_processed_receipt_message(
+        _jpy_receipt(),
+        category="general",
+        receipt_dir="general/20260401_1000.pdf",
+        filename="20260401_1000.pdf",
+        processed_by="tesseract",
+    )
+    subject = format_processed_receipt_subject(_jpy_receipt(), subject_prefix="[intake] ")
+
+    assert "Total: ¥1,280" in message
+    assert subject == "[intake] Receipt processed: ローソン ¥1,280"
+
+
 def test_format_receipt_file_link_reply_message_includes_link():
     message = format_receipt_file_link_reply_message(
         {
@@ -184,6 +206,19 @@ def test_format_receipt_file_link_reply_message_includes_link():
     assert (
         "https://files.snowbridge.internal/files/receipt/general/20260419_2018.ai.json" in message
     )
+
+
+def test_format_receipt_file_link_reply_message_uses_row_currency():
+    message = format_receipt_file_link_reply_message(
+        {
+            "filename": "20260401_1000.pdf",
+            "merchant": "ローソン",
+            "total": 1280,
+            "currency": "JPY",
+        },
+        snowbridge_link="https://files.snowbridge.internal/files/receipt/general/20260401_1000.pdf",
+    )
+    assert "Total: ¥1,280" in message
 
 
 def test_send_processed_receipt_notification_invokes_signal_sender(monkeypatch, tmp_path):

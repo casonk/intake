@@ -565,17 +565,22 @@ def query_summary(conn: sqlite3.Connection) -> dict:
     rows = lambda sql, *a: [dict(r) for r in conn.execute(sql, *a).fetchall()]  # noqa: E731  # fmt: skip
 
     total_receipts = conn.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
-    total_spend = conn.execute(
-        "SELECT COALESCE(SUM(total), 0) FROM receipts WHERE total IS NOT NULL"
-    ).fetchone()[0]
+    total_spend = conn.execute("""
+        SELECT COALESCE(SUM(total), 0)
+        FROM receipts
+        WHERE total IS NOT NULL AND UPPER(COALESCE(currency, 'USD')) = 'USD'
+        """).fetchone()[0]
 
     date_range = conn.execute("SELECT MIN(scan_date), MAX(scan_date) FROM receipts").fetchone()
 
     by_category = rows("""
         SELECT category,
                COUNT(*) AS count,
-               COUNT(total) AS known_total_count,
-               COALESCE(SUM(total), 0) AS total_spend
+               SUM(CASE WHEN total IS NOT NULL
+                         AND UPPER(COALESCE(currency, 'USD')) = 'USD'
+                        THEN 1 ELSE 0 END) AS known_total_count,
+               COALESCE(SUM(CASE WHEN UPPER(COALESCE(currency, 'USD')) = 'USD'
+                                 THEN total ELSE 0 END), 0) AS total_spend
         FROM receipts
         GROUP BY category
         ORDER BY total_spend DESC
@@ -584,8 +589,11 @@ def query_summary(conn: sqlite3.Connection) -> dict:
     by_month = rows("""
         SELECT SUBSTR(scan_date, 1, 7) AS month,
                COUNT(*) AS count,
-               COUNT(total) AS known_total_count,
-               COALESCE(SUM(total), 0) AS total_spend
+               SUM(CASE WHEN total IS NOT NULL
+                         AND UPPER(COALESCE(currency, 'USD')) = 'USD'
+                        THEN 1 ELSE 0 END) AS known_total_count,
+               COALESCE(SUM(CASE WHEN UPPER(COALESCE(currency, 'USD')) = 'USD'
+                                 THEN total ELSE 0 END), 0) AS total_spend
         FROM receipts
         GROUP BY month
         ORDER BY month
@@ -594,8 +602,11 @@ def query_summary(conn: sqlite3.Connection) -> dict:
     all_merchants = rows("""
         SELECT merchant,
                COUNT(*) AS count,
-               COUNT(total) AS known_total_count,
-               COALESCE(SUM(total), 0) AS total_spend,
+               SUM(CASE WHEN total IS NOT NULL
+                         AND UPPER(COALESCE(currency, 'USD')) = 'USD'
+                        THEN 1 ELSE 0 END) AS known_total_count,
+               COALESCE(SUM(CASE WHEN UPPER(COALESCE(currency, 'USD')) = 'USD'
+                                 THEN total ELSE 0 END), 0) AS total_spend,
                MIN(scan_date) AS date_min,
                MAX(scan_date) AS date_max,
                COUNT(DISTINCT SUBSTR(scan_date, 1, 7)) AS active_months
@@ -610,8 +621,11 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         SELECT merchant,
                SUBSTR(scan_date, 1, 7) AS month,
                COUNT(*) AS count,
-               COUNT(total) AS known_total_count,
-               COALESCE(SUM(total), 0) AS total_spend
+               SUM(CASE WHEN total IS NOT NULL
+                         AND UPPER(COALESCE(currency, 'USD')) = 'USD'
+                        THEN 1 ELSE 0 END) AS known_total_count,
+               COALESCE(SUM(CASE WHEN UPPER(COALESCE(currency, 'USD')) = 'USD'
+                                 THEN total ELSE 0 END), 0) AS total_spend
         FROM receipts
         GROUP BY merchant, month
         ORDER BY merchant, month
@@ -626,7 +640,7 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         """)
 
     recent = rows("""
-        SELECT scan_date, merchant, category, total, filename, receipt_dir,
+        SELECT scan_date, merchant, category, total, currency, filename, receipt_dir,
                purchaser, card_last4, language, translated_text,
                items_json, certifications_json, staff_json,
                processed_by, processed_at
@@ -636,7 +650,7 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         """)
 
     merchant_receipts = rows("""
-        SELECT merchant, scan_date, category, total, filename, receipt_dir,
+        SELECT merchant, scan_date, category, total, currency, filename, receipt_dir,
                purchaser, card_last4, language, translated_text,
                items_json, certifications_json, staff_json,
                processed_by, processed_at

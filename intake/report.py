@@ -13,6 +13,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from jinja2 import BaseLoader, Environment
 
 from intake.certification import receipt_certifications_from_dicts, receipt_certifications_to_dicts
+from intake.notify import format_money
 from intake.parse import receipt_items_from_dicts, receipt_items_to_dicts
 from intake.staff import receipt_staff_from_dicts, receipt_staff_to_dicts
 
@@ -1924,7 +1925,13 @@ _AUDIT_HTML_TEMPLATE = """\
 def _format_currency(value: float | int | None) -> str:
     if value is None:
         return "—"
-    return f"${float(value):,.2f}"
+    return format_money(value, "USD")
+
+
+def _format_receipt_total(value: float | int | None, currency: str | None) -> str:
+    if value is None:
+        return "—"
+    return format_money(value, currency)
 
 
 def _format_percent(value: float) -> str:
@@ -2469,7 +2476,7 @@ def _prepare_recent(
         )
         item["merchant_href_md"] = merchant_page.get("merchant_page_md") if merchant_page else None
         item["merchant_markdown"] = _markdown_link(item["merchant_label"], item["merchant_href_md"])
-        item["total_display"] = _format_currency(item.get("total"))
+        item["total_display"] = _format_receipt_total(item.get("total"), item.get("currency"))
         processed_at = item.get("processed_at")
         item["processed_at_display"] = processed_at[:19] if processed_at else "—"
         items = _decode_recent_items(item.get("items_json"))

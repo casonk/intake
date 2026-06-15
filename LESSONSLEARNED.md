@@ -135,3 +135,7 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 
 - Credit-reporting emails from providers like Equifax, Experian, and Capital One CreditWise are not receipts and usually do not match generic receipt/payment heuristics; they need explicit subject/sender candidate search terms plus a structured non-spend parser.
 - For these alerts, store them as finance metadata (`finance/credit-reporting`) with `total = NULL` rather than forcing a faux spend amount or filing them as ignored mail.
+- Currency fixes need both storage and presentation checks: AI extraction must not overwrite deterministic non-USD parser evidence with a default USD guess, and reports/notifications must format receipt totals with their stored currency instead of always using `$`.
+- Until exchange-rate conversion is implemented, report spend rollups should stay USD-only rather than summing native-currency totals into dollar dashboards.
+- Manual correction sidecar sync must include every persisted receipt field that reports/downstream consumers read, including `currency`; otherwise DB corrections can look fixed while stale sidecars continue to publish old values.
+- Personal-finance receipt events must carry `currency` with `total`; intake owns native extraction, while the downstream personal-finance rollup owns exchange-rate conversion and USD-normalized summaries.
