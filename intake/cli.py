@@ -159,6 +159,13 @@ def _trigger_personal_finance(
         print(f"{prefix}[finance-pipeline] triggered via {json_path}")
 
 
+def _personal_finance_event_dir(settings: dict) -> Path:
+    pf_cfg = settings.get("personal_finance")
+    if isinstance(pf_cfg, dict) and pf_cfg.get("event_dir"):
+        return Path(str(pf_cfg["event_dir"])).expanduser()
+    return _REPO_ROOT / "data" / "finance-pipeline"
+
+
 def _toml_string(value: str) -> str:
     """Render a string as a TOML-compatible basic string literal."""
     return json.dumps(value)
@@ -683,6 +690,129 @@ def _letter_row_from_letter(
         "raw_text": letter.raw_text,
         "processed_by": processed_by,
     }
+
+
+def _identity_letter_row_from_receipt(
+    receipt,
+    *,
+    filename: str,
+    receipt_dir: str,
+    file_hash: str | None,
+    processed_by: str,
+) -> dict:
+    """Serialize an AI-identified identity document into the letters table."""
+    from intake.parse_letter import parse_letter
+
+    letter = parse_letter(filename, receipt.raw_text)
+    body_excerpt = receipt.translated_text or letter.body_excerpt
+    return {
+        "filename": filename,
+        "scan_date": receipt.scan_date.isoformat(),
+        "letter_date": None,
+        "sender": "Japan government",
+        "recipient": receipt.purchaser,
+        "subject": _identity_document_subject(receipt),
+        "salutation": letter.salutation,
+        "body_excerpt": body_excerpt[:500] if body_excerpt else None,
+        "category": "letters/legal/identity",
+        "receipt_dir": receipt_dir,
+        "file_hash": file_hash,
+        "raw_text": receipt.raw_text,
+        "processed_by": processed_by,
+    }
+
+
+def _identity_document_subject(receipt) -> str:
+    """Return a concise label for a Japanese identity/residence document."""
+    text = " ".join(
+        str(value or "")
+        for value in (
+            receipt.translated_text,
+            receipt.raw_text,
+            receipt.merchant,
+        )
+    ).lower()
+    if "residence card" in text or "在留カード" in text:
+        return "Japan residence card"
+    if "my number" in text or "individual number" in text or "個人番号" in text:
+        return "Japan My Number card"
+    if "certificate of residence" in text or "resident record" in text or "住民票" in text:
+        return "Japan certificate of residence"
+    return "Japan identity document"
+
+
+def _receipt_looks_like_identity_document(receipt) -> bool:
+    """Return True when receipt extraction actually found an identity document."""
+    from intake.document_type import is_identity_document_text
+
+    certification_text = " ".join(
+        (
+            " ".join(str(value or "") for value in item.values())
+            if isinstance(item, dict)
+            else " ".join(
+                str(getattr(item, attr, "") or "") for attr in ("issuer", "label", "source_text")
+            )
+        )
+        for item in (getattr(receipt, "certifications", None) or [])
+    )
+    text = " ".join(
+        str(value or "")
+        for value in (
+            receipt.raw_text,
+            getattr(receipt, "translated_text", None),
+            getattr(receipt, "merchant", None),
+            certification_text,
+        )
+    )
+    return is_identity_document_text(text)
+
+
+def _reroute_identity_receipt(
+    receipt,
+    *,
+    pdf: Path,
+    receipt_dir: Path,
+    conn,
+    file_hash: str | None,
+    processed_by: str,
+    tier: str,
+    reserved_paths: set[Path],
+) -> tuple[str, Path, dict]:
+    """Store an AI-extracted identity document as a legal letter."""
+    from intake.db import upsert_letter
+    from intake.sidecar import write_sidecar
+
+    category = "letters/legal/identity"
+    dest_dir = receipt_dir / category
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = _canonical_document_destination(
+        dest_dir,
+        source_path=pdf,
+        document_date=receipt.scan_date,
+        reserved_paths=reserved_paths,
+    )
+    shutil.move(str(pdf), dest)
+    row = _identity_letter_row_from_receipt(
+        receipt,
+        filename=dest.name,
+        receipt_dir=str(dest.relative_to(receipt_dir)),
+        file_hash=file_hash,
+        processed_by=processed_by,
+    )
+    upsert_letter(conn, row)
+    write_sidecar(
+        dest,
+        {
+            **{k: v for k, v in row.items() if k != "raw_text"},
+            "document_type": "letter",
+            "identity_document": True,
+            "language": receipt.language,
+            "translated_text": receipt.translated_text,
+            "tier": tier,
+        },
+    )
+    _write_receipt_debug_artifacts(dest, receipt, processed_by=processed_by, tier=tier)
+    return category, dest, row
 
 
 def _card_row_from_card(
@@ -1744,6 +1874,24 @@ def _cmd_process(args: argparse.Namespace, settings: dict) -> None:
                 fuzzy_rules=rules,
                 merchant_aliases=merchant_aliases,
             )
+            if _receipt_looks_like_identity_document(receipt):
+                category, dest, row = _reroute_identity_receipt(
+                    receipt,
+                    pdf=pdf,
+                    receipt_dir=receipt_dir,
+                    conn=conn,
+                    file_hash=file_hash,
+                    processed_by=model,
+                    tier=tier,
+                    reserved_paths=reserved_paths,
+                )
+                renamed = f" (renamed {pdf.name} -> {dest.name})" if dest.name != pdf.name else ""
+                print(
+                    f"    -> {category}/{dest.name} [identity]"
+                    f" subject={row['subject']!r} model={model}{renamed}"
+                )
+                continue
+
             receipt = _backfill_purchaser_from_card(conn, receipt)
             category = classify(receipt.merchant, rules, receipt.raw_text)
             dest_dir = receipt_dir / category
@@ -3642,6 +3790,24 @@ def _process_inbox(
                 fuzzy_rules=rules,
                 merchant_aliases=merchant_aliases,
             )
+            if _receipt_looks_like_identity_document(receipt):
+                _category, dest, row = _reroute_identity_receipt(
+                    receipt,
+                    pdf=pdf,
+                    receipt_dir=receipt_dir,
+                    conn=conn,
+                    file_hash=file_hash,
+                    processed_by=model,
+                    tier=tier,
+                    reserved_paths=reserved_paths,
+                )
+                print(
+                    f"  [inbox] {dest.relative_to(receipt_dir)} "
+                    f"[identity] subject={row['subject']!r} model={model}"
+                )
+                ok += 1
+                continue
+
             receipt = _backfill_purchaser_from_card(conn, receipt)
             category = classify(receipt.merchant, rules, receipt.raw_text)
             dest_dir = receipt_dir / category
@@ -4237,6 +4403,143 @@ def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
     )
 
 
+def _format_bytes(size: int) -> str:
+    units = ("B", "KB", "MB", "GB")
+    amount = float(size)
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(amount)} {unit}"
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+    return f"{size} B"
+
+
+def _path_size(path: Path) -> int:
+    if path.is_file() or path.is_symlink():
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
+    total = 0
+    for child in path.rglob("*"):
+        if not child.is_file() or child.is_symlink():
+            continue
+        try:
+            total += child.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _cleanup_pycache_candidates(root: Path) -> list[Path]:
+    def in_ignored_runtime_dir(path: Path) -> bool:
+        try:
+            return ".venv" in path.relative_to(root).parts
+        except ValueError:
+            return False
+
+    candidates = [path for path in root.rglob("__pycache__") if not in_ignored_runtime_dir(path)]
+    candidates.extend(
+        path
+        for path in root.rglob("*.pyc")
+        if not in_ignored_runtime_dir(path) and "__pycache__" not in path.parts
+    )
+    return sorted(set(candidates), key=lambda path: (len(path.parts), str(path)))
+
+
+def _cleanup_personal_finance_event_candidates(event_dir: Path, keep: int) -> list[Path]:
+    if keep < 0:
+        raise ValueError("--keep-events must be zero or greater")
+    if not event_dir.exists():
+        return []
+    events = sorted(
+        event_dir.glob("receipts-*.json"),
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+        reverse=True,
+    )
+    return events[keep:]
+
+
+def _remove_cleanup_candidates(candidates: list[Path]) -> tuple[int, int]:
+    removed = 0
+    failed = 0
+    for path in candidates:
+        try:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            failed += 1
+            print(f"  WARNING: could not remove {path}: {exc}", file=sys.stderr)
+        else:
+            removed += 1
+    return removed, failed
+
+
+def _print_cleanup_group(label: str, candidates: list[Path], *, remove: bool) -> None:
+    total_size = sum(_path_size(path) for path in candidates)
+    action = "removed" if remove else "would remove"
+    print(f"{label}: {action} {len(candidates)} item(s), {_format_bytes(total_size)}")
+    for path in candidates[:12]:
+        print(f"  {path}")
+    if len(candidates) > 12:
+        print(f"  ... {len(candidates) - 12} more")
+
+
+def _cmd_cleanup(args: argparse.Namespace, settings: dict) -> None:
+    root = Path(args.root).expanduser().resolve() if args.root else _REPO_ROOT
+    event_dir = (
+        Path(args.personal_finance_event_dir).expanduser().resolve()
+        if args.personal_finance_event_dir
+        else _personal_finance_event_dir(settings).resolve()
+    )
+    selected_pycache = bool(args.pycache or args.all)
+    selected_pf_events = bool(args.personal_finance_events or args.all)
+    if not selected_pycache and not selected_pf_events:
+        selected_pycache = True
+        selected_pf_events = True
+
+    candidates_by_label: list[tuple[str, list[Path]]] = []
+    if selected_pycache:
+        candidates_by_label.append(("Python caches", _cleanup_pycache_candidates(root)))
+    if selected_pf_events:
+        candidates_by_label.append(
+            (
+                "finance-pipeline event JSON",
+                _cleanup_personal_finance_event_candidates(event_dir, args.keep_events),
+            )
+        )
+
+    mode = "remove" if args.remove else "dry-run"
+    print(f"Cleanup mode: {mode}")
+    print(f"Repo root: {root}")
+    if selected_pf_events:
+        print(f"finance-pipeline event dir: {event_dir}")
+        print(f"keeping newest {args.keep_events} receipts-*.json file(s) plus latest.json")
+
+    total_candidates = 0
+    total_failed = 0
+    for label, candidates in candidates_by_label:
+        total_candidates += len(candidates)
+        _print_cleanup_group(label, candidates, remove=args.remove)
+        if args.remove and candidates:
+            _, failed = _remove_cleanup_candidates(candidates)
+            total_failed += failed
+
+    venv = root / ".venv"
+    if venv.exists():
+        print(f".venv present: {_format_bytes(_path_size(venv))} (manual cleanup only)")
+
+    suffix = "" if args.remove else " (dry-run; pass --remove to delete)"
+    print(f"Cleanup complete: {total_candidates} candidate item(s){suffix}")
+    if total_failed:
+        print(f"Cleanup warnings: {total_failed} item(s) could not be removed", file=sys.stderr)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="intake",
@@ -4640,6 +4943,45 @@ def main() -> None:
     p_con.add_argument("--db", metavar="PATH", help="SQLite database path")
     p_con.add_argument("--dry-run", action="store_true", help="Print changes without writing")
 
+    # cleanup
+    p_cln = sub.add_parser(
+        "cleanup",
+        help="Prune generated caches and retained local handoff files",
+    )
+    p_cln.add_argument("--root", metavar="PATH", help="Repo root to scan (default: this checkout)")
+    p_cln.add_argument(
+        "--finance-pipeline-event-dir",
+        metavar="PATH",
+        help="Override the data/finance-pipeline event directory",
+    )
+    p_cln.add_argument(
+        "--pycache",
+        action="store_true",
+        help="Target Python __pycache__ directories and .pyc files",
+    )
+    p_cln.add_argument(
+        "--finance-pipeline-events",
+        action="store_true",
+        help="Target old data/finance-pipeline/receipts-*.json handoff files",
+    )
+    p_cln.add_argument(
+        "--all",
+        action="store_true",
+        help="Target all cleanup groups (default when no group is selected)",
+    )
+    p_cln.add_argument(
+        "--keep-events",
+        metavar="N",
+        type=int,
+        default=100,
+        help="Newest finance-pipeline receipts-*.json files to retain (default: 100)",
+    )
+    p_cln.add_argument(
+        "--remove",
+        action="store_true",
+        help="Delete candidate files; without this, cleanup is a dry-run",
+    )
+
     # audit
     p_aud = sub.add_parser("audit", help="List intake receipt files without processing them")
     p_aud.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
@@ -4746,6 +5088,8 @@ def main() -> None:
         _cmd_dedup(args, settings)
     elif args.command == "consolidate":
         _cmd_consolidate(args, settings)
+    elif args.command == "cleanup":
+        _cmd_cleanup(args, settings)
     elif args.command == "audit":
         _cmd_audit(args, settings)
     elif args.command == "email":

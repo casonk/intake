@@ -138,10 +138,37 @@ _FINANCIAL_TERMS = frozenset(
         "escrow",
     }
 )
+_IDENTITY_TERMS = frozenset(
+    {
+        "residence card",
+        "certificate of residence",
+        "resident record",
+        "my number",
+        "individual number",
+        "personal number",
+        "ministry of justice",
+        "period of stay",
+        "nationality/region",
+        "在留カード",
+        "住民票",
+        "住民基本台帳",
+        "個人番号",
+        "在留期間",
+        "横浜市長",
+    }
+)
 
 
 def classify_letter(letter: Letter) -> str:
     """Return a category path for a Letter based on content."""
+    from intake.document_type import is_identity_document_text
+
+    lowered = letter.raw_text.lower()
+    if is_identity_document_text(letter.raw_text) or any(
+        term in lowered for term in _IDENTITY_TERMS
+    ):
+        return "letters/legal/identity"
+
     words = set(re.findall(r"\b\w+\b", letter.raw_text.lower()))
     if words & _LEGAL_TERMS:
         return "letters/legal"
