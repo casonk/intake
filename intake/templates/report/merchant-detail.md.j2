@@ -1,0 +1,61 @@
+# Merchant: {{ data.merchant_label }}
+
+[Main Report]({{ data.main_report_md_href }}) | [Merchant Directory]({{ data.directory_md_href }})
+
+| Field | Value |
+|---|---|
+| Total Receipts | {{ data.count }} |
+| Total Spend | {{ data.total_spend_display }} |
+| Active Months | {{ data.active_months }} |
+| Date Range | {{ data.date_min or "—" }} → {{ data.date_max or "—" }} |
+| Itemization Attempted | {{ data.itemization_attempted }} / {{ data.count }} |
+| Itemized Receipts | {{ data.itemized_receipts }} / {{ data.count }} |
+| Total Line Items | {{ data.total_line_items }} |
+
+## Monthly Spend
+
+{% if data.by_month -%}
+| Month | Count | Total Spend |
+|---|---|---|
+{% for row in data.by_month -%}
+| {{ row.month_label }} | {{ row.count }} | {{ row.total_spend_display }} |
+{% endfor %}
+{% else -%}
+No monthly history yet.
+{% endif %}
+
+## Category Mix
+
+{% if data.by_category -%}
+| Category | Count | Total Spend | % of Merchant |
+|---|---|---|---|
+{% for row in data.by_category -%}
+| {{ row.category_markdown }} | {{ row.count }} | {{ row.total_spend_display }} | {{ row.share_display }} |
+{% endfor %}
+{% else -%}
+No category data yet.
+{% endif %}
+
+## Certifications
+
+{% if data.certifications -%}
+| Certification | Issuer | Receipt Count | Evidence |
+|---|---|---|---|
+{% for row in data.certifications -%}
+| {{ row.label }} | {{ row.issuer }} | {{ row.receipt_count }} | {{ row.evidence_markdown }} |
+{% endfor %}
+{% else -%}
+No certifications recorded yet.
+{% endif %}
+
+## Receipts
+
+{% if data.receipts -%}
+| Date | Category | Total | Purchaser | Card | Staff | Items | Certifications | File | Folder | Model | Processed At |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+{% for row in data.receipts -%}
+| {{ row.scan_date }} | {{ row.category_markdown }} | {{ row.total_display }} | {{ row.purchaser or "—" }} | {{ row.card_last4 or "—" }} | {{ row.staff_markdown }} | {{ row.items_markdown }} | {{ row.certifications_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
+{% endfor %}
+{% else -%}
+No receipt rows yet.
+{% endif %}

@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intake Audit</title>
+<style>
+  :root {
+    --ink: #18212f;
+    --muted: #667085;
+    --paper: #f3efe6;
+    --panel: rgba(255, 255, 255, 0.9);
+    --line: rgba(24, 33, 47, 0.12);
+    --shadow: 0 20px 45px rgba(24, 33, 47, 0.09);
+    --teal: #0f766e;
+    --teal-soft: #d3f1ec;
+    --amber: #c77d2b;
+    --amber-soft: #f7dfc4;
+    --blue: #375a9e;
+    --blue-soft: #dce7ff;
+    --rose: #b5475d;
+    --rose-soft: #f7d9e0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 34%),
+      radial-gradient(circle at top right, rgba(199, 125, 43, 0.14), transparent 30%),
+      linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
+  }
+  .page { width: 100%; max-width: none; margin: 0; padding: 32px clamp(12px, 1.5vw, 28px) 56px; }
+  .hero {
+    background: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(248,248,244,0.92));
+    border: 1px solid rgba(24,33,47,0.08);
+    border-radius: 26px;
+    box-shadow: var(--shadow);
+    padding: 28px;
+  }
+  .eyebrow { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--teal); margin:0 0 8px; }
+  h1 { margin:0; font-size:clamp(1.8rem,4vw,3rem); letter-spacing:-0.04em; }
+  .hero p { margin:10px 0 0; color:var(--muted); line-height:1.55; }
+  .hero-links { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+  .hero-links a {
+    display:inline-flex; align-items:center; gap:8px; padding:10px 14px;
+    border-radius:999px; background:rgba(220,231,255,0.78);
+    border:1px solid rgba(55,90,158,0.18); color:var(--blue);
+    text-decoration:none; font-size:.92rem; font-weight:600;
+  }
+  .hero-links a:hover { text-decoration:underline; }
+  .filter-bar {
+    margin: 18px 0 14px;
+    padding: 18px 18px 14px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.88);
+    border: 1px solid rgba(24,33,47,0.08);
+    box-shadow: var(--shadow);
+  }
+  .filter-row { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .filter-field { display:flex; flex-direction:column; gap:4px; }
+  .filter-field--grow { flex:0 0 auto; }
+  .filter-field label { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+  .filter-field input,
+  .filter-field select {
+    padding:8px 10px; border-radius:10px;
+    border:1px solid rgba(24,33,47,0.16);
+    background:rgba(243,239,230,0.7);
+    font-size:.92rem; color:var(--ink);
+    font-family:inherit;
+  }
+  .filter-field input:focus,
+  .filter-field select:focus { outline:2px solid var(--teal); outline-offset:1px; }
+  .filter-field--btn { justify-content:flex-end; }
+  .filter-field--btn button {
+    padding:8px 16px; border-radius:10px; border:none;
+    background:rgba(24,33,47,0.1); color:var(--ink);
+    font-size:.92rem; font-family:inherit; cursor:pointer;
+  }
+  .filter-field--btn button:hover { background:rgba(24,33,47,0.18); }
+  .stat-bar {
+    margin-top:12px; font-size:.92rem; color:var(--muted);
+  }
+  .stat-bar strong { color:var(--ink); }
+  .table-wrap {
+    overflow-x:auto;
+    border-radius:18px;
+    box-shadow:var(--shadow);
+  }
+  .detail-table {
+    width:100%; border-collapse:collapse;
+    background:rgba(255,255,255,0.86);
+    border:1px solid rgba(24,33,47,0.08);
+    border-radius:18px; overflow:hidden;
+  }
+  .detail-table th, .detail-table td {
+    padding:10px 12px; text-align:left;
+    border-bottom:1px solid rgba(24,33,47,0.08); vertical-align:top;
+    white-space:nowrap;
+  }
+  .detail-table .items-cell {
+    width: clamp(12rem, 22vw, 20rem);
+    max-width: 20rem;
+    white-space: normal;
+  }
+  .item-summary {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+  .detail-table th {
+    font-size:11px; letter-spacing:.10em; text-transform:uppercase;
+    color:var(--muted); background:rgba(243,239,230,0.95);
+    position:sticky; top:0; z-index:2;
+  }
+  .detail-table th.sortable { cursor:pointer; user-select:none; }
+  .detail-table th.sortable:hover { color:var(--ink); }
+  .detail-table th .sort-arrow { margin-left:4px; opacity:.4; }
+  .detail-table th.sort-asc .sort-arrow::after { content:"▲"; opacity:1; }
+  .detail-table th.sort-desc .sort-arrow::after { content:"▼"; opacity:1; }
+  .detail-table tbody tr:nth-child(even) td { background:rgba(248,247,243,0.7); }
+  .detail-table tbody tr:last-child td { border-bottom:none; }
+  .detail-table tbody tr:hover td { background:rgba(220,231,255,0.3); }
+  .detail-table td.merchant { max-width:200px; overflow:hidden; text-overflow:ellipsis; }
+  a { color:var(--blue); text-decoration:none; font-weight:600; }
+  a:hover { text-decoration:underline; }
+  .badge {
+    display:inline-block; padding:2px 8px; border-radius:999px;
+    font-size:.8rem; font-weight:600;
+  }
+  .badge--ok { background:var(--teal-soft); color:var(--teal); }
+  .empty-state {
+    padding:32px; text-align:center; color:var(--muted);
+    background:rgba(255,255,255,0.72); border-radius:18px;
+    border:1px dashed rgba(24,33,47,0.16);
+  }
+  section[id], h2[id] { scroll-margin-top:80px; }
+  /* ── column resize ── */
+  .detail-table th { position: relative; }
+  .col-resizer { position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;user-select:none; }
+  .col-resizer:hover,.col-resizer.rsz-active { background:rgba(24,33,47,.18); }
+  .detail-table.resizing { user-select:none;cursor:col-resize; }
+  /* ── cell expand ── */
+  .detail-table td.expanded { white-space:normal!important;max-width:none!important;overflow:visible!important; }
+  .detail-table td.expanded .item-summary { -webkit-line-clamp:unset!important;display:block!important; }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <section class="hero">
+    <p class="eyebrow">Intake Dashboard</p>
+    <h1>Receipt Audit</h1>
+    <p>Filter by date range, category, merchant, or purchaser. {{ total_count }} receipts total.</p>
+    <div class="hero-links">
+      <a href="intake-report.html">← Dashboard</a>
+    </div>
+  </section>
+
+  <div class="filter-bar">
+    <div class="filter-row">
+      <div class="filter-field">
+        <label for="f-from">From</label>
+        <input type="date" id="f-from">
+      </div>
+      <div class="filter-field">
+        <label for="f-to">To</label>
+        <input type="date" id="f-to">
+      </div>
+      <div class="filter-field">
+        <label for="f-cat">Category</label>
+        <select id="f-cat">
+          <option value="">All categories</option>
+          {% for cat in categories %}<option value="{{ cat }}">{{ cat }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="filter-field filter-field--grow">
+        <label for="f-merchant">Merchant</label>
+        <input type="text" id="f-merchant" placeholder="Search merchants…" autocomplete="off">
+      </div>
+      <div class="filter-field filter-field--grow">
+        <label for="f-purchaser">Purchaser</label>
+        <input type="text" id="f-purchaser" placeholder="Search purchasers…" autocomplete="off">
+      </div>
+      <div class="filter-field filter-field--btn">
+        <label>&nbsp;</label>
+        <button id="f-clear">Clear filters</button>
+      </div>
+    </div>
+    <div class="stat-bar">
+      <strong id="stat-count">{{ total_count }}</strong> receipt(s) &nbsp;·&nbsp;
+      total spend: <strong id="stat-total">—</strong>
+    </div>
+  </div>
+
+  <div id="audit-empty" class="empty-state" style="display:none">No receipts match the current filters.</div>
+  <div class="table-wrap" id="audit-wrap">
+    <table class="detail-table" id="audit-table">
+      <thead>
+        <tr>
+          <th class="sortable" data-col="scan_date">Date<span class="sort-arrow"></span></th>
+          <th>Merchant</th>
+          <th class="sortable" data-col="category">Category<span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="total">Total<span class="sort-arrow"></span></th>
+          <th>Purchaser</th>
+          <th>Card</th>
+          <th class="sortable" data-col="processed_by">Model<span class="sort-arrow"></span></th>
+          <th>Items</th>
+          <th>File</th>
+          <th>Reviewed</th>
+        </tr>
+      </thead>
+      <tbody id="audit-tbody"></tbody>
+    </table>
+  </div>
+
+</main>
+<script>
+(function () {
+  const R = {{ receipts_json|safe }};
+  let sortCol = 'scan_date', sortAsc = false;
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function link(href, label) {
+    return href ? `<a href="${esc(href)}">${esc(label)}</a>` : esc(label);
+  }
+
+  function fmt(rows) {
+    if (!rows.length) return '';
+    return rows.map(r => {
+      const rev = r.reviewed ? '<span class="badge badge--ok">Reviewed</span>' : '';
+      return [
+        '<tr>',
+        `<td>${esc(r.scan_date)}</td>`,
+        `<td class="merchant">${link(r.merchant_href, r.merchant_label||r.merchant||'—')}</td>`,
+        `<td>${link(r.folder_uri, r.category||'—')}</td>`,
+        `<td>${esc(r.total_display)}</td>`,
+        `<td>${esc(r.purchaser||'—')}</td>`,
+        `<td>${r.card_last4 ? '···· '+esc(r.card_last4) : '—'}</td>`,
+        `<td>${esc(r.processed_by||'tesseract')}</td>`,
+        `<td class="items-cell"><span class="item-summary" title="${esc(r.items_full_label||r.items_label||'')}">${esc(r.items_label||'—')}</span></td>`,
+        `<td>${link(r.file_link_uri, r.filename||'—')}</td>`,
+        `<td>${rev}</td>`,
+        '</tr>',
+      ].join('');
+    }).join('');
+  }
+
+  function sumTotal(rows) {
+    let t = 0, n = 0;
+    for (const r of rows) { if (r.total != null) { t += r.total; n++; } }
+    return n ? '$' + t.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '—';
+  }
+
+  function cmpVal(r, col) {
+    const v = r[col];
+    if (v == null) return sortAsc ? '￿' : '';
+    return v;
+  }
+
+  function applySort(rows) {
+    return rows.slice().sort((a, b) => {
+      const av = cmpVal(a, sortCol), bv = cmpVal(b, sortCol);
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortAsc ? cmp : -cmp;
+    });
+  }
+
+  function apply() {
+    const from = document.getElementById('f-from').value;
+    const to   = document.getElementById('f-to').value;
+    const cat  = document.getElementById('f-cat').value;
+    const merch = document.getElementById('f-merchant').value.toLowerCase();
+    const purch = document.getElementById('f-purchaser').value.toLowerCase();
+
+    let out = R.filter(r => {
+      if (from && r.scan_date < from) return false;
+      if (to   && r.scan_date > to)   return false;
+      if (cat  && !r.category.startsWith(cat)) return false;
+      if (merch && !(r.merchant||'').toLowerCase().includes(merch)) return false;
+      if (purch && !(r.purchaser||'').toLowerCase().includes(purch)) return false;
+      return true;
+    });
+
+    out = applySort(out);
+
+    document.getElementById('audit-tbody').innerHTML = fmt(out);
+    document.getElementById('stat-count').textContent = out.length;
+    document.getElementById('stat-total').textContent = sumTotal(out);
+    document.getElementById('audit-empty').style.display = out.length ? 'none' : 'block';
+    document.getElementById('audit-wrap').style.display = out.length ? '' : 'none';
+  }
+
+  ['f-from','f-to','f-cat','f-merchant','f-purchaser'].forEach(id => {
+    document.getElementById(id).addEventListener('input', apply);
+  });
+
+  document.getElementById('f-clear').addEventListener('click', () => {
+    ['f-from','f-to','f-merchant','f-purchaser'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('f-cat').value = '';
+    apply();
+  });
+
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortCol === col) { sortAsc = !sortAsc; }
+      else { sortCol = col; sortAsc = col !== 'scan_date'; }
+      document.querySelectorAll('th.sortable').forEach(t => {
+        t.classList.remove('sort-asc','sort-desc');
+      });
+      th.classList.add(sortAsc ? 'sort-asc' : 'sort-desc');
+      apply();
+    });
+  });
+
+  // Default sort indicator
+  document.querySelector('th[data-col="scan_date"]').classList.add('sort-desc');
+
+  apply();
+
+  // ── col resize ──
+  function initColResize(tbl) {
+    tbl.querySelectorAll('th').forEach(function (th) {
+      var r = document.createElement('div');
+      r.className = 'col-resizer';
+      th.appendChild(r);
+      r.addEventListener('mousedown', function (e) {
+        var x0 = e.clientX, w0 = th.offsetWidth;
+        tbl.classList.add('resizing');
+        r.classList.add('rsz-active');
+        var mv = function (ev) { th.style.width = th.style.minWidth = Math.max(40, w0 + ev.clientX - x0) + 'px'; };
+        var up = function () { tbl.classList.remove('resizing'); r.classList.remove('rsz-active'); document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+        document.addEventListener('mousemove', mv);
+        document.addEventListener('mouseup', up);
+        e.preventDefault();
+      });
+    });
+  }
+  // ── cell expand (event delegation — works after tbody is rebuilt) ──
+  function initCellExpand(el) {
+    el.addEventListener('click', function (e) {
+      var td = e.target.closest('td');
+      if (td) { td.classList.toggle('expanded'); }
+    });
+  }
+  // ── auto-size text inputs ──
+  function initAutosize(el) {
+    var s = document.createElement('span');
+    var cs = window.getComputedStyle(el);
+    s.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;pointer-events:none;'
+      + 'font:' + cs.font + ';padding:0 ' + cs.paddingRight + ';';
+    document.body.appendChild(s);
+    var extra = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 4;
+    var sync = function () {
+      s.textContent = el.value || el.placeholder || '';
+      el.style.width = Math.max(120, s.offsetWidth + extra) + 'px';
+    };
+    el.addEventListener('input', sync);
+    sync();
+  }
+
+  var auditTable = document.getElementById('audit-table');
+  if (auditTable) { initColResize(auditTable); }
+  var auditTbody = document.getElementById('audit-tbody');
+  if (auditTbody) { initCellExpand(auditTbody); }
+  ['f-merchant', 'f-purchaser'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) { initAutosize(el); }
+  });
+}());
+</script>
+</body>
+</html>

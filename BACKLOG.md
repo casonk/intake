@@ -10,10 +10,12 @@ Mark items `[x]` when complete and move them to Done.
 
 ## Pending
 
-- [ ] [manual:2026-06-15] Extract the file-inbox document routing pipeline from `intake/cli.py` into a dedicated module so `process` and daemon ingestion share one implementation for duplicate handling, OCR, document-type routing, moves, sidecars, DB writes, notifications, and finance-pipeline events.
-- [ ] [manual:2026-06-15] Move large inline report templates out of `intake/report.py` into tracked template files, preserving the static HTML/Markdown output contract and focused report regression tests.
-- [ ] [manual:2026-06-15] Split `intake/email.py` into smaller provider, parsing, filing, and notification/reply modules while keeping Gmail ingestion behavior and existing regression coverage stable.
+- [ ] [manual:2026-06-15] Finish splitting `intake/email.py` by moving structured finance parsing and notification/reply handling into smaller modules while keeping Gmail ingestion behavior and existing regression coverage stable.
 
 ## In Progress
 
 ## Done
+
+- [x] [manual:2026-06-15] Extract the file-inbox document routing pipeline from `intake/cli.py` into a dedicated module so `process` and daemon ingestion share one implementation for duplicate handling, OCR, document-type routing, moves, sidecars, DB writes, notifications, and finance-pipeline events.
+- [x] [manual:2026-06-15] Move large inline report templates out of `intake/report.py` into tracked template files, preserving the static HTML/Markdown output contract and focused report regression tests.
+- [x] [manual:2026-06-15] Split low-level email body text, IMAP provider, and filing/save helpers out of `intake/email.py` while preserving compatibility wrappers for existing tests and patch points.

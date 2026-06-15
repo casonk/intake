@@ -1,0 +1,13 @@
+# Merchant Directory
+
+[Main Report]({{ data.main_report_md_href }})
+
+{% if data.merchants -%}
+| Merchant | Receipts | Total Spend | Active Months | Date Range |
+|---|---|---|---|---|
+{% for row in data.merchants -%}
+| {{ row.merchant_markdown }} | {{ row.count }} | {{ row.total_spend_display }} | {{ row.active_months }} | {{ row.date_min or "—" }} → {{ row.date_max or "—" }} |
+{% endfor %}
+{% else -%}
+No merchant data yet.
+{% endif %}
