@@ -11,6 +11,17 @@ from typing import Literal
 
 DocumentType = Literal["receipt", "letter", "card", "payment", "unknown"]
 
+# ── identity / legal document signals ─────────────────────────────────────────
+
+_IDENTITY_DOCUMENT_RE = re.compile(
+    r"(?:\b(?:residence\s+card|certificate\s+of\s+residence|resident\s+record"
+    r"|certified\s+copy\s+of\s+resident\s+record|my\s+number\s+card"
+    r"|individual\s+number\s+card|personal\s+number\s+card"
+    r"|ministry\s+of\s+justice|period\s+of\s+stay|nationality\s*/\s*region"
+    r")\b|在留カード|住民票|住民基本台帳|個人番号|在留期間|横浜市長)",
+    re.IGNORECASE,
+)
+
 # ── receipt signals ───────────────────────────────────────────────────────────
 
 _TOTAL_SIGNAL_RE = re.compile(
@@ -69,6 +80,9 @@ def classify_document_type(raw_text: str, filename: str = "") -> DocumentType:
     if not text:
         return "unknown"
 
+    if is_identity_document_text(text):
+        return "letter"
+
     payment_score = _payment_score(text)
     if payment_score >= 2:
         return "payment"
@@ -97,6 +111,11 @@ def classify_document_type(raw_text: str, filename: str = "") -> DocumentType:
 
 def _payment_score(text: str) -> int:
     return len(_PAYMENT_STRONG_RE.findall(text))
+
+
+def is_identity_document_text(text: str) -> bool:
+    """Return True when text points to an identity/residence legal document."""
+    return bool(_IDENTITY_DOCUMENT_RE.search(text or ""))
 
 
 def _receipt_score(text: str) -> int:

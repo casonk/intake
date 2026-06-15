@@ -174,6 +174,71 @@ def test_receipt_event_from_row_includes_currency():
     assert event["currency"] == "JPY"
 
 
+def test_cmd_cleanup_dry_run_leaves_candidates(tmp_path, capsys):
+    root = tmp_path / "repo"
+    cache_dir = root / "intake" / "__pycache__"
+    cache_dir.mkdir(parents=True)
+    pyc_path = cache_dir / "cli.cpython-313.pyc"
+    pyc_path.write_bytes(b"cache")
+    venv_cache = root / ".venv" / "lib" / "__pycache__"
+    venv_cache.mkdir(parents=True)
+    venv_pyc_path = venv_cache / "site.cpython-313.pyc"
+    venv_pyc_path.write_bytes(b"venv cache")
+    event_dir = root / "data" / "personal-finance"
+    event_dir.mkdir(parents=True)
+    old_event = event_dir / "receipts-20260101T000000Z.json"
+    old_event.write_text("{}\n", encoding="utf-8")
+
+    args = Namespace(
+        root=str(root),
+        personal_finance_event_dir=str(event_dir),
+        pycache=False,
+        personal_finance_events=False,
+        all=False,
+        keep_events=0,
+        remove=False,
+    )
+
+    cli._cmd_cleanup(args, {})
+
+    output = capsys.readouterr().out
+    assert "Cleanup mode: dry-run" in output
+    assert "Python caches: would remove" in output
+    assert "personal-finance event JSON: would remove" in output
+    assert cache_dir.exists()
+    assert pyc_path.exists()
+    assert venv_cache.exists()
+    assert venv_pyc_path.exists()
+    assert old_event.exists()
+
+
+def test_cmd_cleanup_remove_prunes_old_personal_finance_events(tmp_path):
+    event_dir = tmp_path / "events"
+    event_dir.mkdir()
+    events = []
+    for index in range(4):
+        path = event_dir / f"receipts-2026010{index + 1}T000000Z.json"
+        path.write_text(f'{{"index": {index}}}\n', encoding="utf-8")
+        events.append(path)
+    latest = event_dir / "latest.json"
+    latest.write_text("{}\n", encoding="utf-8")
+
+    args = Namespace(
+        root=str(tmp_path),
+        personal_finance_event_dir=str(event_dir),
+        pycache=False,
+        personal_finance_events=True,
+        all=False,
+        keep_events=2,
+        remove=True,
+    )
+
+    cli._cmd_cleanup(args, {})
+
+    assert [path.exists() for path in events] == [False, False, True, True]
+    assert latest.exists()
+
+
 def test_stored_receipt_needs_refresh_for_historical_japanese_row():
     settings = {"translation_provider": "ollama"}
     sidecar = {"language": "und", "currency": "JPY", "translated_text": None}

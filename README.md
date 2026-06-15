@@ -305,6 +305,19 @@ stored hash. Use `--hash-only` when you want a conservative exact-duplicate
 sweep without treating repeated same-merchant/same-total purchases as duplicate
 candidates.
 
+**Clean generated local artifacts** without deleting the virtualenv or receipt
+corpus:
+
+```bash
+intake cleanup
+intake cleanup --remove
+intake cleanup --personal-finance-events --keep-events 100 --remove
+```
+
+Without `--remove`, cleanup is a dry-run. It targets Python bytecode caches and
+old `data/personal-finance/receipts-*.json` handoff files, preserving
+`latest.json` and the newest retained event batches.
+
 **Backfill staff/service fields** from stored OCR into historical rows:
 
 ```bash
