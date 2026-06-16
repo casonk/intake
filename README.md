@@ -1,6 +1,6 @@
 # intake
 
-Process incoming receipt PDFs, images, and short videos from a snowbridge SMB share into a structured SQLite database and Markdown/HTML reports.
+Process incoming receipt PDFs, images, short videos, and non-spend reference documents from a snowbridge SMB share into structured SQLite tables and Markdown/HTML reports.
 
 Consent reference: [`../../doc-repos/my-consent/financial-records.md`](../../doc-repos/my-consent/financial-records.md) documents the explicit consent covering receipt OCR, categorization, reporting, and downstream personal-finance processing handled by this repo.
 
@@ -57,6 +57,13 @@ When the inbox contains an iPhone-style live-photo pair with the same stem
 (for example `LIVE_0001.JPG` and `LIVE_0001.MOV`), intake keeps the still image
 as the canonical receipt input and exhausts the companion `.MOV` with an audit
 trail instead of ingesting both as separate receipts.
+
+Reference documents such as user manuals, hardware specification sheets, and
+warranties are routed under `documents/manuals`, `documents/specs`,
+`documents/warranty`, or `documents/reference`. They are stored in the
+`documents` SQLite table with searchable metadata such as title, model number,
+serial number, and body excerpt. These files are explicitly non-spend records:
+they do not enter receipt reports and do not emit personal-finance events.
 
 Email ingestion also handles issuer, money-movement, and reservation payment
 notifications for supported providers. Capital One, Discover, Venmo, Wise, IRS,

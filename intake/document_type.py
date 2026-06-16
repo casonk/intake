@@ -1,4 +1,4 @@
-"""Document type classification: receipt, letter, card, or unknown.
+"""Document type classification: receipt, letter, card, document, or unknown.
 
 Runs immediately after OCR so the pipeline can dispatch to the correct
 extractor before doing any receipt-specific parsing.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-DocumentType = Literal["receipt", "letter", "card", "payment", "unknown"]
+DocumentType = Literal["receipt", "letter", "card", "payment", "document", "unknown"]
 
 # ── identity / legal document signals ─────────────────────────────────────────
 
@@ -19,6 +19,17 @@ _IDENTITY_DOCUMENT_RE = re.compile(
     r"|individual\s+number\s+card|personal\s+number\s+card"
     r"|ministry\s+of\s+justice|period\s+of\s+stay|nationality\s*/\s*region"
     r")\b|在留カード|住民票|住民基本台帳|個人番号|在留期間|横浜市長)",
+    re.IGNORECASE,
+)
+
+# ── reference document signals ────────────────────────────────────────────────
+
+_REFERENCE_DOCUMENT_RE = re.compile(
+    r"\b(?:user\s+manual|user\s+guide|owner'?s\s+manual|instruction\s+manual"
+    r"|installation\s+guide|operating\s+instructions|datasheet|data\s+sheet"
+    r"|technical\s+specifications|specification\s+sheet|hardware\s+specifications"
+    r"|product\s+specification|limited\s+warranty|warranty\s+certificate"
+    r"|service\s+contract|protection\s+plan|extended\s+service\s+plan)\b",
     re.IGNORECASE,
 )
 
@@ -83,6 +94,9 @@ def classify_document_type(raw_text: str, filename: str = "") -> DocumentType:
     if is_identity_document_text(text):
         return "letter"
 
+    if is_reference_document_text(text):
+        return "document"
+
     payment_score = _payment_score(text)
     if payment_score >= 2:
         return "payment"
@@ -116,6 +130,11 @@ def _payment_score(text: str) -> int:
 def is_identity_document_text(text: str) -> bool:
     """Return True when text points to an identity/residence legal document."""
     return bool(_IDENTITY_DOCUMENT_RE.search(text or ""))
+
+
+def is_reference_document_text(text: str) -> bool:
+    """Return True when text points to a manual/spec/warranty-style document."""
+    return bool(_REFERENCE_DOCUMENT_RE.search(text or ""))
 
 
 def _receipt_score(text: str) -> int:

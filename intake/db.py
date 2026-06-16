@@ -126,6 +126,29 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS idx_payments_file_hash ON payments(file_hash);
 """
 
+_DOCUMENT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS documents (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename        TEXT UNIQUE NOT NULL,
+    scan_date       TEXT NOT NULL,
+    document_date   TEXT,
+    document_kind   TEXT NOT NULL DEFAULT 'documents/reference',
+    title           TEXT,
+    issuer          TEXT,
+    subject         TEXT,
+    model_number    TEXT,
+    serial_number   TEXT,
+    body_excerpt    TEXT,
+    category        TEXT NOT NULL DEFAULT 'documents/reference',
+    receipt_dir     TEXT NOT NULL,
+    file_hash       TEXT,
+    raw_text        TEXT,
+    processed_by    TEXT NOT NULL DEFAULT 'tesseract',
+    processed_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_documents_file_hash ON documents(file_hash);
+"""
+
 _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN processed_by TEXT NOT NULL DEFAULT 'tesseract'",
     "ALTER TABLE receipts ADD COLUMN purchaser TEXT",
@@ -153,6 +176,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     conn.executescript(_LETTER_SCHEMA)
     conn.executescript(_CARD_SCHEMA)
     conn.executescript(_PAYMENT_SCHEMA)
+    conn.executescript(_DOCUMENT_SCHEMA)
     conn.commit()
     _run_migrations(conn)
     return conn
@@ -1175,6 +1199,84 @@ def get_payment_by_file_hash(
                account_last4, payment_type, confirmation_number, payer,
                category, receipt_dir, file_hash, processed_by, processed_at
         FROM payments
+        {where}
+        ORDER BY processed_at ASC, filename ASC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+# ── generic document helpers ──────────────────────────────────────────────────
+
+
+def upsert_document(conn: sqlite3.Connection, data: dict) -> None:
+    """Insert or replace a reference document record."""
+    processed_at = datetime.now(UTC).isoformat()
+    conn.execute(
+        """
+        INSERT INTO documents
+            (filename, scan_date, document_date, document_kind, title, issuer,
+             subject, model_number, serial_number, body_excerpt, category,
+             receipt_dir, file_hash, raw_text, processed_by, processed_at)
+        VALUES
+            (:filename, :scan_date, :document_date, :document_kind, :title, :issuer,
+             :subject, :model_number, :serial_number, :body_excerpt, :category,
+             :receipt_dir, :file_hash, :raw_text, :processed_by, :processed_at)
+        ON CONFLICT(filename) DO UPDATE SET
+            scan_date     = excluded.scan_date,
+            document_date = excluded.document_date,
+            document_kind = excluded.document_kind,
+            title         = excluded.title,
+            issuer        = excluded.issuer,
+            subject       = excluded.subject,
+            model_number  = excluded.model_number,
+            serial_number = excluded.serial_number,
+            body_excerpt  = excluded.body_excerpt,
+            category      = excluded.category,
+            receipt_dir   = excluded.receipt_dir,
+            file_hash     = excluded.file_hash,
+            raw_text      = excluded.raw_text,
+            processed_by  = excluded.processed_by,
+            processed_at  = excluded.processed_at
+        """,
+        {
+            "processed_by": "tesseract",
+            "document_date": None,
+            "document_kind": "documents/reference",
+            "title": None,
+            "issuer": None,
+            "subject": None,
+            "model_number": None,
+            "serial_number": None,
+            "body_excerpt": None,
+            "file_hash": None,
+            **data,
+            "processed_at": processed_at,
+        },
+    )
+    conn.commit()
+
+
+def get_document_by_file_hash(
+    conn: sqlite3.Connection,
+    file_hash: str,
+    *,
+    exclude_filename: str | None = None,
+) -> dict | None:
+    """Return a tracked reference document row for *file_hash*, or None if absent."""
+    params: list[object] = [file_hash]
+    where = "WHERE file_hash = ?"
+    if exclude_filename is not None:
+        where += " AND filename != ?"
+        params.append(exclude_filename)
+    row = conn.execute(
+        f"""
+        SELECT filename, scan_date, document_date, document_kind, title, issuer,
+               subject, model_number, serial_number, body_excerpt, category,
+               receipt_dir, file_hash, processed_by, processed_at
+        FROM documents
         {where}
         ORDER BY processed_at ASC, filename ASC
         LIMIT 1
