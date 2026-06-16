@@ -56,10 +56,12 @@ def route_inbox_document(
     )
     from intake.db import (
         get_card_by_file_hash,
+        get_document_by_file_hash,
         get_letter_by_file_hash,
         get_payment_by_file_hash,
         get_receipt_by_file_hash,
         upsert_card,
+        upsert_document,
         upsert_letter,
         upsert_payment,
         upsert_receipt,
@@ -68,6 +70,7 @@ def route_inbox_document(
     from intake.extract import extract_card, extract_letter, extract_payment, extract_receipt
     from intake.ocr import extract_text
     from intake.parse_card import classify_card
+    from intake.parse_document import parse_document
     from intake.parse_letter import classify_letter
     from intake.parse_payment import classify_payment
     from intake.personal_finance import build_receipt_event
@@ -81,6 +84,7 @@ def route_inbox_document(
         or get_letter_by_file_hash(conn, file_hash)
         or get_card_by_file_hash(conn, file_hash)
         or get_payment_by_file_hash(conn, file_hash)
+        or get_document_by_file_hash(conn, file_hash)
     )
     if existing is not None:
         dest = _exhaust_hash_duplicate(
@@ -100,6 +104,56 @@ def route_inbox_document(
 
     raw_text = extract_text(pdf)
     doc_type = classify_document_type(raw_text, pdf.name)
+
+    if doc_type == "document":
+        document = parse_document(pdf.name, raw_text, pdf_path=pdf)
+        category = document.document_kind
+        dest_dir = receipt_dir / category
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = _canonical_document_destination(
+            dest_dir,
+            source_path=pdf,
+            document_date=document.document_date or document.scan_date,
+            reserved_paths=reserved_paths,
+        )
+        shutil.move(str(pdf), dest)
+        row = {
+            "filename": dest.name,
+            "scan_date": document.scan_date.isoformat(),
+            "document_date": document.document_date.isoformat() if document.document_date else None,
+            "document_kind": document.document_kind,
+            "title": document.title,
+            "issuer": document.issuer,
+            "subject": document.subject,
+            "model_number": document.model_number,
+            "serial_number": document.serial_number,
+            "body_excerpt": document.body_excerpt,
+            "category": category,
+            "receipt_dir": str(dest.relative_to(receipt_dir)),
+            "file_hash": file_hash,
+            "raw_text": document.raw_text,
+            "processed_by": "tesseract",
+        }
+        upsert_document(conn, row)
+        write_sidecar(
+            dest,
+            {
+                **{k: v for k, v in row.items() if k != "raw_text"},
+                "document_type": "document",
+                "tier": "ok",
+            },
+        )
+        if daemon:
+            print(
+                f"{prefix}{dest.relative_to(receipt_dir)} "
+                f"[document] kind={document.document_kind!r} title={document.title!r}"
+            )
+        else:
+            print(
+                f"{prefix}-> {category}/{dest.name} [document]"
+                f" title={document.title!r}{_renamed_suffix(pdf, dest)}"
+            )
+        return RoutedDocument(processed=True)
 
     if doc_type == "letter":
         letter, model = extract_letter(

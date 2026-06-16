@@ -1555,6 +1555,64 @@ def test_cmd_process_exhausts_incoming_hash_duplicate(tmp_path, monkeypatch, cap
     assert "duplicate by file hash" in out
 
 
+def test_cmd_process_routes_reference_document_without_receipt_export(
+    tmp_path, monkeypatch, capsys
+):
+    import intake.ocr as ocr_mod
+
+    receipt_root = tmp_path / "receipts"
+    intake_dir = receipt_root / "intake"
+    intake_dir.mkdir(parents=True)
+    pdf = intake_dir / "20260616_1000.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nmanual\n")
+    raw_text = """
+    Acme Router XR500
+    User Manual
+    Model: XR500
+    Operating instructions and installation guide
+    """
+    db_path = tmp_path / "intake.db"
+    pf_events: list[dict] = []
+
+    monkeypatch.setattr(ocr_mod, "extract_text", lambda _path: raw_text)
+    monkeypatch.setattr(
+        cli,
+        "_trigger_personal_finance",
+        lambda _settings, events, **_kwargs: pf_events.extend(events),
+    )
+
+    cli._cmd_process(
+        Namespace(receipt_dir=str(receipt_root), db=str(db_path), dry_run=False),
+        {},
+    )
+
+    dest = receipt_root / "documents" / "manuals" / "20260616_1000.pdf"
+    assert dest.exists()
+    sidecar = read_sidecar(dest)
+    assert sidecar["document_type"] == "document"
+    assert sidecar["document_kind"] == "documents/manuals"
+    assert sidecar["model_number"] == "XR500"
+    assert pf_events == []
+
+    conn = init_db(db_path)
+    receipt_row = get_receipt(conn, dest.name)
+    document_row = conn.execute(
+        "SELECT filename, document_kind, category, receipt_dir, model_number FROM documents WHERE filename = ?",
+        (dest.name,),
+    ).fetchone()
+    conn.close()
+
+    assert receipt_row is None
+    assert document_row is not None
+    assert document_row["document_kind"] == "documents/manuals"
+    assert document_row["category"] == "documents/manuals"
+    assert document_row["receipt_dir"] == "documents/manuals/20260616_1000.pdf"
+    assert document_row["model_number"] == "XR500"
+
+    out = capsys.readouterr().out
+    assert "[document]" in out
+
+
 def test_cmd_process_supports_jpg_and_mov_receipts(tmp_path, monkeypatch):
     import intake.classify as classify_mod
     import intake.document_type as document_type_mod
