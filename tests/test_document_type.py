@@ -84,6 +84,36 @@ def test_hardware_specs_route_as_specs_document() -> None:
     assert document.model_number == "ABC-12"
 
 
+def test_product_brief_routes_as_specs_document() -> None:
+    raw_text = """
+    9th Gen Intel Core Desktop Processors
+    Product Brief
+    Platform features and specifications
+    """
+
+    assert classify_document_type(raw_text, "20260616_1003.pdf") == "document"
+    assert classify_document(raw_text) == "documents/specs"
+
+
+def test_datasheet_with_warranty_period_stays_specs_document() -> None:
+    raw_text = """
+    Data Sheet
+    Samsung SSD 870 EVO
+    TECHNICAL SPECIFICATIONS
+    Density Model Name Box Contents Model Code
+    TBW 2,400TB
+    Warranty Period 5 year limited
+    Warranty Statement
+    """
+
+    document = parse_document("20260616_1004.pdf", raw_text)
+
+    assert classify_document_type(raw_text, "20260616_1004.pdf") == "document"
+    assert classify_document(raw_text) == "documents/specs"
+    assert document.document_kind == "documents/specs"
+    assert document.model_number is None
+
+
 def test_warranty_routes_as_warranty_document() -> None:
     raw_text = """
     Limited Warranty
