@@ -3,36 +3,8 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  pre-commit:
+  ci:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install pre-commit
-        run: pip install pre-commit
-      - name: Run pre-commit
-        run: pre-commit run --all-files
-
-  test:
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install dependencies
-        run: |
-          pip install -e ".[dev]"
-          pip install git+https://github.com/casonk/dyno-lab.git
-          pip install black ruff
-      - name: Check formatting (ruff format)
-        run: ruff format --check .
-      # TODO: remove black once ruff format is confirmed stable portfolio-wide
-      - name: Check formatting (black — deprecated)
-        run: black --check --diff .
-      - name: Run tests
-        run: pytest --tb=short
+    uses: casonk/.github/.github/workflows/python-ci.yml@main
+    with:
+      python-versions: '["3.12"]'
