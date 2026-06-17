@@ -26,7 +26,8 @@ _IDENTITY_DOCUMENT_RE = re.compile(
 
 _REFERENCE_DOCUMENT_RE = re.compile(
     r"\b(?:user\s+manual|user\s+guide|owner'?s\s+manual|instruction\s+manual"
-    r"|installation\s+guide|operating\s+instructions|datasheet|data\s+sheet"
+    r"|installation\s+guide|installation\s+manual|setup\s+guide|quick\s+start\s+guide"
+    r"|operating\s+instructions|datasheet|data\s+sheet|product\s+brief"
     r"|technical\s+specifications|specification\s+sheet|hardware\s+specifications"
     r"|product\s+specification|limited\s+warranty|warranty\s+certificate"
     r"|service\s+contract|protection\s+plan|extended\s+service\s+plan)\b",

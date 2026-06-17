@@ -47,14 +47,15 @@ def parse_document(filename: str, raw_text: str, pdf_path: Path | None = None) -
 
 
 _MODEL_RE = re.compile(
-    r"\b(?:model\s+number|model\s+no\.?|part\s+no\.?|model|pn|p/n|sku)\s*[:#]?\s*([A-Z0-9][A-Z0-9._/-]{2,})\b",
+    r"\b(?:model\s+number|model\s+no\.?|part\s+no\.?|pn|p/n|sku)\s*[:#]?\s*([A-Z0-9][A-Z0-9._/-]{2,})\b"
+    r"|\bmodel\s*[:#]\s*([A-Z0-9][A-Z0-9._/-]{2,})\b",
     re.IGNORECASE,
 )
 _SERIAL_RE = re.compile(
     r"\b(?:serial\s+number|serial\s+no\.?|serial|s/n|sn)\s*[:#]?\s*([A-Z0-9][A-Z0-9._/-]{3,})\b",
     re.IGNORECASE,
 )
-_TITLE_LABEL_RE = re.compile(r"^(?:title|document|product)[:\s]+(.+)$", re.IGNORECASE)
+_TITLE_LABEL_RE = re.compile(r"^(?:title|document|product)\s*:\s+(.+)$", re.IGNORECASE)
 _HEADER_NOISE_RE = re.compile(
     r"^(?:page\s+\d+|table\s+of\s+contents|contents|important\s+safety|warning|caution)$",
     re.IGNORECASE,
@@ -66,12 +67,16 @@ _MANUAL_TERMS = (
     "owner's manual",
     "owners manual",
     "instruction manual",
+    "installation manual",
     "installation guide",
+    "setup guide",
+    "quick start guide",
     "operating instructions",
 )
 _SPEC_TERMS = (
     "datasheet",
     "data sheet",
+    "product brief",
     "technical specifications",
     "specification sheet",
     "hardware specifications",
@@ -79,21 +84,23 @@ _SPEC_TERMS = (
 )
 _WARRANTY_TERMS = (
     "limited warranty",
-    "warranty",
     "service contract",
     "protection plan",
     "extended service plan",
     "terms and conditions",
+    "warranty certificate",
+    "warranty statement",
+    "warranty covers",
 )
 
 
 def classify_document(raw_text: str) -> str:
     """Return a document category path for manuals/specs/warranties."""
     lowered = raw_text.lower()
-    if any(term in lowered for term in _WARRANTY_TERMS):
-        return "documents/warranty"
     if any(term in lowered for term in _SPEC_TERMS):
         return "documents/specs"
+    if any(term in lowered for term in _WARRANTY_TERMS):
+        return "documents/warranty"
     if any(term in lowered for term in _MANUAL_TERMS):
         return "documents/manuals"
     return "documents/reference"
@@ -137,7 +144,10 @@ def _parse_subject(raw_text: str) -> str | None:
 
 def _parse_model_number(raw_text: str) -> str | None:
     match = _MODEL_RE.search(raw_text)
-    return match.group(1).strip()[:80] if match else None
+    if not match:
+        return None
+    value = next((group for group in match.groups() if group), None)
+    return value.strip()[:80] if value else None
 
 
 def _parse_serial_number(raw_text: str) -> str | None:
