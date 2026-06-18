@@ -201,7 +201,7 @@ By default `intake serve` reads `[web].host` / `[web].port` from
 `config/settings.toml`:
 
 ```toml
-auto_pass_profile = "master"
+auto_pass_profile = "your-profile"
 openai_api_key_entry = "vendor/openai/api-key"
 openai_model_low = "gpt-4o-mini"
 openai_model_mid = "gpt-4o"

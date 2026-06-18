@@ -38,7 +38,7 @@ reports_dir = "reports"
 #
 # Preferred: resolve the API key from KeePassXC via auto-pass directly from
 # this file:
-#   auto_pass_profile = "master"                  # optional auto-pass profile override
+#   auto_pass_profile = "your-profile"             # optional auto-pass profile override
 #   openai_api_key_entry = "vendor/openai/api-key"        # Password field used
 #
 # Fallback: set the key directly (not recommended — keep secrets out of config):
