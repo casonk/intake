@@ -6,7 +6,7 @@
 
 ## Receipt Source
 
-- **Mount point**: `/mnt/setup/bully/info/receipt/` (snowbridge SMB share)
+- **Mount point**: `/mnt/snowbridge/receipts/` (snowbridge SMB share)
 - **Inbox**: `receipt/intake/` — new PDFs land here, named `YYYYMMDD_HHMM.pdf`
 - **Category folders** alongside intake: `auto`, `cvs`, `edu`, `gas-station`, `general`, `grocery`, `moto`, `office`, `outdoor`, `PC`, `phone`, `sw`, `weed`
 

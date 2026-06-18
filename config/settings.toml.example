@@ -1,4 +1,4 @@
-receipt_dir = "/mnt/setup/bully/info/receipt"
+receipt_dir = "/mnt/snowbridge/receipts"
 db_path = "data/intake.db"
 reports_dir = "reports"
 
@@ -196,7 +196,7 @@ reports_dir = "reports"
 # successful receipt ingestion.
 #
 # [personal_finance]
-# repo_root = "/mnt/4tb-m2/git/finance-pipeline"
+# repo_root = "/path/to/finance-pipeline"
 # command = ["python3", "scripts/all/monthly_controller.py"]
 #
 # # Optional custom event spool dir (defaults to data/finance-pipeline)
