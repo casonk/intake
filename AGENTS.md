@@ -4,7 +4,7 @@
 
 `intake` processes incoming receipt PDF scans from a snowbridge SMB share into a structured SQLite database and Markdown/HTML summary reports.
 
-- **Receipt source**: `/mnt/setup/bully/info/receipt/` (snowbridge SMB share)
+- **Receipt source**: `/mnt/snowbridge/receipts/` (snowbridge SMB share)
 - **Inbox**: `intake/` subfolder where new PDFs land, named `YYYYMMDD_HHMM.pdf`
 - **Categories**: `auto`, `edu`, `gas-station`, `general`, `grocery`, `moto`, `office`, `outdoor`, `pc`, `pharmacy`, `phone`, `sw`, `weed` — each supports subcategories (e.g. `grocery/supermarket`)
 

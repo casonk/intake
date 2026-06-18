@@ -40,14 +40,14 @@ settings.
 ```bash
 intake backfill
 intake backfill --dry-run          # preview without writing
-intake backfill --receipt-dir /mnt/setup/bully/info/receipt
+intake backfill --receipt-dir /mnt/snowbridge/receipts
 ```
 
 **Process new receipts** from `intake/` → OCR → classify → move → database:
 
 ```bash
 intake process
-intake process --receipt-dir /mnt/setup/bully/info/receipt --dry-run
+intake process --receipt-dir /mnt/snowbridge/receipts --dry-run
 ```
 
 Processed receipts now normalize to the canonical `YYYYMMDD_HHMM.EXT` filename
