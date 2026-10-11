@@ -3,7 +3,7 @@ set namespaceSeparator none
 top to bottom direction
 skinparam componentStyle rectangle
 rectangle "conftest\n1 python file" as conftest
-rectangle "intake\n0 child pkg, 28 modules\n29 python files\nexamples: ai, ai_card, ai_letter" as intake
+rectangle "intake\n1 child pkg, 38 modules\n41 python files\nexamples: ai, ai_card, ai_letter" as intake
 rectangle "intake.ai\n1 python file" as intake.ai
 rectangle "intake.ai_card\n1 python file" as intake.ai_card
 rectangle "intake.ai_letter\n1 python file" as intake.ai_letter
@@ -12,11 +12,18 @@ rectangle "intake.certification\n1 python file" as intake.certification
 rectangle "intake.classify\n1 python file" as intake.classify
 rectangle "intake.cli\n1 python file" as intake.cli
 rectangle "intake.db\n1 python file" as intake.db
+rectangle "intake.document_routing\n1 python file" as intake.document_routing
 rectangle "intake.document_type\n1 python file" as intake.document_type
 rectangle "intake.email\n1 python file" as intake.email
+rectangle "intake.email_filing\n1 python file" as intake.email_filing
+rectangle "intake.email_finance\n1 python file" as intake.email_finance
+rectangle "intake.email_provider\n1 python file" as intake.email_provider
+rectangle "intake.email_reply\n1 python file" as intake.email_reply
+rectangle "intake.email_text\n1 python file" as intake.email_text
 rectangle "intake.extract\n1 python file" as intake.extract
 rectangle "intake.file_links\n1 python file" as intake.file_links
 rectangle "intake.fingerprint\n1 python file" as intake.fingerprint
+rectangle "intake.language\n1 python file" as intake.language
 rectangle "intake.media\n1 python file" as intake.media
 rectangle "intake.merchant\n1 python file" as intake.merchant
 rectangle "intake.naming\n1 python file" as intake.naming
@@ -24,13 +31,18 @@ rectangle "intake.notify\n1 python file" as intake.notify
 rectangle "intake.ocr\n1 python file" as intake.ocr
 rectangle "intake.parse\n1 python file" as intake.parse
 rectangle "intake.parse_card\n1 python file" as intake.parse_card
+rectangle "intake.parse_document\n1 python file" as intake.parse_document
 rectangle "intake.parse_letter\n1 python file" as intake.parse_letter
 rectangle "intake.parse_payment\n1 python file" as intake.parse_payment
 rectangle "intake.personal_finance\n1 python file" as intake.personal_finance
 rectangle "intake.purchaser\n1 python file" as intake.purchaser
+rectangle "intake.reference_ids\n1 python file" as intake.reference_ids
 rectangle "intake.report\n1 python file" as intake.report
 rectangle "intake.sidecar\n1 python file" as intake.sidecar
 rectangle "intake.staff\n1 python file" as intake.staff
+rectangle "intake.templates\n1 child pkg, 0 modules\n2 python files\nexamples: report" as intake.templates
+rectangle "intake.templates.report\n1 python file" as intake.templates.report
+rectangle "intake.translation\n1 python file" as intake.translation
 rectangle "intake.web\n1 python file" as intake.web
 intake.ai --> intake.certification
 intake.ai --> intake.ocr
@@ -43,46 +55,74 @@ intake.ai_letter --> intake.ai
 intake.ai_letter --> intake.parse_letter
 intake.ai_payment --> intake.ai
 intake.ai_payment --> intake.parse_payment
+intake.cli --> intake.ai
 intake.cli --> intake.certification
 intake.cli --> intake.classify
 intake.cli --> intake.db
+intake.cli --> intake.document_routing
 intake.cli --> intake.document_type
 intake.cli --> intake.email
 intake.cli --> intake.extract
 intake.cli --> intake.fingerprint
+intake.cli --> intake.language
 intake.cli --> intake.media
 intake.cli --> intake.merchant
 intake.cli --> intake.naming
 intake.cli --> intake.notify
 intake.cli --> intake.ocr
 intake.cli --> intake.parse
-intake.cli --> intake.parse_card
 intake.cli --> intake.parse_letter
-intake.cli --> intake.parse_payment
 intake.cli --> intake.personal_finance
 intake.cli --> intake.purchaser
 intake.cli --> intake.report
 intake.cli --> intake.sidecar
 intake.cli --> intake.staff
+intake.cli --> intake.translation
 intake.cli --> intake.web
 intake.db --> intake.certification
 intake.db --> intake.parse
 intake.db --> intake.purchaser
+intake.db --> intake.reference_ids
 intake.db --> intake.staff
+intake.document_routing --> intake.classify
+intake.document_routing --> intake.cli
+intake.document_routing --> intake.db
+intake.document_routing --> intake.document_type
+intake.document_routing --> intake.extract
+intake.document_routing --> intake.ocr
+intake.document_routing --> intake.parse_card
+intake.document_routing --> intake.parse_document
+intake.document_routing --> intake.parse_letter
+intake.document_routing --> intake.parse_payment
+intake.document_routing --> intake.personal_finance
+intake.document_routing --> intake.sidecar
+intake.document_type --> intake.purchaser
+intake.email --> intake
 intake.email --> intake.ai
 intake.email --> intake.certification
 intake.email --> intake.classify
-intake.email --> intake.cli
 intake.email --> intake.db
 intake.email --> intake.email
+intake.email --> intake.email_filing
+intake.email --> intake.email_finance
+intake.email --> intake.email_provider
+intake.email --> intake.email_reply
+intake.email --> intake.email_text
 intake.email --> intake.merchant
-intake.email --> intake.naming
 intake.email --> intake.notify
 intake.email --> intake.parse
 intake.email --> intake.personal_finance
-intake.email --> intake.purchaser
 intake.email --> intake.sidecar
 intake.email --> intake.staff
+intake.email --> intake.translation
+intake.email_filing --> intake.naming
+intake.email_finance --> intake.purchaser
+intake.email_reply --> intake.cli
+intake.email_reply --> intake.db
+intake.email_reply --> intake.email
+intake.email_reply --> intake.email_provider
+intake.email_reply --> intake.email_text
+intake.email_reply --> intake.notify
 intake.extract --> intake.ai
 intake.extract --> intake.ai_card
 intake.extract --> intake.ai_letter
@@ -93,16 +133,21 @@ intake.extract --> intake.parse
 intake.extract --> intake.parse_card
 intake.extract --> intake.parse_letter
 intake.extract --> intake.parse_payment
+intake.extract --> intake.translation
 intake.file_links --> intake.media
 intake.notify --> intake.file_links
 intake.notify --> intake.parse
 intake.ocr --> intake.media
 intake.parse --> intake.certification
+intake.parse --> intake.language
 intake.parse --> intake.merchant
 intake.parse --> intake.naming
 intake.parse --> intake.purchaser
 intake.parse --> intake.staff
 intake.parse_card --> intake.parse
+intake.parse_document --> intake.document_type
+intake.parse_document --> intake.parse
+intake.parse_letter --> intake.document_type
 intake.parse_letter --> intake.parse
 intake.parse_payment --> intake.parse
 intake.personal_finance --> intake.certification
@@ -112,6 +157,9 @@ intake.purchaser --> intake.staff
 intake.report --> intake.certification
 intake.report --> intake.db
 intake.report --> intake.media
+intake.report --> intake.notify
 intake.report --> intake.parse
 intake.report --> intake.staff
+intake.translation --> intake.ocr
+intake.translation --> intake.parse
 @enduml
