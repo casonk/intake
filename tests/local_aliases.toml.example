@@ -1,0 +1,36 @@
+# tests/local_aliases.toml.example — tracked template.
+#
+# Purchaser-alias test fixtures follow the same local-config convention as
+# config/settings.toml / config/categories.toml: real name-condensation data
+# (family aliases, nicknames, OCR typos) belongs in a gitignored local file,
+# never hardcoded into a tracked test file.
+#
+# Copy this file to tests/local_aliases.toml and edit freely — that copy is
+# gitignored. If tests/local_aliases.toml doesn't exist, conftest.py falls
+# back to this example file, so the suite runs out of the box on a fresh
+# clone using only synthetic placeholder names.
+
+[aliases]
+"jane sample" = [
+  "jane",
+  "jane sample",
+  "janesample",
+  "janesample@gmail.com",
+  "jane sampel",
+  "sample / jane a",
+  "jane a sample",
+  "sample jane a",
+]
+"alaric g thornwood" = [
+  "alaric g thornwood",
+  "al thornwood",
+]
+"michael harrington" = [
+  "michael harrington",
+  "mike harrington",
+  "mike harringtonn",
+  "michael harrington jr",
+  "michael j harrington jr",
+  "michael j. harrington jr.",
+  "michael joseph harrington jr",
+]

@@ -398,6 +398,8 @@
       {% if data.receipt_root_uri %}<a href="{{ data.receipt_root_uri }}">Open receipt root</a>{% endif %}
       {% if data.intake_uri %}<a href="{{ data.intake_uri }}">Open intake inbox</a>{% endif %}
       {% if data.merchant_directory_html_path %}<a href="{{ data.merchant_directory_html_path }}">Merchant directory</a>{% endif %}
+      {% if data.model_directory_html_path %}<a href="{{ data.model_directory_html_path }}">Model directory</a>{% endif %}
+      {% if data.purchaser_directory_html_path %}<a href="{{ data.purchaser_directory_html_path }}">Purchaser directory</a>{% endif %}
     </div>
     {% endif %}
     <div class="summary-grid">
@@ -442,6 +444,8 @@
       <a href="{{ data.merchant_directory_html_path }}">Merchant Directory</a>
       <a href="#merchant-spend-over-time">Merchant Trends</a>
       <a href="#merchant-month-breakdown">Merchant Months</a>
+      <a href="{{ data.model_directory_html_path }}">Model Directory</a>
+      <a href="{{ data.purchaser_directory_html_path }}">Purchaser Directory</a>
       <a href="#recent-receipts">Recent Receipts</a>
       <a href="audit.html">Audit</a>
     </div>
@@ -665,7 +669,17 @@
     <thead><tr><th>Model</th><th>Receipt Count</th><th>Share</th></tr></thead>
     <tbody>
     {% for row in data.by_model %}
-    <tr><td>{{ row.model_label }}</td><td>{{ row.count }}</td><td>{{ row.share_display }}</td></tr>
+    <tr><td><a href="{{ row.model_href_html }}">{{ row.model_label }}</a></td><td>{{ row.count }}</td><td>{{ row.share_display }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h3 id="purchaser-breakdown">Purchaser Breakdown</h3>
+  <table class="detail-table">
+    <thead><tr><th>Purchaser</th><th>Receipt Count</th><th>Total Spend</th><th>Share</th></tr></thead>
+    <tbody>
+    {% for row in data.by_purchaser %}
+    <tr><td><a href="{{ row.purchaser_href_html }}">{{ row.purchaser_label }}</a></td><td>{{ row.count }}</td><td>{{ row.total_spend_display }}</td><td>{{ row.share_display }}</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -680,7 +694,7 @@
       <td>{% if row.merchant_href_html %}<a href="{{ row.merchant_href_html }}">{{ row.merchant_label }}</a>{% else %}{{ row.merchant_label }}{% endif %}</td>
       <td>{% if row.category_uri %}<a href="{{ row.category_uri }}">{{ row.category }}</a>{% else %}{{ row.category }}{% endif %}</td>
       <td>{% if row.total is not none %}{{ row.total_display }}{% else %}—{% endif %}</td>
-      <td>{{ row.purchaser or "—" }}</td>
+      <td>{% if row.purchaser_href_html %}<a href="{{ row.purchaser_href_html }}">{{ row.purchaser }}</a>{% else %}{{ row.purchaser or "—" }}{% endif %}</td>
       <td>{{ "···· " + row.card_last4 if row.card_last4 else "—" }}</td>
       <td>{{ row.staff_label }}</td>
       <td class="items-cell"><span class="item-summary" title="{{ row.items_full_label }}">{{ row.items_label }}</span></td>

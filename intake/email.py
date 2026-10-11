@@ -22,6 +22,7 @@ from intake.db import (
     is_email_message_id_processed,
     is_email_processed,
     record_email_receipt,
+    upsert_document,
 )
 from intake.email_filing import (
     file_message_to_processed_label,
@@ -1131,6 +1132,41 @@ def _write_inline_email_receipt_artifact(
         return None
 
 
+def _upsert_html_income_document(
+    db_conn,
+    *,
+    synthetic_name: str,
+    receipt,
+    plain_text: str,
+    settings: dict,
+) -> None:
+    """File an inline email notification of money received as a non-spend
+    document instead of a receipt (see the is_income branch in
+    _upsert_html_receipt)."""
+    scan_date = (receipt.receipt_date or receipt.scan_date).isoformat()
+    category = "documents/income"
+    row = {
+        "filename": synthetic_name,
+        "scan_date": scan_date,
+        "document_date": scan_date,
+        "document_kind": category,
+        "title": f"{receipt.merchant} — payment received",
+        "issuer": receipt.merchant,
+        "category": category,
+        "receipt_dir": f"email/{category}",
+        "raw_text": plain_text[:4000],
+        "processed_by": "email-payment",
+    }
+    upsert_document(db_conn, row)
+    _write_inline_email_receipt_artifact(
+        settings,
+        category=category,
+        filename=synthetic_name,
+        plain_text=plain_text,
+        row=row,
+    )
+
+
 def _upsert_html_receipt(
     db_conn,
     uid,
@@ -1169,6 +1205,26 @@ def _upsert_html_receipt(
         sender,
         plain_text,
     )
+    if finance_email is not None and finance_email.get("is_income"):
+        # Money credited to the account (e.g. "X paid you $Y" on Venmo) is
+        # income, not spend — file it as a non-spend document instead of a
+        # receipt, mirroring how a check payable to a known purchaser is
+        # routed (see is_check_payable_to_known_purchaser).
+        receipt = replace(
+            receipt,
+            merchant=finance_email["merchant"],
+            total=finance_email["total"],
+            receipt_date=finance_email["receipt_date"],
+            purchaser=finance_email["purchaser"],
+        )
+        _upsert_html_income_document(
+            db_conn,
+            synthetic_name=synthetic_name,
+            receipt=receipt,
+            plain_text=plain_text,
+            settings=settings,
+        )
+        return
     if finance_email is not None:
         receipt = replace(
             receipt,

@@ -77,6 +77,31 @@ def test_explicit_payment_notice_is_finance():
     )
 
 
+def test_normalise_phrase_preserves_cjk_text():
+    # The old ASCII-encode approach silently dropped all non-Latin text to an
+    # empty string, so no Japanese/CJK merchant name could ever match a
+    # keyword. NFKD still folds Latin accents to plain ASCII.
+    from intake.classify import _normalise_phrase
+
+    assert _normalise_phrase("まいばすけっと") == "まいばすけっと"
+    assert _normalise_phrase("Café Résumé") == "cafe resume"
+
+
+def test_normalise_phrase_does_not_corrupt_voiced_kana():
+    # NFKD decomposes voiced/semi-voiced kana into base kana + a combining
+    # mark (e.g. "ば" -> "は" + U+3099); stripping ALL combining marks (not
+    # just Latin diacritics) would silently change the character read.
+    from intake.classify import _normalise_phrase
+
+    assert _normalise_phrase("ば") == "ば"
+    assert _normalise_phrase("ぱ") == "ぱ"
+
+
+def test_classify_matches_japanese_merchant_keyword():
+    rules = {"grocery": {"convenience": {"label": "Convenience", "keywords": ["まいばすけっと"]}}}
+    assert classify("まいばすけっと", rules) == "grocery/convenience"
+
+
 def test_empty_merchant_is_general():
     assert classify("", _RULES) == "general"
 

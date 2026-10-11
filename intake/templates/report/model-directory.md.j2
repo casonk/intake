@@ -1,0 +1,13 @@
+# Extraction Model Directory
+
+[Main Report]({{ data.main_report_md_href }})
+
+{% if data.models -%}
+| Model | Receipts | % of Total |
+|---|---|---|
+{% for row in data.models -%}
+| {{ row.model_markdown }} | {{ row.count }} | {{ row.share_display }} |
+{% endfor %}
+{% else -%}
+No model data yet.
+{% endif %}

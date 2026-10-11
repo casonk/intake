@@ -130,17 +130,17 @@ _PAYPAL_SUBJECT_AMOUNT_RE = re.compile(r":\s*\$?\s*(\d+(?:\.\d{2})?)\s+[A-Z]{3}\
 _VENMO_SENDER_HINT = "venmo@venmo.com"
 
 _VENMO_YOU_PAID_RE = re.compile(
-    r"^you\s+paid\s+(.+?)\s+\$\s*(\d+(?:\.\d{2})?)\s*$",
+    r"^you\s+paid\s+(.+?)\s+\$\s*(\d+(?:\.\d{2})?)",
     re.IGNORECASE | re.MULTILINE,
 )
 
 _VENMO_PAID_YOU_RE = re.compile(
-    r"^(.+?)\s+paid\s+you\s+\$\s*(\d+(?:\.\d{2})?)\s*$",
+    r"^(.+?)\s+paid\s+you\s+\$\s*(\d+(?:\.\d{2})?)",
     re.IGNORECASE | re.MULTILINE,
 )
 
 _VENMO_CHARGED_YOU_RE = re.compile(
-    r"^(.+?)\s+charged\s+you\s+\$\s*(\d+(?:\.\d{2})?)\s*$",
+    r"^(.+?)\s+charged\s+you\s+\$\s*(\d+(?:\.\d{2})?)",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -153,7 +153,7 @@ _NELNET_MDY_DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
 _WISE_SENDER_HINT = "noreply@wise.com"
 
 _WISE_MONEY_ADDED_RE = re.compile(
-    r"\byou\s+added\s+(\d+(?:\.\d{2})?)\s+([A-Z]{3})\s+to\s+your\s+account\b",
+    r"\byou\s+added\s+(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s+([A-Z]{3})\s+to\s+your\s+account\b",
     re.IGNORECASE,
 )
 
@@ -178,6 +178,25 @@ _PAYPAL_YOU_PAID_RE = re.compile(
     r"\byou paid\s+\$?\s*(\d+(?:\.\d{2})?)\s+[A-Z]{3}\s+to\s+(.+)$",
     re.IGNORECASE | re.MULTILINE,
 )
+
+# PayPal and Venmo both send this exact phrasing for in-app crypto purchases,
+# e.g. "You bought 0.02027474 Bitcoin Cash (BCH) for $5.11 USD". Neither the
+# "paid ... to <merchant>" nor the peer-to-peer "paid you"/"charged you"
+# patterns above match this shape, so it needs its own extractor.
+_CRYPTO_PURCHASE_RE = re.compile(
+    r"\byou\s+bought\s+[\d,.]+\s+.+?\(([A-Z]{2,6})\)\s+for\s+\$?\s*(\d+(?:\.\d{2})?)\s*USD\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_crypto_purchase(plain_text: str) -> tuple[str, float] | None:
+    """Return (ticker, amount) for a "you bought ... (TICKER) for $N USD" line."""
+    match = _CRYPTO_PURCHASE_RE.search(plain_text)
+    if not match:
+        return None
+    with suppress(ValueError):
+        return match.group(1).upper(), float(match.group(2))
+    return None
 
 
 def _is_known_non_receipt_notice(subject: str, sender: str, plain_text: str) -> bool:
@@ -424,6 +443,21 @@ def _extract_paypal_receipt_email(subject: str, sender: str, plain_text: str) ->
     """Return structured fields for PayPal merchant receipt emails."""
     if _PAYPAL_SENDER_HINT not in sender.lower():
         return None
+
+    crypto = _extract_crypto_purchase(plain_text)
+    if crypto is not None:
+        ticker, amount = crypto
+        date_match = _PAYMENT_DATE_RE.search(plain_text)
+        receipt_date = _parse_payment_date_text(date_match.group(0)) if date_match else None
+        return {
+            "merchant": f"PayPal Crypto ({ticker})",
+            "total": amount,
+            "receipt_date": receipt_date,
+            "purchaser": _extract_payment_purchaser(plain_text),
+            "card_last4": None,
+            "category": "finance",
+        }
+
     if "you paid" not in plain_text.lower():
         return None
 
@@ -452,6 +486,13 @@ def _extract_paypal_receipt_email(subject: str, sender: str, plain_text: str) ->
 
     date_value = _extract_labeled_block_value(plain_text, ("transaction date",))
     receipt_date = _parse_payment_date_text(date_value) if date_value else None
+
+    if merchant is None and total is None:
+        # Sender/phrase hints matched, but nothing was actually extracted —
+        # this is some PayPal email shape this function doesn't recognize.
+        # Returning None lets the AI fallback (or generic parsing) have a
+        # shot instead of locking in an empty stub.
+        return None
 
     return {
         "merchant": merchant,
@@ -534,16 +575,41 @@ def _extract_venmo_payment_email(subject: str, sender: str, plain_text: str) -> 
         return None
 
     combined = f"{subject}\n{plain_text}"
+
+    crypto = _extract_crypto_purchase(plain_text)
+    if crypto is not None:
+        ticker, amount = crypto
+        date_match = _PAYMENT_DATE_RE.search(plain_text)
+        receipt_date = _parse_payment_date_text(date_match.group(0)) if date_match else None
+        return {
+            "merchant": f"Venmo Crypto ({ticker})",
+            "total": amount,
+            "receipt_date": receipt_date,
+            "purchaser": _extract_payment_purchaser(plain_text),
+            "card_last4": None,
+            "category": "finance",
+        }
+
     merchant: str | None = None
     total: float | None = None
 
+    is_income = False
     for pattern in (_VENMO_YOU_PAID_RE, _VENMO_PAID_YOU_RE, _VENMO_CHARGED_YOU_RE):
         match = pattern.search(combined)
         if match:
             merchant = match.group(1).strip()
             with suppress(ValueError, IndexError):
                 total = float(match.group(2))
+            # "<name> paid you $X" is money credited to the account (income),
+            # unlike "you paid <name>" / "<name> charged you" (both spend).
+            is_income = pattern is _VENMO_PAID_YOU_RE
             break
+
+    if merchant is None and total is None:
+        # Sender hint matched, but none of the peer-to-peer patterns fired —
+        # let the AI fallback (or generic parsing) have a shot instead of
+        # locking in an empty stub.
+        return None
 
     receipt_date: date | None = None
     date_match = _PAYMENT_DATE_RE.search(plain_text)
@@ -557,6 +623,7 @@ def _extract_venmo_payment_email(subject: str, sender: str, plain_text: str) -> 
         "purchaser": _extract_payment_purchaser(plain_text),
         "card_last4": None,
         "category": None,
+        "is_income": is_income,
     }
 
 
@@ -568,7 +635,7 @@ def _extract_wise_payment_email(subject: str, sender: str, plain_text: str) -> d
         return None
 
     match = _WISE_MONEY_ADDED_RE.search(plain_text)
-    total = float(match.group(1)) if match else None
+    total = float(match.group(1).replace(",", "")) if match else None
 
     return {
         "merchant": "Wise",

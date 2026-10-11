@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ data.purchaser_label }} · Intake Purchaser History</title>
+<style>
+  :root {
+    --ink: #18212f;
+    --muted: #667085;
+    --panel: rgba(255, 255, 255, 0.92);
+    --line: rgba(24, 33, 47, 0.12);
+    --shadow: 0 18px 40px rgba(24, 33, 47, 0.09);
+    --blue: #375a9e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top left, rgba(199, 125, 43, 0.12), transparent 30%),
+      linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
+  }
+  .page {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 32px clamp(12px, 1.5vw, 28px) 56px;
+  }
+  .hero, .panel {
+    background: var(--panel);
+    border: 1px solid rgba(24, 33, 47, 0.08);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+    padding: 24px;
+  }
+  .panel { margin-top: 18px; }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  h1, h2 {
+    margin: 0;
+    letter-spacing: -0.03em;
+  }
+  .hero p, .panel p {
+    color: var(--muted);
+    line-height: 1.55;
+  }
+  .hero-links, .page-nav, .summary-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .hero-links a, .page-nav a {
+    display: inline-flex;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(220, 231, 255, 0.78);
+    border: 1px solid rgba(55, 90, 158, 0.18);
+    text-decoration: none;
+  }
+  .summary-grid { margin-top: 20px; }
+  .summary-card {
+    flex: 1 1 180px;
+    min-width: 180px;
+    padding: 16px;
+    border-radius: 18px;
+    background: rgba(248, 247, 243, 0.88);
+    border: 1px solid rgba(24, 33, 47, 0.06);
+  }
+  .summary-card .label {
+    display: block;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .summary-card .value {
+    display: block;
+    font-size: 1.8rem;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+  }
+  .summary-card .subtext {
+    display: block;
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(24, 33, 47, 0.08);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+  th, td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+    vertical-align: top;
+  }
+  th {
+    font-size: 12px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: rgba(243, 239, 230, 0.95);
+  }
+  tbody tr:nth-child(even) td {
+    background: rgba(248, 247, 243, 0.7);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  a {
+    color: var(--blue);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  a:hover { text-decoration: underline; }
+  .empty-state {
+    padding: 18px;
+    border-radius: 16px;
+    background: rgba(248, 247, 243, 0.85);
+    border: 1px dashed rgba(24, 33, 47, 0.16);
+    color: var(--muted);
+  }
+  /* ── column resize ── */
+  th { position: relative; }
+  .col-resizer { position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;user-select:none; }
+  .col-resizer:hover,.col-resizer.rsz-active { background:rgba(24,33,47,.18); }
+  table.resizing { user-select:none;cursor:col-resize; }
+  /* ── cell expand ── */
+  td.expanded { white-space:normal!important;max-width:none!important;overflow:visible!important; }
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="hero" id="summary">
+    <p class="eyebrow">Purchaser History</p>
+    <h1>{{ data.purchaser_label }}</h1>
+    <p>Receipt-level drill-down for a single purchaser, including category mix and the underlying files.</p>
+    <div class="hero-links">
+      <a href="{{ data.main_report_html_href }}">Back to main report</a>
+      <a href="{{ data.directory_html_href }}">Purchaser directory</a>
+    </div>
+    <div class="summary-grid">
+      <article class="summary-card">
+        <span class="label">Receipts</span>
+        <span class="value">{{ data.count }}</span>
+        <span class="subtext">{{ data.date_min or "—" }} to {{ data.date_max or "—" }}</span>
+      </article>
+      <article class="summary-card">
+        <span class="label">Total Spend</span>
+        <span class="value">{{ data.total_spend_display }}</span>
+      </article>
+      <article class="summary-card">
+        <span class="label">Share of All Spend</span>
+        <span class="value">{{ data.share_display }}</span>
+      </article>
+    </div>
+  </section>
+
+  <nav class="page-nav" aria-label="Purchaser page menu">
+    <a href="#category-mix">Category Mix</a>
+    <a href="#purchaser-receipts">Receipts</a>
+  </nav>
+
+  <section class="panel" id="category-mix">
+    <h2>Category Mix</h2>
+    <p>Where this purchaser's receipts currently land in the intake taxonomy.</p>
+    {% if data.by_category %}
+    <table>
+      <thead><tr><th>Category</th><th>Count</th><th>Total Spend</th><th>% of Purchaser</th></tr></thead>
+      <tbody>
+        {% for row in data.by_category %}
+        <tr>
+          <td>{% if row.folder_uri %}<a href="{{ row.folder_uri }}">{{ row.category }}</a>{% else %}{{ row.category }}{% endif %}</td>
+          <td>{{ row.count }}</td>
+          <td>{{ row.total_spend_display }}</td>
+          <td>{{ row.share_display }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">No category data yet.</div>
+    {% endif %}
+  </section>
+
+  <section class="panel" id="purchaser-receipts">
+    <h2>Receipts</h2>
+    <p>Every tracked receipt for this purchaser.</p>
+    {% if data.receipts %}
+    <table>
+      <thead><tr><th>Date</th><th>Merchant</th><th>Category</th><th>Total</th><th>Card</th><th>File</th><th>Folder</th><th>Model</th><th>Processed At</th></tr></thead>
+      <tbody>
+        {% for row in data.receipts %}
+        <tr>
+          <td>{{ row.scan_date }}</td>
+          <td>{% if row.merchant_href_html %}<a href="{{ row.merchant_href_html }}">{{ row.merchant_label }}</a>{% else %}{{ row.merchant_label }}{% endif %}</td>
+          <td>{% if row.category_uri %}<a href="{{ row.category_uri }}">{{ row.category }}</a>{% else %}{{ row.category }}{% endif %}</td>
+          <td>{{ row.total_display }}</td>
+          <td>{{ "···· " + row.card_last4 if row.card_last4 else "—" }}</td>
+          <td>{% if row.file_link_uri %}<a href="{{ row.file_link_uri }}">{{ row.filename }}</a>{% else %}{{ row.filename }}{% endif %}</td>
+          <td>{% if row.folder_uri %}<a href="{{ row.folder_uri }}">{{ row.folder_name }}</a>{% else %}—{% endif %}</td>
+          <td>{{ row.processed_by or "tesseract" }}</td>
+          <td>{{ row.processed_at_display }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">No receipt rows yet.</div>
+    {% endif %}
+  </section>
+</main>
+<script>
+(function () {
+  function initColResize(tbl) {
+    tbl.querySelectorAll('th').forEach(function (th) {
+      var r = document.createElement('div');
+      r.className = 'col-resizer';
+      th.appendChild(r);
+      r.addEventListener('mousedown', function (e) {
+        var x0 = e.clientX, w0 = th.offsetWidth;
+        tbl.classList.add('resizing');
+        r.classList.add('rsz-active');
+        var mv = function (ev) { th.style.width = th.style.minWidth = Math.max(40, w0 + ev.clientX - x0) + 'px'; };
+        var up = function () { tbl.classList.remove('resizing'); r.classList.remove('rsz-active'); document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+        document.addEventListener('mousemove', mv);
+        document.addEventListener('mouseup', up);
+        e.preventDefault();
+      });
+    });
+  }
+  function initCellExpand(tbl) {
+    tbl.addEventListener('click', function (e) {
+      var td = e.target.closest('td');
+      if (td) { td.classList.toggle('expanded'); }
+    });
+  }
+  document.querySelectorAll('table').forEach(function (t) { initColResize(t); initCellExpand(t); });
+}());
+</script>
+</body>
+</html>

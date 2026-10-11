@@ -3853,6 +3853,75 @@ def _cmd_dedup(args: argparse.Namespace, settings: dict) -> None:
         )
 
 
+def _cmd_dedup_refs(args: argparse.Namespace, settings: dict) -> None:
+    """Print receipts that share an embedded reference ID across different
+    merchant names or document types. Report-only — this never modifies the
+    database or moves any files; matching IDs need a human to confirm before
+    acting (see intake/reference_ids.py for what counts as a match and why)."""
+    from intake.db import (
+        dismiss_reference_match,
+        init_db,
+        query_dismissed_reference_matches,
+        query_reference_duplicate_groups,
+        undismiss_reference_match,
+    )
+
+    db_path = Path(args.db or settings.get("db_path") or _DEFAULT_DB)
+    conn = init_db(db_path)
+
+    if args.dismiss:
+        kind, ref_id = args.dismiss
+        dismiss_reference_match(conn, kind, ref_id, note=args.note)
+        conn.close()
+        print(f"Dismissed {kind} {ref_id!r} — it will no longer be reported.")
+        return
+
+    if args.undismiss:
+        kind, ref_id = args.undismiss
+        undismiss_reference_match(conn, kind, ref_id)
+        conn.close()
+        print(f"Undismissed {kind} {ref_id!r} — it will be reported again if still matching.")
+        return
+
+    if args.show_dismissed:
+        dismissed = query_dismissed_reference_matches(conn)
+        conn.close()
+        if not dismissed:
+            print("No dismissed match groups.")
+            return
+        print(f"{len(dismissed)} dismissed match group(s):\n")
+        for row in dismissed:
+            print(f"  {row['kind']} {row['ref_id']!r}  (dismissed {row['dismissed_at']})")
+            if row.get("note"):
+                print(f"    note: {row['note']}")
+        return
+
+    groups = query_reference_duplicate_groups(conn)
+    conn.close()
+
+    if not groups:
+        print("No reference-ID duplicates found.")
+        return
+
+    print(f"Found {len(groups)} reference-ID match group(s) — review before acting:\n")
+    for i, (kind, ref_id, group) in enumerate(groups, 1):
+        print(f"  Group {i} — matching {kind} {ref_id!r}:")
+        for row in group:
+            total_label = f"${row['total']:.2f}" if row.get("total") is not None else "total unknown"
+            print(
+                f"    {row['filename']:<36} merchant={row['merchant']!r:<40} "
+                f"{total_label:<14} {row['scan_date']}  category={row['category']!r}"
+            )
+        print()
+    print(
+        "These are not auto-removed. Confirm each group represents the same real "
+        "transaction (matching dates/amounts help), then use `intake correct` or "
+        "manually exhaust the duplicate copy. If a group is confirmed NOT a "
+        "duplicate, dismiss it: "
+        "intake dedup-refs --dismiss <kind> <ref_id> --note '...'"
+    )
+
+
 def _cmd_consolidate(args: argparse.Namespace, settings: dict) -> None:
     """Apply the merchant alias map to existing DB rows and sidecars.
 
@@ -4480,6 +4549,43 @@ def main() -> None:
         help="Only consider exact file-hash duplicate groups",
     )
 
+    # dedup-refs
+    p_dref = sub.add_parser(
+        "dedup-refs",
+        help=(
+            "Report receipts sharing an embedded reference ID (EFT/transaction/order/"
+            "invoice number) across different merchant names — the same transaction "
+            "saved as two different documents. Report-only; never modifies the database."
+        ),
+    )
+    p_dref.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_dref.add_argument(
+        "--dismiss",
+        nargs=2,
+        metavar=("KIND", "REF_ID"),
+        help=(
+            "Mark a match group as reviewed and not a real duplicate (e.g. a recurring "
+            "tag number or shared invoice-series prefix) so it stops resurfacing. "
+            "KIND/REF_ID come from a group's 'matching <kind> <ref_id>' header."
+        ),
+    )
+    p_dref.add_argument(
+        "--undismiss",
+        nargs=2,
+        metavar=("KIND", "REF_ID"),
+        help="Clear a prior --dismiss so that group reappears",
+    )
+    p_dref.add_argument(
+        "--note",
+        metavar="TEXT",
+        help="Optional note explaining why a group was dismissed (with --dismiss)",
+    )
+    p_dref.add_argument(
+        "--show-dismissed",
+        action="store_true",
+        help="List previously dismissed match groups instead of scanning for new ones",
+    )
+
     # consolidate
     p_con = sub.add_parser(
         "consolidate",
@@ -4632,6 +4738,8 @@ def main() -> None:
         _cmd_normalize_filenames(args, settings)
     elif args.command == "dedup":
         _cmd_dedup(args, settings)
+    elif args.command == "dedup-refs":
+        _cmd_dedup_refs(args, settings)
     elif args.command == "consolidate":
         _cmd_consolidate(args, settings)
     elif args.command == "cleanup":

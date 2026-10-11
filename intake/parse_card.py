@@ -39,7 +39,7 @@ _OCCASION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "sympathy",
     ),
     (re.compile(r"\bthank\s+you\b", re.IGNORECASE), "thank-you"),
-    (re.compile(r"\bbon\s+voyage\b", re.IGNORECASE), "farewell"),
+    (re.compile(r"\b(bon\s+voyage|good\s+luck|farewell)\b", re.IGNORECASE), "farewell"),
 ]
 
 _TO_RE = re.compile(r"^(?:to|dear)\b[,:\s]+(.+)$", re.IGNORECASE | re.MULTILINE)

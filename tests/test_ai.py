@@ -148,6 +148,39 @@ def test_merge_ai_result_skips_probable_cashier_name_from_counter_line():
     assert r.purchaser is None
 
 
+def test_merge_ai_result_falls_back_to_bill_to_when_ai_names_staff():
+    # The AI read "SOLD BY: MARCUS REYES" as the purchaser, but this
+    # invoice also names the actual customer in its "BILL TO" field — use
+    # that instead of dropping the purchaser entirely.
+    r = merge_ai_result(
+        _receipt(
+            raw_text=(
+                "SOLD BY: MARCUS REYES\n"
+                "INVOICE NO. 192345\n"
+                "BILL TO: MICHAEL HARRINGTON\n"
+                "100 EXAMPLE TRL E LOT 1\n"
+                "ANYTOWN, FL 00000"
+            )
+        ),
+        {"purchaser": "Marcus Reyes"},
+    )
+    assert r.purchaser == "michael harrington"
+
+
+def test_merge_ai_result_no_bill_to_fallback_leaves_purchaser_unset():
+    r = merge_ai_result(
+        _receipt(raw_text="Advisor: Sandra Kim\nNo bill-to field here"),
+        {"purchaser": "Sandra Kim"},
+    )
+    assert r.purchaser is None
+
+
+@pytest.mark.parametrize("bad_value", ["cash customer", "PayPal", "Venmo", "Zelle"])
+def test_merge_ai_result_rejects_payment_processor_and_placeholder_names(bad_value):
+    r = merge_ai_result(_receipt(), {"purchaser": bad_value})
+    assert r.purchaser is None
+
+
 def test_merge_ai_result_merges_staff():
     r = merge_ai_result(
         _receipt(),

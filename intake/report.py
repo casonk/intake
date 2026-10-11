@@ -40,6 +40,22 @@ _MERCHANT_DETAIL_MD_TEMPLATE = _load_report_template("merchant-detail.md.j2")
 
 _MERCHANT_DETAIL_HTML_TEMPLATE = _load_report_template("merchant-detail.html.j2")
 
+_MODEL_DIRECTORY_MD_TEMPLATE = _load_report_template("model-directory.md.j2")
+
+_MODEL_DIRECTORY_HTML_TEMPLATE = _load_report_template("model-directory.html.j2")
+
+_MODEL_DETAIL_MD_TEMPLATE = _load_report_template("model-detail.md.j2")
+
+_MODEL_DETAIL_HTML_TEMPLATE = _load_report_template("model-detail.html.j2")
+
+_PURCHASER_DIRECTORY_MD_TEMPLATE = _load_report_template("purchaser-directory.md.j2")
+
+_PURCHASER_DIRECTORY_HTML_TEMPLATE = _load_report_template("purchaser-directory.html.j2")
+
+_PURCHASER_DETAIL_MD_TEMPLATE = _load_report_template("purchaser-detail.md.j2")
+
+_PURCHASER_DETAIL_HTML_TEMPLATE = _load_report_template("purchaser-detail.html.j2")
+
 _AUDIT_HTML_TEMPLATE = _load_report_template("audit.html.j2")
 
 
@@ -583,6 +599,7 @@ def _prepare_recent(
     filebrowser_base_url: str | None,
     filebrowser_receipt_root: str,
     merchant_lookup: dict[str, dict] | None = None,
+    purchaser_lookup: dict[str, dict] | None = None,
 ) -> list[dict]:
     prepared: list[dict] = []
     search_cache: dict[str, Path | None] = {}
@@ -597,6 +614,18 @@ def _prepare_recent(
         )
         item["merchant_href_md"] = merchant_page.get("merchant_page_md") if merchant_page else None
         item["merchant_markdown"] = _markdown_link(item["merchant_label"], item["merchant_href_md"])
+        purchaser_page = (
+            purchaser_lookup.get(_purchaser_key(item.get("purchaser")))
+            if purchaser_lookup and item.get("purchaser")
+            else None
+        )
+        item["purchaser_href_html"] = purchaser_page.get("html") if purchaser_page else None
+        item["purchaser_href_md"] = purchaser_page.get("md") if purchaser_page else None
+        item["purchaser_markdown"] = (
+            _markdown_link(item["purchaser"], item["purchaser_href_md"])
+            if item.get("purchaser")
+            else "—"
+        )
         item["total_display"] = _format_receipt_total(item.get("total"), item.get("currency"))
         processed_at = item.get("processed_at")
         item["processed_at_display"] = processed_at[:19] if processed_at else "—"
@@ -876,6 +905,25 @@ def _build_merchant_directory_view(data: dict) -> dict:
     }
 
 
+def _relativize_recent_links(receipts: list[dict], *, prefix: str = "../") -> None:
+    """Rewrite merchant/purchaser page links produced by _prepare_recent to
+    account for pages one level deeper than the report root (models/,
+    merchants/, purchasers/)."""
+    for row in receipts:
+        if row.get("merchant_href_html"):
+            row["merchant_href_html"] = f"{prefix}{row['merchant_href_html']}"
+        if row.get("merchant_href_md"):
+            row["merchant_markdown"] = _markdown_link(
+                row["merchant_label"], f"{prefix}{row['merchant_href_md']}"
+            )
+        if row.get("purchaser_href_html"):
+            row["purchaser_href_html"] = f"{prefix}{row['purchaser_href_html']}"
+        if row.get("purchaser_href_md"):
+            row["purchaser_markdown"] = _markdown_link(
+                row["purchaser"], f"{prefix}{row['purchaser_href_md']}"
+            )
+
+
 def _build_merchant_detail_view(
     merchant_row: dict,
     receipt_rows: list[dict],
@@ -884,6 +932,7 @@ def _build_merchant_detail_view(
     receipt_root: Path | None,
     filebrowser_base_url: str | None,
     filebrowser_receipt_root: str,
+    purchaser_lookup: dict[str, dict] | None = None,
 ) -> dict:
     by_category = _attach_category_links(
         _prepare_rows(
@@ -907,7 +956,9 @@ def _build_merchant_detail_view(
         receipt_root=receipt_root,
         filebrowser_base_url=filebrowser_base_url,
         filebrowser_receipt_root=filebrowser_receipt_root,
+        purchaser_lookup=purchaser_lookup,
     )
+    _relativize_recent_links(receipts)
     certifications = _aggregate_certifications(receipts)
     month_rows_with_totals = [row for row in month_rows if row.get("has_known_total", True)]
 
@@ -944,6 +995,180 @@ def _build_merchant_detail_view(
         "charts": {
             "monthly": _build_monthly_chart(month_rows_with_totals),
         },
+    }
+
+
+def _model_key(value: str | None) -> str:
+    label = _safe_label(value, "tesseract")
+    return label.casefold()
+
+
+def _model_slug(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", label.casefold()).strip("-")
+    return slug or "unknown"
+
+
+def _build_model_directory_view(data: dict) -> dict:
+    models: list[dict] = []
+    for row in data.get("by_model", []):
+        item = dict(row)
+        item["detail_html_href"] = f"{item['model_slug']}.html"
+        item["detail_md_href"] = f"{item['model_slug']}.md"
+        item["model_markdown"] = _markdown_link(item["model_label"], item["detail_md_href"])
+        models.append(item)
+    return {
+        "main_report_html_href": "../intake-report.html",
+        "main_report_md_href": "../intake-report.md",
+        "model_count": len(models),
+        "total_receipts": data.get("total_receipts", 0),
+        "models": models,
+    }
+
+
+def _build_model_detail_view(
+    model_row: dict,
+    receipt_rows: list[dict],
+    *,
+    receipt_root: Path | None,
+    filebrowser_base_url: str | None,
+    filebrowser_receipt_root: str,
+    merchant_lookup: dict[str, dict] | None = None,
+    purchaser_lookup: dict[str, dict] | None = None,
+) -> dict:
+    """Build the drill-down page for one extraction model (see _build_merchant_detail_view)."""
+    total_spend = sum(
+        float(row.get("total") or 0.0)
+        for row in receipt_rows
+        if row.get("total") is not None and str(row.get("currency") or "USD").upper() == "USD"
+    )
+    by_category = _attach_category_links(
+        _prepare_rows(
+            _aggregate_categories(receipt_rows),
+            label_key="category",
+            label_name="category",
+            value_key="total_spend",
+            total_for_share=total_spend,
+            default_label="General",
+            kind="currency",
+        ),
+        receipt_root=receipt_root,
+        filebrowser_base_url=filebrowser_base_url,
+        filebrowser_receipt_root=filebrowser_receipt_root,
+    )
+    for row in by_category:
+        row["total_spend_display"] = row["value_display"]
+
+    receipts = _prepare_recent(
+        receipt_rows,
+        receipt_root=receipt_root,
+        filebrowser_base_url=filebrowser_base_url,
+        filebrowser_receipt_root=filebrowser_receipt_root,
+        merchant_lookup=merchant_lookup,
+        purchaser_lookup=purchaser_lookup,
+    )
+    # Recent's merchant/purchaser links are relative to the report root; this
+    # page lives one level down, under reports/models/.
+    _relativize_recent_links(receipts)
+
+    dates = [row.get("scan_date") for row in receipt_rows if row.get("scan_date")]
+
+    return {
+        "model_label": model_row["model_label"],
+        "count": model_row["count"],
+        "share_display": model_row["share_display"],
+        "total_spend_display": _format_currency(total_spend),
+        "date_min": min(dates) if dates else None,
+        "date_max": max(dates) if dates else None,
+        "by_category": by_category,
+        "receipts": receipts,
+        "main_report_html_href": "../intake-report.html",
+        "main_report_md_href": "../intake-report.md",
+        "directory_html_href": "index.html",
+        "directory_md_href": "index.md",
+    }
+
+
+def _purchaser_key(value: str | None) -> str:
+    label = _safe_label(value, "Unknown")
+    return label.casefold()
+
+
+def _purchaser_slug(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", label.casefold()).strip("-")
+    return slug or "unknown"
+
+
+def _build_purchaser_directory_view(data: dict) -> dict:
+    purchasers: list[dict] = []
+    for row in data.get("by_purchaser", []):
+        item = dict(row)
+        item["detail_html_href"] = f"{item['purchaser_slug']}.html"
+        item["detail_md_href"] = f"{item['purchaser_slug']}.md"
+        item["purchaser_markdown"] = _markdown_link(item["purchaser_label"], item["detail_md_href"])
+        purchasers.append(item)
+    return {
+        "main_report_html_href": "../intake-report.html",
+        "main_report_md_href": "../intake-report.md",
+        "purchaser_count": len(purchasers),
+        "total_receipts": data.get("total_receipts", 0),
+        "total_spend_display": data.get("total_spend_display", _format_currency(0)),
+        "purchasers": purchasers,
+    }
+
+
+def _build_purchaser_detail_view(
+    purchaser_row: dict,
+    receipt_rows: list[dict],
+    *,
+    receipt_root: Path | None,
+    filebrowser_base_url: str | None,
+    filebrowser_receipt_root: str,
+    merchant_lookup: dict[str, dict] | None = None,
+) -> dict:
+    """Build the drill-down page for one purchaser (see _build_merchant_detail_view)."""
+    by_category = _attach_category_links(
+        _prepare_rows(
+            _aggregate_categories(receipt_rows),
+            label_key="category",
+            label_name="category",
+            value_key="total_spend",
+            total_for_share=float(purchaser_row.get("total_spend") or 0.0),
+            default_label="General",
+            kind="currency",
+        ),
+        receipt_root=receipt_root,
+        filebrowser_base_url=filebrowser_base_url,
+        filebrowser_receipt_root=filebrowser_receipt_root,
+    )
+    for row in by_category:
+        row["total_spend_display"] = row["value_display"]
+
+    receipts = _prepare_recent(
+        receipt_rows,
+        receipt_root=receipt_root,
+        filebrowser_base_url=filebrowser_base_url,
+        filebrowser_receipt_root=filebrowser_receipt_root,
+        merchant_lookup=merchant_lookup,
+    )
+    # Recent's merchant links are relative to the report root; this page
+    # lives one level down, under reports/purchasers/.
+    _relativize_recent_links(receipts)
+
+    dates = [row.get("scan_date") for row in receipt_rows if row.get("scan_date")]
+
+    return {
+        "purchaser_label": purchaser_row["purchaser_label"],
+        "count": purchaser_row["count"],
+        "share_display": purchaser_row["share_display"],
+        "total_spend_display": purchaser_row["total_spend_display"],
+        "date_min": min(dates) if dates else None,
+        "date_max": max(dates) if dates else None,
+        "by_category": by_category,
+        "receipts": receipts,
+        "main_report_html_href": "../intake-report.html",
+        "main_report_md_href": "../intake-report.md",
+        "directory_html_href": "index.html",
+        "directory_md_href": "index.md",
     }
 
 
@@ -1001,6 +1226,41 @@ def _build_report_view(
         default_label="tesseract",
         kind="count",
     )
+    used_model_slugs: dict[str, int] = {}
+    for row in by_model:
+        base_slug = _model_slug(row["model_label"])
+        slug_count = used_model_slugs.get(base_slug, 0) + 1
+        used_model_slugs[base_slug] = slug_count
+        row["model_slug"] = base_slug if slug_count == 1 else f"{base_slug}-{slug_count}"
+        row["model_href_html"] = f"models/{row['model_slug']}.html"
+        row["model_href_md"] = f"models/{row['model_slug']}.md"
+        row["model_markdown"] = _markdown_link(row["model_label"], row["model_href_md"])
+    by_purchaser = _prepare_rows(
+        view.get("by_purchaser", []),
+        label_key="purchaser",
+        label_name="purchaser_label",
+        value_key="total_spend",
+        total_for_share=float(view["total_spend"] or 0),
+        default_label="Unknown",
+        kind="currency",
+    )
+    used_purchaser_slugs: dict[str, int] = {}
+    for row in by_purchaser:
+        row["total_spend_display"] = row["value_display"]
+        base_slug = _purchaser_slug(row["purchaser_label"])
+        slug_count = used_purchaser_slugs.get(base_slug, 0) + 1
+        used_purchaser_slugs[base_slug] = slug_count
+        row["purchaser_slug"] = base_slug if slug_count == 1 else f"{base_slug}-{slug_count}"
+        row["purchaser_href_html"] = f"purchasers/{row['purchaser_slug']}.html"
+        row["purchaser_href_md"] = f"purchasers/{row['purchaser_slug']}.md"
+        row["purchaser_markdown"] = _markdown_link(row["purchaser_label"], row["purchaser_href_md"])
+    purchaser_lookup = {
+        _purchaser_key(row["purchaser_label"]): {
+            "html": row["purchaser_href_html"],
+            "md": row["purchaser_href_md"],
+        }
+        for row in by_purchaser
+    }
     merchant_monthly = _prepare_merchant_monthly(
         view.get("merchant_by_month", []),
         merchant_lookup=merchant_lookup,
@@ -1024,6 +1284,7 @@ def _build_report_view(
         filebrowser_base_url=filebrowser_base_url,
         filebrowser_receipt_root=filebrowser_receipt_root,
         merchant_lookup=merchant_lookup,
+        purchaser_lookup=purchaser_lookup,
     )
 
     top_category = by_category[0] if by_category else None
@@ -1050,6 +1311,7 @@ def _build_report_view(
             "merchant_monthly": merchant_monthly,
             "merchant_trends": merchant_trends,
             "by_model": by_model,
+            "by_purchaser": by_purchaser,
             "recent": recent,
             "top_category_name": top_category["category"] if top_category else "—",
             "top_category_total_display": (
@@ -1066,6 +1328,10 @@ def _build_report_view(
             "intake_markdown": _markdown_link("receipt/intake/", intake_uri),
             "merchant_directory_html_path": "merchants/index.html",
             "merchant_directory_md_path": "merchants/index.md",
+            "model_directory_html_path": "models/index.html",
+            "model_directory_md_path": "models/index.md",
+            "purchaser_directory_html_path": "purchasers/index.html",
+            "purchaser_directory_md_path": "purchasers/index.md",
             "charts": {
                 "monthly": _build_monthly_chart(by_month_with_totals),
                 "categories": {
@@ -1129,12 +1395,33 @@ def generate_audit_report(
                     "merchant_page_md": f"merchants/{slug}.md",
                 }
 
+    model_href_lookup: dict[str, str] = {}
+    for row in raw_rows:
+        key = _model_key(row.get("processed_by"))
+        if key not in model_href_lookup:
+            slug = _model_slug(_safe_label(row.get("processed_by"), "tesseract"))
+            model_href_lookup[key] = f"models/{slug}.html"
+
+    purchaser_page_lookup: dict[str, dict] = {}
+    for row in raw_rows:
+        if not row.get("purchaser"):
+            continue
+        key = _purchaser_key(row.get("purchaser"))
+        if key not in purchaser_page_lookup:
+            slug = _purchaser_slug(row.get("purchaser") or "")
+            if slug:
+                purchaser_page_lookup[key] = {
+                    "html": f"purchasers/{slug}.html",
+                    "md": f"purchasers/{slug}.md",
+                }
+
     prepared = _prepare_recent(
         raw_rows,
         receipt_root=receipt_root,
         filebrowser_base_url=filebrowser_base_url,
         filebrowser_receipt_root=filebrowser_receipt_root,
         merchant_lookup=merchant_page_lookup,
+        purchaser_lookup=purchaser_page_lookup,
     )
 
     receipts_for_js: list[dict] = []
@@ -1149,8 +1436,10 @@ def generate_audit_report(
                 "total": r.get("total"),
                 "total_display": r.get("total_display") or "—",
                 "purchaser": r.get("purchaser") or "",
+                "purchaser_href": r.get("purchaser_href_html") or "",
                 "card_last4": r.get("card_last4") or "",
                 "processed_by": r.get("processed_by") or "tesseract",
+                "model_href": model_href_lookup.get(_model_key(r.get("processed_by")), ""),
                 "items_label": r.get("items_label") or "—",
                 "items_full_label": r.get("items_full_label") or r.get("items_label") or "—",
                 "file_link_uri": r.get("file_link_uri") or "",
@@ -1204,6 +1493,15 @@ def generate_reports(
     md_env = Environment(loader=BaseLoader(), autoescape=False)
     html_env = Environment(loader=BaseLoader(), autoescape=True)
     written: list[Path] = []
+    merchant_lookup = {_merchant_key(row.get("merchant")): row for row in data.get("all_merchants", [])}
+    purchaser_lookup = {
+        _purchaser_key(row.get("purchaser_label")): {
+            "html": row.get("purchaser_href_html"),
+            "md": row.get("purchaser_href_md"),
+        }
+        for row in data.get("by_purchaser", [])
+    }
+
     merchant_dir = output_dir / "merchants"
     merchant_receipts_lookup: dict[str, list[dict]] = {}
     for row in raw_data.get("merchant_receipts", []):
@@ -1224,9 +1522,53 @@ def generate_reports(
                 receipt_root=receipt_root,
                 filebrowser_base_url=filebrowser_base_url,
                 filebrowser_receipt_root=filebrowser_receipt_root,
+                purchaser_lookup=purchaser_lookup,
             ),
         )
         for merchant_row in data.get("all_merchants", [])
+    ]
+
+    model_dir = output_dir / "models"
+    model_receipts_lookup: dict[str, list[dict]] = {}
+    for row in raw_data.get("merchant_receipts", []):
+        model_receipts_lookup.setdefault(_model_key(row.get("processed_by")), []).append(dict(row))
+    model_directory_view = _build_model_directory_view(data)
+    model_detail_views = [
+        (
+            model_row,
+            _build_model_detail_view(
+                model_row,
+                model_receipts_lookup.get(_model_key(model_row.get("model_label")), []),
+                receipt_root=receipt_root,
+                filebrowser_base_url=filebrowser_base_url,
+                filebrowser_receipt_root=filebrowser_receipt_root,
+                merchant_lookup=merchant_lookup,
+                purchaser_lookup=purchaser_lookup,
+            ),
+        )
+        for model_row in data.get("by_model", [])
+    ]
+
+    purchaser_dir = output_dir / "purchasers"
+    purchaser_receipts_lookup: dict[str, list[dict]] = {}
+    for row in raw_data.get("merchant_receipts", []):
+        purchaser_receipts_lookup.setdefault(_purchaser_key(row.get("purchaser")), []).append(
+            dict(row)
+        )
+    purchaser_directory_view = _build_purchaser_directory_view(data)
+    purchaser_detail_views = [
+        (
+            purchaser_row,
+            _build_purchaser_detail_view(
+                purchaser_row,
+                purchaser_receipts_lookup.get(_purchaser_key(purchaser_row.get("purchaser_label")), []),
+                receipt_root=receipt_root,
+                filebrowser_base_url=filebrowser_base_url,
+                filebrowser_receipt_root=filebrowser_receipt_root,
+                merchant_lookup=merchant_lookup,
+            ),
+        )
+        for purchaser_row in data.get("by_purchaser", [])
     ]
 
     if fmt in ("md", "both"):
@@ -1249,6 +1591,36 @@ def generate_reports(
                 encoding="utf-8",
             )
             written.append(merchant_md_path)
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_index_md_path = model_dir / "index.md"
+        model_index_md_path.write_text(
+            md_env.from_string(_MODEL_DIRECTORY_MD_TEMPLATE).render(data=model_directory_view),
+            encoding="utf-8",
+        )
+        written.append(model_index_md_path)
+        for model_row, model_view in model_detail_views:
+            model_md_path = model_dir / f"{model_row['model_slug']}.md"
+            model_md_path.write_text(
+                md_env.from_string(_MODEL_DETAIL_MD_TEMPLATE).render(data=model_view),
+                encoding="utf-8",
+            )
+            written.append(model_md_path)
+        purchaser_dir.mkdir(parents=True, exist_ok=True)
+        purchaser_index_md_path = purchaser_dir / "index.md"
+        purchaser_index_md_path.write_text(
+            md_env.from_string(_PURCHASER_DIRECTORY_MD_TEMPLATE).render(
+                data=purchaser_directory_view
+            ),
+            encoding="utf-8",
+        )
+        written.append(purchaser_index_md_path)
+        for purchaser_row, purchaser_view in purchaser_detail_views:
+            purchaser_md_path = purchaser_dir / f"{purchaser_row['purchaser_slug']}.md"
+            purchaser_md_path.write_text(
+                md_env.from_string(_PURCHASER_DETAIL_MD_TEMPLATE).render(data=purchaser_view),
+                encoding="utf-8",
+            )
+            written.append(purchaser_md_path)
 
     if fmt in ("html", "both"):
         html_path = output_dir / "intake-report.html"
@@ -1272,6 +1644,36 @@ def generate_reports(
                 encoding="utf-8",
             )
             written.append(merchant_html_path)
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_index_html_path = model_dir / "index.html"
+        model_index_html_path.write_text(
+            html_env.from_string(_MODEL_DIRECTORY_HTML_TEMPLATE).render(data=model_directory_view),
+            encoding="utf-8",
+        )
+        written.append(model_index_html_path)
+        for model_row, model_view in model_detail_views:
+            model_html_path = model_dir / f"{model_row['model_slug']}.html"
+            model_html_path.write_text(
+                html_env.from_string(_MODEL_DETAIL_HTML_TEMPLATE).render(data=model_view),
+                encoding="utf-8",
+            )
+            written.append(model_html_path)
+        purchaser_dir.mkdir(parents=True, exist_ok=True)
+        purchaser_index_html_path = purchaser_dir / "index.html"
+        purchaser_index_html_path.write_text(
+            html_env.from_string(_PURCHASER_DIRECTORY_HTML_TEMPLATE).render(
+                data=purchaser_directory_view
+            ),
+            encoding="utf-8",
+        )
+        written.append(purchaser_index_html_path)
+        for purchaser_row, purchaser_view in purchaser_detail_views:
+            purchaser_html_path = purchaser_dir / f"{purchaser_row['purchaser_slug']}.html"
+            purchaser_html_path.write_text(
+                html_env.from_string(_PURCHASER_DETAIL_HTML_TEMPLATE).render(data=purchaser_view),
+                encoding="utf-8",
+            )
+            written.append(purchaser_html_path)
         audit_path = generate_audit_report(
             conn,
             output_dir,

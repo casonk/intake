@@ -276,7 +276,7 @@ def test_preferred_credit_reporting_category_prefers_credit_reporting_subcategor
 def test_extract_credit_reporting_email_equifax():
     body = """
     Credit Monitoring Alert
-    CASON, you have a new credit report and score available.
+    JORDAN, you have a new credit report and score available.
     Sign into your myEquifax account for details.
     """
     parsed = _extract_credit_reporting_email(
@@ -288,7 +288,7 @@ def test_extract_credit_reporting_email_equifax():
         "merchant": "equifax",
         "total": None,
         "receipt_date": None,
-        "purchaser": "cason",
+        "purchaser": "jordan",
         "card_last4": None,
         "category": "finance/credit-reporting",
         "processed_by": "email-credit-reporting",
@@ -297,7 +297,7 @@ def test_extract_credit_reporting_email_equifax():
 
 def test_extract_credit_reporting_email_experian():
     body = """
-    Keep it up, Cason—here’s what’s new
+    Keep it up, Jordan—here’s what’s new
     YOUR FICO(R) SCORE
     INCREASED
     See your alerts
@@ -311,7 +311,7 @@ def test_extract_credit_reporting_email_experian():
         "merchant": "experian",
         "total": None,
         "receipt_date": None,
-        "purchaser": "cason",
+        "purchaser": "jordan",
         "card_last4": None,
         "category": "finance/credit-reporting",
         "processed_by": "email-credit-reporting",
@@ -321,11 +321,11 @@ def test_extract_credit_reporting_email_experian():
 def test_extract_credit_reporting_email_capital_one_creditwise():
     body = """
     Confirming your brand-new credit score.
-    Cason,
+    Jordan,
     Here's a quick look at your credit score activity monitored by CreditWise from Capital One.
     """
     parsed = _extract_credit_reporting_email(
-        "Cason, your credit score has improved",
+        "Jordan, your credit score has improved",
         "Capital One <capitalone@notification.capitalone.com>",
         body,
     )
@@ -333,7 +333,7 @@ def test_extract_credit_reporting_email_capital_one_creditwise():
         "merchant": "capital one creditwise",
         "total": None,
         "receipt_date": None,
-        "purchaser": "cason",
+        "purchaser": "jordan",
         "card_last4": None,
         "category": "finance/credit-reporting",
         "processed_by": "email-credit-reporting",
@@ -400,6 +400,101 @@ def test_extract_paypal_receipt_email_transaction_receipt():
     }
 
 
+def test_extract_paypal_receipt_email_crypto_purchase():
+    body = """
+    You bought 0.02027474 Bitcoin Cash
+    Jordan Avery, here's your receipt.
+    Hello, Jordan Avery
+    You bought 0.02027474 Bitcoin Cash (BCH) for $5.11 USD
+    See Your Crypto
+    Transaction details
+    Transaction Id: 00A00000AA000000A
+    Sep 2, 2026 4:05 PM
+    You bought
+    0.02027474 BCH
+    Exchange rate
+    $246.62 USD = 1 BCH
+    Price
+    $5.00 USD
+    Fee
+    $0.11 USD
+    You paid
+    $5.11 USD
+    Paid with HUNTINGTON BANK xxxx0000
+    """
+    parsed = _extract_paypal_receipt_email(
+        "You bought 0.02027474 Bitcoin Cash",
+        "service@paypal.com",
+        body,
+    )
+    assert parsed == {
+        "merchant": "PayPal Crypto (BCH)",
+        "total": 5.11,
+        "receipt_date": date(2026, 9, 2),
+        "purchaser": "jordan avery",
+        "card_last4": None,
+        "category": "finance",
+    }
+
+
+def test_extract_paypal_receipt_email_unrecognized_shape_returns_none():
+    parsed = _extract_paypal_receipt_email(
+        "Your account statement",
+        "service@paypal.com",
+        "You paid your bill this month. Thanks for banking with us.",
+    )
+    assert parsed is None
+
+
+def test_extract_venmo_payment_email_crypto_purchase():
+    body = """
+    You bought 0.01369143 Bitcoin Cash (BCH) for $5.11 USD We added 0.01369143 Bitcoin Cash (BCH) to your crypto balance.
+    Bitcoin Cash Purchase
+    STATUS
+    Complete
+    PAYMENT METHOD
+    Venmo balance
+    TRANSACTION DETAILS
+    May 22, 2026, 11:28 PM PDT
+    """
+    parsed = _extract_venmo_payment_email(
+        "You bought Bitcoin Cash",
+        "Venmo venmo@venmo.com",
+        body,
+    )
+    assert parsed == {
+        "merchant": "Venmo Crypto (BCH)",
+        "total": 5.11,
+        "receipt_date": date(2026, 5, 22),
+        "purchaser": None,
+        "card_last4": None,
+        "category": "finance",
+    }
+
+
+def test_extract_venmo_payment_email_paid_you_repeated_line():
+    # Some Venmo emails render the summary line twice back-to-back (an
+    # image-alt-text + body-text artifact); the old end-anchored regex would
+    # capture everything up to the *second* occurrence as the merchant name.
+    body = """
+    Bruce ostler paid you $25.00 Bruce ostler paid you $25.00
+    Bruce ostler paid you
+    $
+    25
+    .00
+    Shafta
+    See transaction
+    """
+    parsed = _extract_venmo_payment_email(
+        "Bruce ostler paid you $25.00",
+        "Venmo venmo@venmo.com",
+        body,
+    )
+    assert parsed["merchant"] == "Bruce ostler"
+    assert parsed["total"] == 25.00
+    assert parsed["is_income"] is True
+
+
 def test_extract_venmo_payment_email_you_paid():
     body = """
     You paid Joe Smith $25.00
@@ -422,6 +517,7 @@ def test_extract_venmo_payment_email_you_paid():
         "purchaser": None,
         "card_last4": None,
         "category": None,
+        "is_income": False,
     }
 
 
@@ -447,6 +543,7 @@ def test_extract_venmo_payment_email_paid_you():
         "purchaser": None,
         "card_last4": None,
         "category": None,
+        "is_income": True,
     }
 
 
@@ -472,7 +569,17 @@ def test_extract_venmo_payment_email_charged_you():
         "purchaser": None,
         "card_last4": None,
         "category": None,
+        "is_income": False,
     }
+
+
+def test_extract_venmo_payment_email_unrecognized_shape_returns_none():
+    parsed = _extract_venmo_payment_email(
+        "Your weekly Venmo summary",
+        "Venmo venmo@venmo.com",
+        "Here's what happened on Venmo this week.",
+    )
+    assert parsed is None
 
 
 def test_extract_venmo_payment_email_wrong_sender_returns_none():
@@ -500,6 +607,29 @@ def test_extract_wise_payment_email_money_added():
     assert parsed == {
         "merchant": "Wise",
         "total": 123.45,
+        "receipt_date": None,
+        "purchaser": None,
+        "card_last4": None,
+        "category": "finance",
+    }
+
+
+def test_extract_wise_payment_email_money_added_with_thousands_separator():
+    body = """
+    Hello Jordan Lee,
+
+    You added 10,000 JPY to your account.
+
+    And it's ready to be used.
+    """
+    parsed = _extract_wise_payment_email(
+        "Money added to your account",
+        "Wise <noreply@wise.com>",
+        body,
+    )
+    assert parsed == {
+        "merchant": "Wise",
+        "total": 10000.0,
         "receipt_date": None,
         "purchaser": None,
         "card_last4": None,
@@ -1644,6 +1774,46 @@ def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monk
     ]
 
 
+def test_upsert_html_receipt_routes_venmo_paid_you_to_income_document(db, tmp_path, monkeypatch):
+    # "X paid you $Y" is money credited to the account, not spend — it should
+    # land in the documents table (non-spend), not the receipts table.
+    receipt_root = tmp_path / "receipts"
+    triggered = []
+
+    monkeypatch.setattr(
+        "intake.notify.send_processed_receipt_notifications", lambda *a, **k: ({}, {})
+    )
+    monkeypatch.setattr(
+        "intake.personal_finance.trigger_personal_finance",
+        lambda *a, **k: triggered.append(True),
+    )
+
+    _upsert_html_receipt(
+        db,
+        40001,
+        "INBOX",
+        "Jane Doe paid you $50.00",
+        "Venmo venmo@venmo.com",
+        "Wed, 20 May 2026 19:01:20 -0600",
+        "Jane Doe paid you $50.00\nMoney credited to your Venmo account.",
+        {"receipt_dir": str(receipt_root)},
+    )
+
+    assert get_receipt(db, "email_40001_INBOX.txt") is None
+    document = db.execute(
+        "SELECT * FROM documents WHERE filename = ?", ("email_40001_INBOX.txt",)
+    ).fetchone()
+    assert document is not None
+    assert document["document_kind"] == "documents/income"
+    assert document["category"] == "documents/income"
+    assert document["issuer"] == "Jane Doe"
+
+    artifact = receipt_root / "email" / "documents" / "income" / "email_40001_INBOX.txt"
+    assert artifact.exists()
+    # Income documents don't participate in spend tracking.
+    assert triggered == []
+
+
 def test_upsert_html_receipt_handles_xanterra_reservation(db, tmp_path, monkeypatch):
     import intake.classify as classify_mod
 
@@ -1739,7 +1909,7 @@ def test_upsert_html_receipt_handles_credit_reporting_email(db, tmp_path, monkey
         "Wed, 10 Jun 2026 20:08:58 +0000",
         """
         Credit Monitoring Alert
-        CASON, you have a new credit report and score available.
+        JORDAN, you have a new credit report and score available.
         Sign into your myEquifax account for details.
         """,
         {"receipt_dir": str(receipt_root)},
@@ -1756,7 +1926,7 @@ def test_upsert_html_receipt_handles_credit_reporting_email(db, tmp_path, monkey
     assert row["category"] == "finance/credit-reporting"
     assert row["receipt_dir"] == "email/finance/credit-reporting"
     assert row["processed_by"] == "email-credit-reporting"
-    assert row["purchaser"] == "cason"
+    assert row["purchaser"] == "jordan"
     assert sidecar is not None
     assert sidecar["merchant"] == "equifax"
     assert sidecar["category"] == "finance/credit-reporting"
