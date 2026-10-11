@@ -247,6 +247,128 @@ def test_generate_reports_renders_chart_sections(tmp_path):
     assert _browser_uri("grocery", "kroger", "20260331_1914.pdf") in merchant_detail_html
 
 
+def test_generate_reports_links_extraction_model_breakdown_to_detail_pages(tmp_path):
+    db_path = tmp_path / "intake.db"
+    output_dir = tmp_path / "reports"
+    receipt_root = tmp_path / "receipts"
+    _seed_receipts(db_path)
+    _seed_receipt_files(receipt_root)
+
+    conn = init_db(db_path)
+    written = generate_reports(conn, output_dir, fmt="both", receipt_root=receipt_root)
+    conn.close()
+
+    assert output_dir / "models" / "index.md" in written
+    assert output_dir / "models" / "index.html" in written
+    assert output_dir / "models" / "tesseract.md" in written
+    assert output_dir / "models" / "tesseract.html" in written
+
+    html = (output_dir / "intake-report.html").read_text(encoding="utf-8")
+    md = (output_dir / "intake-report.md").read_text(encoding="utf-8")
+    model_index_html = (output_dir / "models" / "index.html").read_text(encoding="utf-8")
+    model_index_md = (output_dir / "models" / "index.md").read_text(encoding="utf-8")
+    tesseract_html = (output_dir / "models" / "tesseract.html").read_text(encoding="utf-8")
+    tesseract_md = (output_dir / "models" / "tesseract.md").read_text(encoding="utf-8")
+
+    # The main report's Extraction Model Breakdown table links each model.
+    assert '<a href="models/tesseract.html">tesseract</a>' in html
+    assert "[tesseract](models/tesseract.md)" in md
+
+    assert "Extraction Model Directory" in model_index_html
+    assert 'href="tesseract.html"' in model_index_html
+    assert "[tesseract](tesseract.md)" in model_index_md
+
+    assert "<title>tesseract · Intake Extraction Model History</title>" in tesseract_html
+    assert 'href="../intake-report.html"' in tesseract_html
+    assert 'href="index.html"' in tesseract_html
+    assert "Category Mix" in tesseract_html
+    assert "kroger" in tesseract_html
+    assert 'href="../merchants/kroger.html"' in tesseract_html
+    assert _browser_uri("grocery", "supermarket", "20260110_0900.pdf") in tesseract_html
+
+    assert "# Extraction Model: tesseract" in tesseract_md
+    assert "[Main Report](../intake-report.md) | [Model Directory](index.md)" in tesseract_md
+    assert "[kroger](../merchants/kroger.md)" in tesseract_md
+
+
+def test_generate_reports_links_model_column_on_audit_page(tmp_path):
+    db_path = tmp_path / "intake.db"
+    output_dir = tmp_path / "reports"
+    receipt_root = tmp_path / "receipts"
+    _seed_receipts(db_path)
+    _seed_receipt_files(receipt_root)
+
+    conn = init_db(db_path)
+    written = generate_reports(conn, output_dir, fmt="both", receipt_root=receipt_root)
+    conn.close()
+
+    assert output_dir / "audit.html" in written
+    audit_html = (output_dir / "audit.html").read_text(encoding="utf-8")
+    assert '"model_href": "models/tesseract.html"' in audit_html
+    assert '"model_href": "models/gpt-4o-mini.html"' in audit_html
+
+
+def test_generate_reports_links_purchaser_breakdown_to_detail_pages(tmp_path):
+    db_path = tmp_path / "intake.db"
+    output_dir = tmp_path / "reports"
+    receipt_root = tmp_path / "receipts"
+    _seed_receipts(db_path)
+    _seed_receipt_files(receipt_root)
+
+    conn = init_db(db_path)
+    written = generate_reports(conn, output_dir, fmt="both", receipt_root=receipt_root)
+    conn.close()
+
+    assert output_dir / "purchasers" / "index.md" in written
+    assert output_dir / "purchasers" / "index.html" in written
+    assert output_dir / "purchasers" / "john.md" in written
+    assert output_dir / "purchasers" / "john.html" in written
+    assert output_dir / "purchasers" / "unknown.html" in written
+
+    html = (output_dir / "intake-report.html").read_text(encoding="utf-8")
+    md = (output_dir / "intake-report.md").read_text(encoding="utf-8")
+    purchaser_index_html = (output_dir / "purchasers" / "index.html").read_text(encoding="utf-8")
+    purchaser_index_md = (output_dir / "purchasers" / "index.md").read_text(encoding="utf-8")
+    john_html = (output_dir / "purchasers" / "john.html").read_text(encoding="utf-8")
+    john_md = (output_dir / "purchasers" / "john.md").read_text(encoding="utf-8")
+
+    # The main report's Purchaser Breakdown table and Recent Receipts rows link each purchaser.
+    assert '<a href="purchasers/john.html">john</a>' in html
+    assert "[john](purchasers/john.md)" in md
+
+    assert "Purchaser Directory" in purchaser_index_html
+    assert 'href="john.html"' in purchaser_index_html
+    assert "[john](john.md)" in purchaser_index_md
+
+    assert "<title>john · Intake Purchaser History</title>" in john_html
+    assert 'href="../intake-report.html"' in john_html
+    assert 'href="index.html"' in john_html
+    assert "Category Mix" in john_html
+    assert "kroger" in john_html
+    assert 'href="../merchants/kroger.html"' in john_html
+    assert "$107.77" in john_html
+    assert _browser_uri("grocery", "supermarket", "20260110_0900.pdf") in john_html
+
+    assert "# Purchaser: john" in john_md
+    assert "[Main Report](../intake-report.md) | [Purchaser Directory](index.md)" in john_md
+    assert "[kroger](../merchants/kroger.md)" in john_md
+
+
+def test_generate_reports_links_purchaser_column_on_audit_page(tmp_path):
+    db_path = tmp_path / "intake.db"
+    output_dir = tmp_path / "reports"
+    receipt_root = tmp_path / "receipts"
+    _seed_receipts(db_path)
+    _seed_receipt_files(receipt_root)
+
+    conn = init_db(db_path)
+    generate_reports(conn, output_dir, fmt="both", receipt_root=receipt_root)
+    conn.close()
+
+    audit_html = (output_dir / "audit.html").read_text(encoding="utf-8")
+    assert '"purchaser_href": "purchasers/john.html"' in audit_html
+
+
 def test_generate_reports_handles_empty_dataset(tmp_path):
     db_path = tmp_path / "intake.db"
     output_dir = tmp_path / "reports"
@@ -269,6 +391,20 @@ def test_generate_reports_handles_empty_dataset(tmp_path):
     assert output_dir / "merchants" / "index.md" in written
     assert "No merchant data yet." in merchant_index_html
     assert "No merchant data yet." in merchant_index_md
+
+    model_index_html = (output_dir / "models" / "index.html").read_text(encoding="utf-8")
+    model_index_md = (output_dir / "models" / "index.md").read_text(encoding="utf-8")
+    assert output_dir / "models" / "index.html" in written
+    assert output_dir / "models" / "index.md" in written
+    assert "No model data yet." in model_index_html
+    assert "No model data yet." in model_index_md
+
+    purchaser_index_html = (output_dir / "purchasers" / "index.html").read_text(encoding="utf-8")
+    purchaser_index_md = (output_dir / "purchasers" / "index.md").read_text(encoding="utf-8")
+    assert output_dir / "purchasers" / "index.html" in written
+    assert output_dir / "purchasers" / "index.md" in written
+    assert "No purchaser data yet." in purchaser_index_html
+    assert "No purchaser data yet." in purchaser_index_md
 
 
 def test_generate_reports_resolves_non_pdf_receipt_links(tmp_path):

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Purchaser Directory</title>
+<style>
+  :root {
+    --ink: #18212f;
+    --muted: #667085;
+    --panel: rgba(255, 255, 255, 0.92);
+    --line: rgba(24, 33, 47, 0.12);
+    --shadow: 0 18px 40px rgba(24, 33, 47, 0.09);
+    --blue: #375a9e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 32%),
+      linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
+  }
+  .page {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 32px clamp(12px, 1.5vw, 28px) 56px;
+  }
+  .hero, .panel {
+    background: var(--panel);
+    border: 1px solid rgba(24, 33, 47, 0.08);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+    padding: 24px;
+  }
+  .hero + .panel { margin-top: 18px; }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  h1, h2 {
+    margin: 0;
+    letter-spacing: -0.03em;
+  }
+  .hero p, .panel p {
+    color: var(--muted);
+    line-height: 1.55;
+  }
+  .hero-links, .summary-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .hero-links a {
+    display: inline-flex;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(220, 231, 255, 0.78);
+    border: 1px solid rgba(55, 90, 158, 0.18);
+    text-decoration: none;
+  }
+  .summary-grid { margin-top: 20px; }
+  .summary-card {
+    flex: 1 1 180px;
+    min-width: 180px;
+    padding: 16px;
+    border-radius: 18px;
+    background: rgba(248, 247, 243, 0.88);
+    border: 1px solid rgba(24, 33, 47, 0.06);
+  }
+  .summary-card .label {
+    display: block;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .summary-card .value {
+    display: block;
+    font-size: 1.8rem;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 16px;
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(24, 33, 47, 0.08);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+  th, td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+    vertical-align: top;
+  }
+  th {
+    font-size: 12px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: rgba(243, 239, 230, 0.95);
+  }
+  tbody tr:nth-child(even) td {
+    background: rgba(248, 247, 243, 0.7);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  a {
+    color: var(--blue);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  a:hover { text-decoration: underline; }
+  .empty-state {
+    padding: 18px;
+    border-radius: 16px;
+    background: rgba(248, 247, 243, 0.85);
+    border: 1px dashed rgba(24, 33, 47, 0.16);
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="hero">
+    <p class="eyebrow">Purchaser Directory</p>
+    <h1>Browse every tracked purchaser.</h1>
+    <p>Jump into a dedicated history page for any purchaser, including category mix and the underlying receipts.</p>
+    <div class="hero-links">
+      <a href="{{ data.main_report_html_href }}">Back to main report</a>
+    </div>
+    <div class="summary-grid">
+      <article class="summary-card">
+        <span class="label">Purchasers</span>
+        <span class="value">{{ data.purchaser_count }}</span>
+        <span class="subtext">Tracked purchaser buckets</span>
+      </article>
+      <article class="summary-card">
+        <span class="label">Receipts</span>
+        <span class="value">{{ data.total_receipts }}</span>
+        <span class="subtext">Across the full database</span>
+      </article>
+      <article class="summary-card">
+        <span class="label">Total Spend</span>
+        <span class="value">{{ data.total_spend_display }}</span>
+        <span class="subtext">All purchaser buckets combined</span>
+      </article>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Directory</h2>
+    <p>Open a dedicated page with category mix and receipt-level detail for any purchaser.</p>
+    {% if data.purchasers %}
+    <table>
+      <thead>
+        <tr><th>Purchaser</th><th>Receipts</th><th>Total Spend</th><th>Share</th></tr>
+      </thead>
+      <tbody>
+        {% for row in data.purchasers %}
+        <tr>
+          <td><a href="{{ row.detail_html_href }}">{{ row.purchaser_label }}</a></td>
+          <td>{{ row.count }}</td>
+          <td>{{ row.total_spend_display }}</td>
+          <td>{{ row.share_display }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">No purchaser data yet.</div>
+    {% endif %}
+  </section>
+</main>
+</body>
+</html>

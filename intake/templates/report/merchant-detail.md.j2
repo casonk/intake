@@ -54,7 +54,7 @@ No certifications recorded yet.
 | Date | Category | Total | Purchaser | Card | Staff | Items | Certifications | File | Folder | Model | Processed At |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 {% for row in data.receipts -%}
-| {{ row.scan_date }} | {{ row.category_markdown }} | {{ row.total_display }} | {{ row.purchaser or "—" }} | {{ row.card_last4 or "—" }} | {{ row.staff_markdown }} | {{ row.items_markdown }} | {{ row.certifications_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
+| {{ row.scan_date }} | {{ row.category_markdown }} | {{ row.total_display }} | {{ row.purchaser_markdown }} | {{ row.card_last4 or "—" }} | {{ row.staff_markdown }} | {{ row.items_markdown }} | {{ row.certifications_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
 {% endfor %}
 {% else -%}
 No receipt rows yet.

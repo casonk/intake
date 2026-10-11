@@ -601,15 +601,30 @@ def _parse_receipt_datetime(raw_text: str) -> tuple[date | None, time | None]:
 
 # ── merchant ──────────────────────────────────────────────────────────────────
 
+# Many receipt templates (gas stations, grocery chains) print "Welcome To
+# <Store Name>" as their very first line. The first-line heuristic below would
+# otherwise capture the whole greeting as the merchant instead of the store
+# name that follows it.
+_WELCOME_TO_RE = re.compile(r"^\s*welcome\s+to\s*[:,-]?\s*", re.IGNORECASE)
+
+# A trailing "#123" store/register number (no decimal point, no currency
+# symbol) reads to _LINE_AMOUNT_RE as a "label: amount" price line, which
+# wrongly skips lines like "ROSAUERS #16" when looking for the merchant name.
+_STORE_NUMBER_TAIL_RE = re.compile(r"#\s*\d+\s*$")
+
 
 def _parse_merchant(raw_text: str) -> str:
     from intake.merchant import clean_merchant_text  # noqa: PLC0415
 
     for line in raw_text.splitlines():
+        line = _WELCOME_TO_RE.sub("", line)
         stripped = clean_merchant_text(line)
         if not stripped:
             continue
-        if _LINE_AMOUNT_RE.match(_normalize_ocr_numbers(line)):
+        normalized_line = _normalize_ocr_numbers(line)
+        if _LINE_AMOUNT_RE.match(normalized_line) and not _STORE_NUMBER_TAIL_RE.search(
+            normalized_line
+        ):
             continue
         if not re.search(r"[^\W\d_]", stripped, re.UNICODE):
             continue
@@ -645,6 +660,7 @@ _TOTAL_LABEL_TERMS = (
 # "Balance Due: $0.00" on a fully-paid receipt should not beat "Invoice Total: $65.00".
 _TOTAL_PRIORITY_TERMS = (
     "invoice total",
+    "total invoice",
     "grand total",
     "order total",
     "amount due",
@@ -699,6 +715,7 @@ _TOTAL_FALLBACK_TERMS = (
 _TOTAL_EXCLUDE_TERMS = (
     "subtotal",
     "sub total",
+    "sub-total",
     "sous total",
     "sous-total",
     "zwischensumme",
@@ -735,7 +752,15 @@ _TOTAL_EXCLUDE_TERMS = (
     "釣銭",
     "お釣り",
 )
-_SUBTOTAL_TERMS = ("subtotal", "sub total", "sous total", "sous-total", "zwischensumme", "小計")
+_SUBTOTAL_TERMS = (
+    "subtotal",
+    "sub total",
+    "sub-total",
+    "sous total",
+    "sous-total",
+    "zwischensumme",
+    "小計",
+)
 _TAX_TOTAL_TERMS = ("total tax", "tax total", "mwst", "ust", "tva", "消費税", "税")
 _DISCOUNT_TOTAL_TERMS = ("total discount", "discount total", "total savings", "savings total")
 _EXPLICIT_AMOUNT_PAID_TERMS = ("amount paid",)
@@ -750,6 +775,12 @@ _ADDITION_TOTAL_TERMS = (
     "surcharge",
 )
 _DISCOUNT_TERMS = ("discount", "savings", "coupon", "promo", "promotion", "rebate")
+# Multi-job dealer/repair invoices print a "JOB# N TOTAL 123.45" subtotal for
+# each line item before the real grand total. These labels contain the bare
+# word "total" and would otherwise win the fallback pass — especially when
+# the actual grand total's label and amount get split onto different lines
+# by column-based PDF text extraction, leaving no other candidate.
+_JOB_SUBTOTAL_LINE_RE = re.compile(r"\bjob\s*#?\s*\d+\b", re.IGNORECASE)
 _STATUS_PAID_RE = re.compile(r"\bstatus\s*:\s*paid\b", re.IGNORECASE)
 _STATUS_UNPAID_RE = re.compile(r"\bstatus\s*:\s*unpaid\b", re.IGNORECASE)
 
@@ -800,15 +831,51 @@ def _label_has_term(label: str, term: str) -> bool:
     return bool(_term_pattern(term).search(label))
 
 
+# Real trailing continuations of a total label seen in the wild ("Total
+# Invoice Amount"). Deliberately a narrow allowlist, not "any word" — a
+# repair invoice's "Total - Parts" / "Total - Labor" / "Total - Sublet" are
+# real trailing words too, but name a *different, smaller* sub-total than
+# the grand total and must still be rejected.
+_TOTAL_CONTINUATION_WORDS = frozenset({"amount", "due", "charge", "charged", "payable", "owed"})
+
+
+def _label_ends_with_term(label: str, term: str) -> bool:
+    """True when *term* is the last thing in *label* before the amount, or is
+    followed only by a recognized continuation word (e.g. "Total Invoice
+    Amount"), allowing arbitrary noise *before* it too.
+
+    OCR routinely merges a preceding line's tail onto the front of a real
+    total label (e.g. "alb: aggus0q0031010 total due 146.72" — a garbled
+    auth-code line fused with "Total Due"), and that must still match. What
+    must NOT match is noise trailing after the term and before the amount,
+    which means the amount isn't really this term's value (e.g. "parts total
+    charge 1" for a mis-split "PARTS TOTAL CHARGE 1233087", "total a" for an
+    OCR-mangled "Total $47.20", or "total - parts" naming a sub-total).
+    """
+    matches = list(_term_pattern(term).finditer(label))
+    if not matches:
+        return False
+    match = matches[-1]  # last match wins, mirroring _last_amount_with_terms semantics
+    remainder = label[match.end() :].strip(" :-.|")
+    if not remainder:
+        return True
+    return all(word in _TOTAL_CONTINUATION_WORDS for word in remainder.split())
+
+
 def _last_amount_with_terms(
     entries: list[tuple[str, float]],
     include_terms: tuple[str, ...],
     *,
     exclude_terms: tuple[str, ...] = (),
+    exclude_pattern: re.Pattern[str] | None = None,
+    strict: bool = False,
 ) -> float | None:
     match_value: float | None = None
+    label_match = _label_ends_with_term if strict else _label_has_term
     for label, amount in entries:
-        if any(_label_has_term(label, term) for term in include_terms) and not any(
+        if exclude_pattern is not None and exclude_pattern.search(label):
+            continue
+        if any(label_match(label, term) for term in include_terms) and not any(
             _label_has_term(label, term) for term in exclude_terms
         ):
             match_value = amount
@@ -891,6 +958,8 @@ def _parse_total(raw_text: str) -> float | None:
         entries,
         _TOTAL_PRIORITY_TERMS,
         exclude_terms=_TOTAL_EXCLUDE_TERMS,
+        exclude_pattern=_JOB_SUBTOTAL_LINE_RE,
+        strict=True,
     )
     if priority_total is not None and priority_total > 0:
         return normalize_transaction_total(raw_text, priority_total)
@@ -909,6 +978,8 @@ def _parse_total(raw_text: str) -> float | None:
         entries,
         _TOTAL_FALLBACK_TERMS,
         exclude_terms=_TOTAL_EXCLUDE_TERMS,
+        exclude_pattern=_JOB_SUBTOTAL_LINE_RE,
+        strict=True,
     )
     if fallback_total is not None and fallback_total > 0:
         return normalize_transaction_total(raw_text, fallback_total)
@@ -1157,6 +1228,12 @@ _PURCHASER_RE = re.compile(
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _BILL_TO_RE = re.compile(r"\bbill\s+to\b", re.IGNORECASE)
 
+# Loyalty-program receipt greeting, e.g. "Thank You Rewards Customer\nHi jordan"
+_REWARDS_GREETING_RE = re.compile(
+    r"rewards\s+customer\s*\n\s*hi\s+([a-z][a-z'\-]{1,30})\b",
+    re.IGNORECASE,
+)
+
 
 def _parse_bill_to_purchaser(raw_text: str) -> str | None:
     """Extract a purchaser from a ``Bill to`` block, preferring email aliases."""
@@ -1185,4 +1262,9 @@ def _parse_purchaser(raw_text: str) -> str | None:
     bill_to_purchaser = _parse_bill_to_purchaser(raw_text)
     if bill_to_purchaser is not None:
         return bill_to_purchaser
+    rewards_match = _REWARDS_GREETING_RE.search(raw_text)
+    if rewards_match:
+        normalized = normalize_purchaser(rewards_match.group(1))
+        if normalized is not None and not is_probable_staff_name(normalized, raw_text):
+            return normalized
     return None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
@@ -11,7 +12,12 @@ from statistics import median
 
 from intake.certification import receipt_certifications_from_dicts, receipt_certifications_to_dicts
 from intake.parse import receipt_items_from_dicts, receipt_items_to_dicts
-from intake.purchaser import normalize_purchaser
+from intake.purchaser import (
+    extract_billed_to_name,
+    has_registered_purchaser_aliases,
+    is_known_purchaser_name,
+    normalize_purchaser,
+)
 from intake.staff import receipt_staff_from_dicts, receipt_staff_to_dicts
 
 _SCHEMA = """
@@ -149,6 +155,16 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS idx_documents_file_hash ON documents(file_hash);
 """
 
+_DISMISSED_REFERENCE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS dismissed_reference_matches (
+    kind          TEXT NOT NULL,
+    ref_id        TEXT NOT NULL,
+    note          TEXT,
+    dismissed_at  TEXT NOT NULL,
+    PRIMARY KEY (kind, ref_id)
+);
+"""
+
 _MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN processed_by TEXT NOT NULL DEFAULT 'tesseract'",
     "ALTER TABLE receipts ADD COLUMN purchaser TEXT",
@@ -177,6 +193,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
     conn.executescript(_CARD_SCHEMA)
     conn.executescript(_PAYMENT_SCHEMA)
     conn.executescript(_DOCUMENT_SCHEMA)
+    conn.executescript(_DISMISSED_REFERENCE_SCHEMA)
     conn.commit()
     _run_migrations(conn)
     return conn
@@ -663,6 +680,19 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         ORDER BY count DESC
         """)
 
+    by_purchaser = rows("""
+        SELECT COALESCE(purchaser, 'Unknown') AS purchaser,
+               COUNT(*) AS count,
+               SUM(CASE WHEN total IS NOT NULL
+                         AND UPPER(COALESCE(currency, 'USD')) = 'USD'
+                        THEN 1 ELSE 0 END) AS known_total_count,
+               COALESCE(SUM(CASE WHEN UPPER(COALESCE(currency, 'USD')) = 'USD'
+                                 THEN total ELSE 0 END), 0) AS total_spend
+        FROM receipts
+        GROUP BY purchaser
+        ORDER BY total_spend DESC, count DESC
+        """)
+
     recent = rows("""
         SELECT scan_date, merchant, category, total, currency, filename, receipt_dir,
                purchaser, card_last4, language, translated_text,
@@ -709,6 +739,7 @@ def query_summary(conn: sqlite3.Connection) -> dict:
         "by_category": by_category,
         "by_month": by_month,
         "by_model": by_model,
+        "by_purchaser": by_purchaser,
         "all_merchants": all_merchants,
         "top_merchants": top_merchants,
         "merchant_by_month": merchant_by_month,
@@ -720,13 +751,103 @@ def query_summary(conn: sqlite3.Connection) -> dict:
 def query_all_receipts(conn: sqlite3.Connection) -> list[dict]:
     """Return all receipts for the audit page, newest first."""
     rows = conn.execute("""
-            SELECT scan_date, merchant, category, total, filename, receipt_dir,
+            SELECT scan_date, merchant, category, total, currency, filename, receipt_dir,
                    purchaser, card_last4, language, translated_text, items_json, staff_json,
                    processed_by, processed_at, reviewed_at
             FROM receipts
             ORDER BY scan_date DESC, processed_at DESC, filename DESC
         """).fetchall()
     return [dict(row) for row in rows]
+
+
+def dismiss_reference_match(
+    conn: sqlite3.Connection, kind: str, ref_id: str, note: str | None = None
+) -> None:
+    """Mark a (kind, ref_id) reference-match group as reviewed and not a real
+    duplicate — e.g. a recurring tag/license number, or a shared invoice-series
+    prefix — so `dedup-refs` stops resurfacing it."""
+    conn.execute(
+        """
+        INSERT INTO dismissed_reference_matches (kind, ref_id, note, dismissed_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(kind, ref_id) DO UPDATE SET
+            note = excluded.note,
+            dismissed_at = excluded.dismissed_at
+        """,
+        (kind, ref_id, note, datetime.now(UTC).isoformat()),
+    )
+    conn.commit()
+
+
+def undismiss_reference_match(conn: sqlite3.Connection, kind: str, ref_id: str) -> None:
+    """Clear a prior dismiss_reference_match call so the group reappears."""
+    conn.execute(
+        "DELETE FROM dismissed_reference_matches WHERE kind = ? AND ref_id = ?",
+        (kind, ref_id),
+    )
+    conn.commit()
+
+
+def query_dismissed_reference_matches(conn: sqlite3.Connection) -> list[dict]:
+    """Return all dismissed (kind, ref_id) pairs, most recent first."""
+    rows = conn.execute(
+        "SELECT kind, ref_id, note, dismissed_at FROM dismissed_reference_matches "
+        "ORDER BY dismissed_at DESC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def query_reference_duplicate_groups(
+    conn: sqlite3.Connection,
+    *,
+    include_dismissed: bool = False,
+) -> list[tuple[str, str, list[dict]]]:
+    """Group receipts that share an embedded reference ID (EFT/transaction/
+    order/invoice number), regardless of merchant name, category, or date.
+
+    This catches the class of duplicate that merchant+total dedup misses
+    entirely: the same real-world transaction saved as two different
+    documents with two different merchant guesses (a payment-confirmation
+    email and a screenshot of the same confirmation page, say). A shared ID
+    is strong evidence but not proof by itself — two genuinely separate
+    mailings of the same notice would also share nothing to distinguish them
+    here — so this is report-only. Callers must not auto-remove on this
+    signal; a human should confirm each group before acting.
+
+    Groups previously dismissed via dismiss_reference_match are excluded
+    unless include_dismissed is True (they were confirmed not to be
+    duplicates — a recurring tag number, a shared invoice-series prefix —
+    and shouldn't keep resurfacing on every run).
+    """
+    from intake.reference_ids import extract_reference_ids
+
+    dismissed = (
+        set()
+        if include_dismissed
+        else {
+            (row["kind"], row["ref_id"])
+            for row in conn.execute(
+                "SELECT kind, ref_id FROM dismissed_reference_matches"
+            ).fetchall()
+        }
+    )
+
+    rows = conn.execute(
+        "SELECT filename, merchant, total, category, scan_date, raw_text FROM receipts"
+    ).fetchall()
+
+    by_ref: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for row in rows:
+        row = dict(row)
+        raw_text = row.pop("raw_text") or ""
+        for kind, ref_id in extract_reference_ids(raw_text).items():
+            by_ref[(kind, ref_id)].append(row)
+
+    return [
+        (kind, ref_id, group)
+        for (kind, ref_id), group in by_ref.items()
+        if len(group) > 1 and (kind, ref_id) not in dismissed
+    ]
 
 
 def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) -> list[dict]:
@@ -740,6 +861,9 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
     - total crosses one or more explicit parser-review guard thresholds
     - merchant/card novelty signals for recent scan dates
     - merchant-level amount outliers for recent scan dates
+    - the document's "Bill To"/"Invoice To"/"Ship To" name doesn't match any
+      registered purchaser alias (only checked once [purchaser_aliases] is
+      configured in settings, to stay silent otherwise)
 
     Rows with a ``reviewed_at`` timestamp are suppressed from results unless
     *include_suppressed* is True.
@@ -782,6 +906,7 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
             purchaser,
             card_last4,
             currency,
+            raw_text,
             processed_by,
             processed_at,
             reviewed_at
@@ -812,6 +937,7 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
     merchant_totals: dict[str, list[float]] = defaultdict(list)
 
     total_guard_thresholds = (250.0, 500.0, 750.0, 1000.0)
+    purchaser_aliases_registered = has_registered_purchaser_aliases()
 
     flagged: list[dict] = []
     for row in rows:
@@ -847,6 +973,19 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
                     total_guard_reasons.append(f"total_over_{int(threshold)}")
         if currency != "USD":
             quality_reasons.append(f"currency_not_usd ({currency})")
+
+        if purchaser_aliases_registered:
+            billed_to = extract_billed_to_name(str(row.get("raw_text") or ""))
+            billed_to_key = re.sub(r"[^a-z0-9]+", "", (billed_to or "").casefold())
+            merchant_key = re.sub(r"[^a-z0-9]+", "", merchant_norm)
+            # Skip the many invoices whose "Bill To" field is just the seller
+            # reprinting their own legal name (e.g. "Anthropic, PBC" on an
+            # Anthropic invoice) — that's not a different party.
+            is_self_referential = bool(merchant_key) and (
+                merchant_key in billed_to_key or billed_to_key in merchant_key
+            )
+            if billed_to and not is_self_referential and not is_known_purchaser_name(billed_to):
+                quality_reasons.append(f"billed_to_other_party ({billed_to})")
 
         reasons.extend(quality_reasons)
         reasons.extend(total_guard_reasons)
@@ -888,6 +1027,7 @@ def query_flagged(conn: sqlite3.Connection, include_suppressed: bool = False) ->
 
         if reasons and (include_suppressed or row.get("reviewed_at") is None):
             enriched = dict(row)
+            enriched.pop("raw_text", None)
             if reply_note:
                 enriched["email_reply_note"] = reply_note
             enriched["review_reasons"] = reasons

@@ -1,0 +1,34 @@
+# Extraction Model: {{ data.model_label }}
+
+[Main Report]({{ data.main_report_md_href }}) | [Model Directory]({{ data.directory_md_href }})
+
+| Field | Value |
+|---|---|
+| Total Receipts | {{ data.count }} |
+| Share of All Receipts | {{ data.share_display }} |
+| Total Spend | {{ data.total_spend_display }} |
+| Date Range | {{ data.date_min or "—" }} → {{ data.date_max or "—" }} |
+
+## Category Mix
+
+{% if data.by_category -%}
+| Category | Count | Total Spend | % of Model |
+|---|---|---|---|
+{% for row in data.by_category -%}
+| {{ row.category_markdown }} | {{ row.count }} | {{ row.total_spend_display }} | {{ row.share_display }} |
+{% endfor %}
+{% else -%}
+No category data yet.
+{% endif %}
+
+## Receipts
+
+{% if data.receipts -%}
+| Date | Merchant | Category | Total | Purchaser | File | Folder | Processed At |
+|---|---|---|---|---|---|---|---|
+{% for row in data.receipts -%}
+| {{ row.scan_date }} | {{ row.merchant_markdown }} | {{ row.category_markdown }} | {{ row.total_display }} | {{ row.purchaser_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_at_display }} |
+{% endfor %}
+{% else -%}
+No receipt rows yet.
+{% endif %}

@@ -34,6 +34,11 @@ Thumbs.db
 # User-specific receipt categories (use categories.toml.example as template)
 config/categories.toml
 
+# Real purchaser-alias test fixtures (use local_aliases.toml.example as template)
+tests/local_aliases.toml
+# Real values replaced by synthetic fixtures (local trace only)
+tests/local_real_values.toml
+
 CLAUDE.md
 
 .tachometer/

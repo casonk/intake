@@ -34,9 +34,104 @@ def test_scan_date_no_file_returns_today():
     assert result == date.today()
 
 
+def test_merchant_strips_welcome_to_prefix():
+    r = parse_receipt("20260506_2125.jpg", "Welcome To Loves#\nsaa US Hwy 16 E\nTOTAL $14.96")
+    assert r.merchant == "loves"
+
+
+def test_merchant_welcome_to_with_store_number_suffix():
+    r = parse_receipt(
+        "20260520_0932.jpg",
+        "WELCOME TO ROSAUERS #16\n1, My nate is Elizabe\nTOTAL 36.75",
+    )
+    assert r.merchant == "rosauers #16"
+
+
+def test_merchant_welcome_to_alone_falls_through_to_next_line():
+    r = parse_receipt(
+        "19990211_0930.jpg",
+        "WELCOME TO\n[GHTS FUEL STOP\nHICD RIVER, OREGON\nTOTAL 12.00",
+    )
+    assert r.merchant == "ghts fuel stop"
+
+
+def test_merchant_store_number_suffix_not_mistaken_for_amount_line():
+    # A bare "#123" store-number tail shouldn't be treated as a price line
+    # and skipped when looking for the merchant name.
+    r = parse_receipt("20260401_0900.pdf", "ROSAUERS #16\nTOTAL 36.75")
+    assert r.merchant == "rosauers #16"
+
+
 def test_total_from_total_line():
     r = parse_receipt("20260401_0900.pdf", "Some Store\nItems...\nTOTAL $47.23")
     assert r.total == pytest.approx(47.23)
+
+
+def test_total_prefers_final_total_over_hyphenated_sub_total():
+    # "Sub-Total" (hyphenated) must be excluded the same as "Sub Total" /
+    # "Subtotal" — it was previously winning the fallback pass whenever the
+    # real Total line's amount got OCR-garbled.
+    r = parse_receipt(
+        "20260401_0900.pdf",
+        "Store\nSub-Total 44.53\nSales Tax 2.67\nTotal 47.20",
+    )
+    assert r.total == pytest.approx(47.20)
+
+
+def test_total_ignores_job_subtotal_lines_on_multi_job_invoice():
+    # A per-job "JOB# N TOTAL" subtotal must never be mistaken for the
+    # invoice's real grand total.
+    r = parse_receipt(
+        "20260401_0900.pdf",
+        "Dealer\nJOB# 1 TOTAL 217.95\nJOB# 2 TOTAL 378.00\nTOTAL INVOICE $ 2583.55",
+    )
+    assert r.total == pytest.approx(2583.55)
+
+
+def test_total_returns_none_rather_than_a_noisy_job_line_match():
+    # When the real grand total's amount is unrecoverable (e.g. split from
+    # its label by column-based PDF extraction), only JOB# subtotals remain
+    # as candidates — returning None (flagged for review) beats silently
+    # reporting a wrong job-line subtotal as the total.
+    r = parse_receipt(
+        "20260401_0900.pdf",
+        "Dealer\nJOB# 1 TOTAL 217.95\nJOB# 2 TOTAL 378.00\nTOTAL INVOICE $\n2583.55",
+    )
+    assert r.total is None
+
+
+def test_total_rejects_noisy_label_merged_onto_total_line():
+    # OCR sometimes merges adjacent text onto the same line as a real total
+    # label. Here "PARTS TOTAL CHARGE 1233087" is a garbled "PARTS TOTAL
+    # CHARGE" line fused with the real total "1233.37" (decimal point lost) —
+    # the amount regex's 6-digit cap leaves a stray "1" stuck in the label
+    # ("...charge 1", amount "233087"), which must not be read as the total.
+    r = parse_receipt(
+        "20260401_0900.pdf",
+        "Dealer\nSUB-TOTAL 1163.56\nPARTS TOTAL CHARGE 1233087\nTOTAL CHARGE\n1233.37",
+    )
+    assert r.total is None
+
+
+def test_total_accepts_known_continuation_word_after_term():
+    # "Total Invoice Amount" is a real, common phrasing — the extra trailing
+    # word "amount" must not disqualify the match the way genuine noise would.
+    r = parse_receipt(
+        "20260401_0900.pdf",
+        "Vendor\nSubtotal 1,600.00\nTotal Invoice Amount 1,716.01 USD",
+    )
+    assert r.total == pytest.approx(1716.01)
+
+
+def test_total_rejects_sub_component_total_with_real_word_suffix():
+    # "Total - Parts" / "Total - Labor" name a job's parts/labor sub-total on
+    # multi-job repair invoices, not the grand total — even though "parts"
+    # and "labor" are themselves perfectly ordinary trailing words.
+    r = parse_receipt(
+        "20260401_0900.pdf",
+        "Dealer\nJOB# 1 TOTAL 217.95\nTOTAL - PARTS 28.95\nTOTAL - LABOR 189.00",
+    )
+    assert r.total is None
 
 
 def test_total_from_amount_due():
@@ -477,6 +572,14 @@ def test_purchaser_extracted_from_bill_to_email_block():
     assert r.purchaser == "jane sample"
 
 
+def test_purchaser_extracted_from_rewards_greeting():
+    # McDonald's app receipts print a loyalty greeting rather than a
+    # cardholder/customer-name label: "Thank You Rewards Customer\nHi jordan".
+    text = "McDonald's Restaurant #10001\nThank You Rewards Customer\nHi jordan\nTotal $5.00"
+    r = parse_receipt("20260505_2054.jpg", text)
+    assert r.purchaser == "jordan"
+
+
 def test_purchaser_absent_when_not_present():
     r = parse_receipt("20260401_0900.pdf", "Store\nTotal $5.00")
     assert r.purchaser is None
@@ -513,6 +616,20 @@ def test_app_name_discover_not_treated_as_purchaser():
 
 def test_thank_you_footer_not_treated_as_purchaser():
     text = "Store\nCardholder: THANK at FOR SHOPPING\nTotal $5.00"
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert r.purchaser is None
+
+
+def test_member_savings_footer_not_treated_as_purchaser():
+    # A loyalty-program "Member Savings" footer line matched the generic
+    # cardholder/member regex and got captured as a name.
+    text = "Safeway\nMember Savings\nTotal $5.00"
+    r = parse_receipt("20260401_0900.pdf", text)
+    assert r.purchaser is None
+
+
+def test_member_sign_in_prompt_not_treated_as_purchaser():
+    text = "Experian\nMember Sign In\nSee your credit report"
     r = parse_receipt("20260401_0900.pdf", text)
     assert r.purchaser is None
 

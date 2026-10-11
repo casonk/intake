@@ -92,11 +92,24 @@ _WARRANTY_TERMS = (
     "warranty statement",
     "warranty covers",
 )
+_TAX_WAGE_TERMS = (
+    "wage and tax statement",
+    "w-2 and earnings summary",
+    "w2 and earnings summary",
+    "social security wages",
+    "medicare wages and tips",
+)
 
 
 def classify_document(raw_text: str) -> str:
-    """Return a document category path for manuals/specs/warranties."""
+    """Return a document category path for manuals/specs/warranties/tax forms."""
+    from intake.document_type import is_check_payable_to_known_purchaser  # noqa: PLC0415
+
     lowered = raw_text.lower()
+    if any(term in lowered for term in _TAX_WAGE_TERMS):
+        return "documents/tax"
+    if is_check_payable_to_known_purchaser(raw_text):
+        return "documents/income"
     if any(term in lowered for term in _SPEC_TERMS):
         return "documents/specs"
     if any(term in lowered for term in _WARRANTY_TERMS):

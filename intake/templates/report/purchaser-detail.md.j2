@@ -1,0 +1,34 @@
+# Purchaser: {{ data.purchaser_label }}
+
+[Main Report]({{ data.main_report_md_href }}) | [Purchaser Directory]({{ data.directory_md_href }})
+
+| Field | Value |
+|---|---|
+| Total Receipts | {{ data.count }} |
+| Total Spend | {{ data.total_spend_display }} |
+| Share of All Spend | {{ data.share_display }} |
+| Date Range | {{ data.date_min or "—" }} → {{ data.date_max or "—" }} |
+
+## Category Mix
+
+{% if data.by_category -%}
+| Category | Count | Total Spend | % of Purchaser |
+|---|---|---|---|
+{% for row in data.by_category -%}
+| {{ row.category_markdown }} | {{ row.count }} | {{ row.total_spend_display }} | {{ row.share_display }} |
+{% endfor %}
+{% else -%}
+No category data yet.
+{% endif %}
+
+## Receipts
+
+{% if data.receipts -%}
+| Date | Merchant | Category | Total | Card | File | Folder | Model | Processed At |
+|---|---|---|---|---|---|---|---|---|
+{% for row in data.receipts -%}
+| {{ row.scan_date }} | {{ row.merchant_markdown }} | {{ row.category_markdown }} | {{ row.total_display }} | {{ row.card_last4 or "—" }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
+{% endfor %}
+{% else -%}
+No receipt rows yet.
+{% endif %}

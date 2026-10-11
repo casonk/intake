@@ -145,6 +145,34 @@ keywords = ["scheduled payment", "received your payment"]
 label    = "Credit Reporting"
 keywords = ["credit report", "credit score", "creditwise", "fico"]
 
+[categories.travel]
+label    = "Travel & Transit"
+keywords = []
+
+[categories.travel.transit]
+label    = "Transit & Airports"
+keywords = ["metro-transit", "regional-airport"]
+
+[categories.travel.lodging]
+label    = "Lodging"
+keywords = ["airbnb", "stay-inn"]
+
+[categories.travel.agency]
+label    = "Travel Agencies & Booking"
+keywords = ["book-my-trip"]
+
+[categories.liquor]
+label    = "Liquor & Wine"
+keywords = ["cellar-and-cask", "corner-liquor"]
+
+[categories.fitness]
+label    = "Fitness & Recreation"
+keywords = ["summit-climbing-gym", "fit-club"]
+
+[categories.shopping]
+label    = "General Retail & Shopping"
+keywords = ["dept-store", "outfitters-co"]
+
 [categories.general]
 label    = "General / Uncategorized"
 keywords = []

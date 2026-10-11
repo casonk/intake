@@ -4,8 +4,10 @@ from datetime import date
 
 from intake.document_type import (
     classify_document_type,
+    is_check_payable_to_known_purchaser,
     is_identity_document_text,
     is_reference_document_text,
+    is_tax_wage_document_text,
 )
 from intake.parse_document import classify_document, parse_document
 from intake.parse_letter import Letter, classify_letter
@@ -67,6 +69,73 @@ def test_user_manual_routes_as_reference_document() -> None:
     assert is_reference_document_text(raw_text)
     assert classify_document_type(raw_text, "20260616_1000.pdf") == "document"
     assert classify_document(raw_text) == "documents/manuals"
+
+
+def test_good_luck_card_routes_as_card_not_receipt() -> None:
+    raw_text = """
+    Jordan - all the best on your new role overseas.
+    Good Luck
+    Because you ARE great!
+    Best of luck, Joe
+    """
+
+    assert classify_document_type(raw_text, "20260601_0749.pdf") == "card"
+
+
+def test_w2_wage_statement_routes_as_tax_document_not_receipt() -> None:
+    raw_text = """
+    2025 W-2 and EARNINGS SUMMARY
+    Wage and Tax Statement
+    c Employer's name, address, and ZIP code
+    ACME MANUFACTURING LLC
+    123 EXAMPLE PKWY STE 100
+    ANYTOWN, IL 00000
+    b Employer's FED ID number
+    00-0000000
+    a Employee's SSA number
+    XXX-XX-9628
+    1 Wages, tips, other comp. 2 Federal income tax withheld
+    89249.51 11224.73
+    3 Social security wages 4 Social security tax withheld
+    107829.91 6685.45
+    5 Medicare wages and tips 6 Medicare tax withheld
+    107829.91 1563.53
+    """
+
+    document = parse_document("20250101_0749.pdf", raw_text)
+
+    assert is_tax_wage_document_text(raw_text)
+    assert classify_document_type(raw_text, "20250101_0749.pdf") == "document"
+    assert document.document_kind == "documents/tax"
+
+
+def test_check_payable_to_known_purchaser_routes_as_income_document() -> None:
+    raw_text = """
+    JOHN Q TRUSTEE
+    U/A DTD 01/01/2020
+    SAMPLE FAMILY LIVING TR
+    123 EXAMPLE ST
+    ANYTOWN MI 00000-0000
+
+    Pay to the order of Jane Sample $ 275.00
+    Two hundred seventy-five and 00/100 Dollars
+    Payable at:
+    SomeBroker
+    """
+
+    document = parse_document("20260601_0730.pdf", raw_text)
+
+    assert is_check_payable_to_known_purchaser(raw_text)
+    assert classify_document_type(raw_text, "20260601_0730.pdf") == "document"
+    assert document.document_kind == "documents/income"
+
+
+def test_check_payable_to_other_party_is_not_flagged_as_income() -> None:
+    # A check the household WROTE to pay a contractor is spend, not income —
+    # only checks payable TO a registered purchaser should be redirected.
+    raw_text = "Pay to the order of ABC Plumbing LLC $ 400.00"
+
+    assert not is_check_payable_to_known_purchaser(raw_text)
 
 
 def test_hardware_specs_route_as_specs_document() -> None:
