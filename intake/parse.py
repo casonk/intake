@@ -852,11 +852,10 @@ def _label_ends_with_term(label: str, term: str) -> bool:
     charge 1" for a mis-split "PARTS TOTAL CHARGE 1233087", "total a" for an
     OCR-mangled "Total $47.20", or "total - parts" naming a sub-total).
     """
-    match = None
-    for match in _term_pattern(term).finditer(label):
-        pass  # last match wins, mirroring _last_amount_with_terms semantics
-    if match is None:
+    matches = list(_term_pattern(term).finditer(label))
+    if not matches:
         return False
+    match = matches[-1]  # last match wins, mirroring _last_amount_with_terms semantics
     remainder = label[match.end() :].strip(" :-.|")
     if not remainder:
         return True

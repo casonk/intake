@@ -35,9 +35,7 @@ def _normalise_phrase(text: str) -> str:
     # NFKD — notably voiced/semi-voiced Japanese kana (dakuten/handakuten,
     # e.g. "ば" -> "は" + U+3099) — and stripping those combining marks
     # would silently change the character read, not just its accent.
-    stripped = "".join(
-        ch for ch in folded if not (unicodedata.combining(ch) and ord(ch) <= 0x036F)
-    )
+    stripped = "".join(ch for ch in folded if not (unicodedata.combining(ch) and ord(ch) <= 0x036F))
     stripped = unicodedata.normalize("NFC", stripped)
     stripped = stripped.replace("'", "").replace("’", "")
     return " ".join(re.findall(r"[^\W_]+", stripped.lower(), re.UNICODE))

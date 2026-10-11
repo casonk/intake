@@ -92,11 +92,7 @@ def test_looks_like_business_name():
 
 
 def test_billed_to_purchaser_fallback_finds_customer_behind_staff_name():
-    text = (
-        "SOLD BY: MARCUS REYES\n"
-        "BILL TO: MICHAEL HARRINGTON\n"
-        "100 EXAMPLE TRL E LOT 1"
-    )
+    text = "SOLD BY: MARCUS REYES\nBILL TO: MICHAEL HARRINGTON\n100 EXAMPLE TRL E LOT 1"
     assert billed_to_purchaser_fallback("marcus reyes", text) == "MICHAEL HARRINGTON"
 
 

@@ -167,16 +167,17 @@ def is_tax_wage_document_text(text: str) -> bool:
 # purchase — but a check WRITTEN to pay some other party (contractor, rent,
 # ...) is legitimate spend and should still score as a receipt/payment.
 
-_PAY_TO_ORDER_OF_RE = re.compile(
-    r"\bpay\s+to\s+the\s+order\s+of\b\s*:?\s*([^$]*)", re.IGNORECASE
-)
+_PAY_TO_ORDER_OF_RE = re.compile(r"\bpay\s+to\s+the\s+order\s+of\b\s*:?\s*([^$]*)", re.IGNORECASE)
 _CHECK_ROUTING_RE = re.compile(r"\bmemo\b|\bvoid\s+after\b|\bendorse\s+here\b", re.IGNORECASE)
 
 
 def is_check_payable_to_known_purchaser(text: str) -> bool:
     """Return True when *text* is a personal/bank check made payable to one of
     the registered household purchasers — i.e. money received, not spent."""
-    from intake.purchaser import has_registered_purchaser_aliases, is_known_purchaser_name  # noqa: PLC0415
+    from intake.purchaser import (  # noqa: PLC0415
+        has_registered_purchaser_aliases,
+        is_known_purchaser_name,
+    )
 
     if not has_registered_purchaser_aliases():
         return False

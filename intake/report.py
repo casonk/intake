@@ -1493,7 +1493,9 @@ def generate_reports(
     md_env = Environment(loader=BaseLoader(), autoescape=False)
     html_env = Environment(loader=BaseLoader(), autoescape=True)
     written: list[Path] = []
-    merchant_lookup = {_merchant_key(row.get("merchant")): row for row in data.get("all_merchants", [])}
+    merchant_lookup = {
+        _merchant_key(row.get("merchant")): row for row in data.get("all_merchants", [])
+    }
     purchaser_lookup = {
         _purchaser_key(row.get("purchaser_label")): {
             "html": row.get("purchaser_href_html"),
@@ -1561,7 +1563,9 @@ def generate_reports(
             purchaser_row,
             _build_purchaser_detail_view(
                 purchaser_row,
-                purchaser_receipts_lookup.get(_purchaser_key(purchaser_row.get("purchaser_label")), []),
+                purchaser_receipts_lookup.get(
+                    _purchaser_key(purchaser_row.get("purchaser_label")), []
+                ),
                 receipt_root=receipt_root,
                 filebrowser_base_url=filebrowser_base_url,
                 filebrowser_receipt_root=filebrowser_receipt_root,

@@ -23,9 +23,7 @@ _REFERENCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("eft_number", re.compile(r"\beft\s*(?:#|number)?\s*:?\s*(\d{6,})\b", re.IGNORECASE)),
     (
         "transaction_id",
-        re.compile(
-            rf"\btransaction\s*id\s*:?\s*{_HAS_DIGIT}([A-Za-z0-9]{{8,}})\b", re.IGNORECASE
-        ),
+        re.compile(rf"\btransaction\s*id\s*:?\s*{_HAS_DIGIT}([A-Za-z0-9]{{8,}})\b", re.IGNORECASE),
     ),
     (
         "confirmation_number",

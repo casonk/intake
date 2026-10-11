@@ -3907,7 +3907,9 @@ def _cmd_dedup_refs(args: argparse.Namespace, settings: dict) -> None:
     for i, (kind, ref_id, group) in enumerate(groups, 1):
         print(f"  Group {i} — matching {kind} {ref_id!r}:")
         for row in group:
-            total_label = f"${row['total']:.2f}" if row.get("total") is not None else "total unknown"
+            total_label = (
+                f"${row['total']:.2f}" if row.get("total") is not None else "total unknown"
+            )
             print(
                 f"    {row['filename']:<36} merchant={row['merchant']!r:<40} "
                 f"{total_label:<14} {row['scan_date']}  category={row['category']!r}"
