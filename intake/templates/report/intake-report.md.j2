@@ -1,6 +1,6 @@
 # Intake Receipt Report
 
-[Summary](#summary) | [Visual Overview](#visual-overview) | [Merchant Directory]({{ data.merchant_directory_md_path }}) | [Merchant Trends](#merchant-spend-over-time) | [Merchant Months](#merchant-month-breakdown) | [Recent Receipts](#recent-receipts-last-50)
+[Summary](#summary) | [Visual Overview](#visual-overview) | [Merchant Directory]({{ data.merchant_directory_md_path }}) | [Merchant Trends](#merchant-spend-over-time) | [Merchant Months](#merchant-month-breakdown) | [Model Directory]({{ data.model_directory_md_path }}) | [Purchaser Directory]({{ data.purchaser_directory_md_path }}) | [Recent Receipts](#recent-receipts-last-50)
 
 ## Summary
 
@@ -56,7 +56,7 @@
 | Model | Receipt Count | Share | Chart |
 |---|---|---|---|
 {% for row in data.by_model -%}
-| {{ row.model_label }} | {{ row.count }} | {{ row.share_display }} | {{ row.chart_bar or "—" }} |
+| {{ row.model_markdown }} | {{ row.count }} | {{ row.share_display }} | {{ row.chart_bar or "—" }} |
 {% endfor %}
 
 ## Merchant Month Breakdown
@@ -67,10 +67,18 @@
 | {{ row.merchant_markdown }} | {{ row.month_label }} | {{ row.count }} | {{ row.total_spend_display }} |
 {% endfor %}
 
+## Purchaser Breakdown
+
+| Purchaser | Receipt Count | Total Spend | Share |
+|---|---|---|---|
+{% for row in data.by_purchaser -%}
+| {{ row.purchaser_markdown }} | {{ row.count }} | {{ row.total_spend_display }} | {{ row.share_display }} |
+{% endfor %}
+
 ## Recent Receipts (last 50)
 
 | Date | Merchant | Category | Total | Purchaser | Card | Staff | Items | File | Folder | Model | Processed At |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 {% for row in data.recent -%}
-| {{ row.scan_date }} | {{ row.merchant_markdown }} | {{ row.category_markdown }} | {% if row.total is not none %}{{ row.total_display }}{% else %}—{% endif %} | {{ row.purchaser or "—" }} | {{ row.card_last4 or "—" }} | {{ row.staff_markdown }} | {{ row.items_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
+| {{ row.scan_date }} | {{ row.merchant_markdown }} | {{ row.category_markdown }} | {% if row.total is not none %}{{ row.total_display }}{% else %}—{% endif %} | {{ row.purchaser_markdown }} | {{ row.card_last4 or "—" }} | {{ row.staff_markdown }} | {{ row.items_markdown }} | {{ row.file_markdown }} | {{ row.folder_markdown }} | {{ row.processed_by or "tesseract" }} | {{ row.processed_at_display }} |
 {% endfor %}

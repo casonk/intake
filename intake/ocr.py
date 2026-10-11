@@ -2,11 +2,43 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 from pathlib import Path
 
 from intake.media import is_image_receipt, is_pdf_receipt, is_video_receipt
+
+# Some PDF generators synthesize bold text by rendering each glyph twice at
+# an near-identical position (e.g. "Invoice" -> "IInnvvooiiccee"). pdfplumber's
+# native text extraction then reports every character in that run doubled,
+# which corrupts merchant/total parsing on affected receipts (labels like
+# "Total" or "Amount due" no longer match). Require a minimum length so
+# short, legitimately-doubled tokens (e.g. "AA", "##") are left alone.
+_MIN_DOUBLED_TOKEN_LEN = 6
+_WHITESPACE_RUN_RE = re.compile(r"(\s+)")
+
+
+def _undouble_token(token: str) -> str:
+    if (
+        len(token) >= _MIN_DOUBLED_TOKEN_LEN
+        and len(token) % 2 == 0
+        and any(ch.isalpha() for ch in token)
+        and all(token[i] == token[i + 1] for i in range(0, len(token), 2))
+    ):
+        return token[::2]
+    return token
+
+
+def _undouble_glyph_runs(text: str) -> str:
+    """Collapse doubled-glyph runs (see module docstring above) line by line."""
+    return "\n".join(
+        "".join(
+            token if token.isspace() else _undouble_token(token)
+            for token in _WHITESPACE_RUN_RE.split(line)
+        )
+        for line in text.splitlines()
+    )
 
 
 def extract_text(receipt_path: Path) -> str:
@@ -41,7 +73,7 @@ def _extract_pdf_text(pdf_path: Path) -> str:
         for page in pdf.pages:
             text = page.extract_text() or ""
             if len(text.strip()) >= 20:
-                pages.append(text)
+                pages.append(_undouble_glyph_runs(text))
             else:
                 pages.append(_ocr_page(page))
 

@@ -15,6 +15,12 @@
 ## Documentation and Specifications
 
 - https://tesseract-ocr.github.io/tessdoc/ - OCR engine installation and runtime reference
+- https://pypi.org/project/pytesseract/ - Python Tesseract wrapper used by OCR extraction
+- https://github.com/jsvine/pdfplumber - pdfplumber PDF text/table extraction reference used by receipt parsing
+- https://pillow.readthedocs.io/ - Pillow image-processing reference used by OCR preparation
+- https://pypdf.readthedocs.io/ - pypdf PDF handling reference used by receipt extraction
+- https://jinja.palletsprojects.com/ - Jinja template reference used by Markdown/HTML report rendering
+- https://toml.io/en/ - TOML configuration format reference used by local intake settings
 - https://www.sqlite.org/docs.html - SQLite storage reference for the local receipt database
 - https://platform.openai.com/docs - OpenAI API documentation for AI-assisted extraction flows when enabled
 

@@ -22,11 +22,23 @@ def _is_subcategory(value: object) -> bool:
 
 
 def _normalise_phrase(text: str) -> str:
-    """Return a lowercase, punctuation-light phrase for boundary-aware matching."""
+    """Return a lowercase, punctuation-light phrase for boundary-aware matching.
+
+    Folds Latin accents (NFKD + drop combining marks) and full-width forms to
+    half-width, but otherwise keeps non-Latin scripts intact — ASCII-encoding
+    everything (the previous approach) silently dropped Japanese/CJK merchant
+    names to an empty string, so they could never match any keyword.
+    """
     folded = unicodedata.normalize("NFKD", text)
-    ascii_text = folded.encode("ascii", "ignore").decode("ascii")
-    ascii_text = ascii_text.replace("'", "").replace("’", "")
-    return " ".join(re.findall(r"[a-z0-9]+", ascii_text.lower()))
+    # Only strip Latin combining diacritics (U+0300-U+036F, e.g. the acute
+    # accent NFKD splits off of "é"). Other scripts also decompose under
+    # NFKD — notably voiced/semi-voiced Japanese kana (dakuten/handakuten,
+    # e.g. "ば" -> "は" + U+3099) — and stripping those combining marks
+    # would silently change the character read, not just its accent.
+    stripped = "".join(ch for ch in folded if not (unicodedata.combining(ch) and ord(ch) <= 0x036F))
+    stripped = unicodedata.normalize("NFC", stripped)
+    stripped = stripped.replace("'", "").replace("’", "")
+    return " ".join(re.findall(r"[^\W_]+", stripped.lower(), re.UNICODE))
 
 
 def _keyword_matches(search_target: str, keyword: str) -> bool:

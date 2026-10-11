@@ -1,0 +1,13 @@
+# Purchaser Directory
+
+[Main Report]({{ data.main_report_md_href }})
+
+{% if data.purchasers -%}
+| Purchaser | Receipts | Total Spend | Share |
+|---|---|---|---|
+{% for row in data.purchasers -%}
+| {{ row.purchaser_markdown }} | {{ row.count }} | {{ row.total_spend_display }} | {{ row.share_display }} |
+{% endfor %}
+{% else -%}
+No purchaser data yet.
+{% endif %}

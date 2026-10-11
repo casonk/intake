@@ -10,6 +10,19 @@ class "Card" as intake.parse_card.Card {
   scan_date : date
   sender : str | None
 }
+class "Document" as intake.parse_document.Document {
+  body_excerpt : str
+  document_date : date | None
+  document_kind : str
+  filename : str
+  issuer : str | None
+  model_number : str | None
+  raw_text : str
+  scan_date : date
+  serial_number : str | None
+  subject : str | None
+  title : str | None
+}
 class "FetchResult" as intake.email.FetchResult {
   attachments_saved : int
   errors : int
@@ -50,6 +63,7 @@ class "Receipt" as intake.parse.Receipt {
   currency : str
   filename : str
   items : list[ReceiptItem]
+  language : str
   merchant : str
   purchaser : str | None
   raw_text : str
@@ -58,6 +72,7 @@ class "Receipt" as intake.parse.Receipt {
   scan_date : date
   staff : list[ReceiptStaff]
   total : float | None
+  translated_text : str | None
   suggested_filename() -> str
 }
 class "ReceiptCertification" as intake.certification.ReceiptCertification {
@@ -71,17 +86,27 @@ class "ReceiptItem" as intake.parse.ReceiptItem {
   quantity : float | None
   unit_price : float | None
 }
+class "ReceiptLocaleHint" as intake.language.ReceiptLocaleHint {
+  confidence : float
+  currency : str | None
+  language : str
+  reasons : tuple[str, ...]
+}
 class "ReceiptStaff" as intake.staff.ReceiptStaff {
   name : str
   role : str
   source_text : str
+}
+class "RoutedDocument" as intake.document_routing.RoutedDocument {
+  personal_finance_event : dict | None
+  processed : bool
 }
 class "_ReportHandler" as intake.web._ReportHandler {
   do_GET() -> None
   do_HEAD() -> None
   log_message(fmt: str) -> None
 }
-class "_StripHTML" as intake.email._StripHTML {
+class "_StripHTML" as intake.email_text._StripHTML {
   handle_data(data: str) -> None
   handle_endtag(tag: str) -> None
   handle_starttag(tag: str, attrs: list) -> None

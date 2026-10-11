@@ -34,6 +34,19 @@ _REFERENCE_DOCUMENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── income / tax document signals ──────────────────────────────────────────────
+# W-2s and similar wage statements list an "employer" and a large dollar total,
+# which otherwise scores as a receipt (merchant + total) even though the money
+# is income received, not an expense paid out.
+
+_TAX_WAGE_DOCUMENT_RE = re.compile(
+    r"\b(?:wage\s+and\s+tax\s+statement|w-?2\s+and\s+earnings\s+summary"
+    r"|form\s+w-?2c?\b|social\s+security\s+wages|medicare\s+wages\s+and\s+tips"
+    r"|employer'?s\s+(?:fed(?:eral)?\s+id\s+number|state\s+id\s+no)"
+    r"|employee'?s\s+ssa\s+number)\b",
+    re.IGNORECASE,
+)
+
 # ── receipt signals ───────────────────────────────────────────────────────────
 
 _TOTAL_SIGNAL_RE = re.compile(
@@ -81,7 +94,7 @@ _CARD_OCCASION_RE = re.compile(
     r"\b(happy\s+birthday|congratulations?|merry\s+christmas|happy\s+holidays?"
     r"|happy\s+anniversary|get\s+well\s+soon|with\s+sympathy"
     r"|thinking\s+of\s+you|bon\s+voyage|happy\s+new\s+year|season.?s\s+greetings"
-    r"|best\s+wishes|wishing\s+you)\b",
+    r"|best\s+wishes|wishing\s+you|good\s+luck|farewell)\b",
     re.IGNORECASE,
 )
 
@@ -96,6 +109,12 @@ def classify_document_type(raw_text: str, filename: str = "") -> DocumentType:
         return "letter"
 
     if is_reference_document_text(text):
+        return "document"
+
+    if is_tax_wage_document_text(text):
+        return "document"
+
+    if is_check_payable_to_known_purchaser(text):
         return "document"
 
     payment_score = _payment_score(text)
@@ -136,6 +155,41 @@ def is_identity_document_text(text: str) -> bool:
 def is_reference_document_text(text: str) -> bool:
     """Return True when text points to a manual/spec/warranty-style document."""
     return bool(_REFERENCE_DOCUMENT_RE.search(text or ""))
+
+
+def is_tax_wage_document_text(text: str) -> bool:
+    """Return True when text points to a W-2 or similar wage/tax statement."""
+    return bool(_TAX_WAGE_DOCUMENT_RE.search(text or ""))
+
+
+# ── personal check signals ──────────────────────────────────────────────────
+# A check made payable TO a known household member is income received, not a
+# purchase — but a check WRITTEN to pay some other party (contractor, rent,
+# ...) is legitimate spend and should still score as a receipt/payment.
+
+_PAY_TO_ORDER_OF_RE = re.compile(r"\bpay\s+to\s+the\s+order\s+of\b\s*:?\s*([^$]*)", re.IGNORECASE)
+_CHECK_ROUTING_RE = re.compile(r"\bmemo\b|\bvoid\s+after\b|\bendorse\s+here\b", re.IGNORECASE)
+
+
+def is_check_payable_to_known_purchaser(text: str) -> bool:
+    """Return True when *text* is a personal/bank check made payable to one of
+    the registered household purchasers — i.e. money received, not spent."""
+    from intake.purchaser import (  # noqa: PLC0415
+        has_registered_purchaser_aliases,
+        is_known_purchaser_name,
+    )
+
+    if not has_registered_purchaser_aliases():
+        return False
+
+    for line in (text or "").splitlines():
+        match = _PAY_TO_ORDER_OF_RE.search(line)
+        if not match:
+            continue
+        payee = match.group(1).strip(" :-\t$")
+        if payee and is_known_purchaser_name(payee):
+            return True
+    return False
 
 
 def _receipt_score(text: str) -> int:

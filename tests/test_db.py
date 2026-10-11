@@ -1,13 +1,18 @@
 """Tests for receipt update audit helpers."""
 
 from intake.db import (
+    dismiss_reference_match,
     get_receipt,
     get_receipt_by_file_hash,
     infer_purchaser_from_card_last4,
     init_db,
+    query_all_receipts,
+    query_dismissed_reference_matches,
     query_flagged,
     query_receipt_updates,
+    query_reference_duplicate_groups,
     record_receipt_update,
+    undismiss_reference_match,
     update_receipt_fields,
     upsert_receipt,
 )
@@ -50,6 +55,130 @@ def test_update_receipt_fields_records_audit_entry(tmp_path):
     assert history[0]["source"] == "manual-correct"
     assert history[0]["note"] == "card charge wins over balance line"
     assert history[0]["changes"]["total"] == {"old": 86.05, "new": 88.05}
+
+
+def test_query_all_receipts_includes_currency(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260621_1522.jpg",
+            "scan_date": "2026-06-21",
+            "merchant": "adidas japan",
+            "total": 14300.0,
+            "category": "general",
+            "receipt_dir": "general/20260621_1522.jpg",
+            "raw_text": "",
+            "processed_by": "gpt-4.1",
+            "currency": "JPY",
+        },
+    )
+
+    rows = query_all_receipts(conn)
+
+    assert len(rows) == 1
+    assert rows[0]["currency"] == "JPY"
+
+
+def test_query_reference_duplicate_groups_finds_matching_eft_number(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260511_1243.pdf",
+            "scan_date": "2026-05-11",
+            "merchant": "irs",
+            "total": 108.10,
+            "category": "general",
+            "receipt_dir": "general/20260511_1243.pdf",
+            "raw_text": "Payment date May 12, 2026\nEFT number 900000000000015",
+            "processed_by": "gpt-4.1",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "email_10001_INBOX.txt",
+            "scan_date": "2026-05-12",
+            "merchant": "irs",
+            "total": 108.10,
+            "category": "general",
+            "receipt_dir": "email/general/email_10001_INBOX.txt",
+            "raw_text": "Confirmation of Payment Transaction\nEFT#:\n900000000000015",
+            "processed_by": "email-parse",
+        },
+    )
+    # An unrelated receipt with no shared reference ID must not appear.
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20260601_0900.pdf",
+            "scan_date": "2026-06-01",
+            "merchant": "kroger",
+            "total": 12.34,
+            "category": "grocery",
+            "receipt_dir": "grocery/20260601_0900.pdf",
+            "raw_text": "Kroger\nTotal 12.34",
+            "processed_by": "tesseract",
+        },
+    )
+
+    groups = query_reference_duplicate_groups(conn)
+
+    assert len(groups) == 1
+    kind, ref_id, rows = groups[0]
+    assert kind == "eft_number"
+    assert ref_id == "900000000000015"
+    assert {r["filename"] for r in rows} == {"20260511_1243.pdf", "email_10001_INBOX.txt"}
+
+
+def test_dismissed_reference_match_is_excluded_from_default_query(tmp_path):
+    conn = init_db(tmp_path / "intake.db")
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20010108_1600.pdf",
+            "scan_date": "2001-01-08",
+            "merchant": "tamiami ford inc.",
+            "total": 267.46,
+            "category": "auto/dealer/ford",
+            "receipt_dir": "auto/dealer/ford/20010108_1600.pdf",
+            "raw_text": "INVOICE DATE INVOICE NO.\n11489 WILLIAM BENNET",
+            "processed_by": "tesseract",
+        },
+    )
+    upsert_receipt(
+        conn,
+        {
+            "filename": "20031128_1233.pdf",
+            "scan_date": "2003-11-28",
+            "merchant": "tamiami ford inc.",
+            "total": 2497.02,
+            "category": "auto/dealer/ford",
+            "receipt_dir": "auto/dealer/ford/20031128_1233.pdf",
+            "raw_text": "INVOICE DATE INVOICE NO.\n11489 WILLIAM BENNET",
+            "processed_by": "tesseract",
+        },
+    )
+
+    groups_before = query_reference_duplicate_groups(conn)
+    assert len(groups_before) == 1
+    kind, ref_id, _rows = groups_before[0]
+    assert (kind, ref_id) == ("invoice_number", "11489")
+
+    dismiss_reference_match(conn, kind, ref_id, note="recurring tag number, not a real invoice ID")
+
+    assert query_reference_duplicate_groups(conn) == []
+    assert query_reference_duplicate_groups(conn, include_dismissed=True) == groups_before
+
+    dismissed = query_dismissed_reference_matches(conn)
+    assert len(dismissed) == 1
+    assert dismissed[0]["kind"] == "invoice_number"
+    assert dismissed[0]["ref_id"] == "11489"
+    assert dismissed[0]["note"] == "recurring tag number, not a real invoice ID"
+
+    undismiss_reference_match(conn, kind, ref_id)
+    assert query_reference_duplicate_groups(conn) == groups_before
 
 
 def test_update_receipt_fields_noop_does_not_record_audit(tmp_path):
@@ -406,6 +535,70 @@ def test_query_flagged_includes_reason_codes_for_basic_issues(tmp_path):
     assert flagged[0]["filename"] == "20260409_1707.pdf"
     assert flagged[0]["review_reasons"] == ["short_merchant", "missing_total"]
     assert flagged[0]["review_reason_summary"] == "short_merchant, missing_total"
+
+
+def test_query_flagged_flags_receipt_billed_to_other_party(tmp_path):
+    from intake.purchaser import register_purchaser_aliases
+
+    register_purchaser_aliases({"jordan avery": ["jordan", "jordan lee avery"]})
+    try:
+        conn = init_db(tmp_path / "intake.db")
+        upsert_receipt(
+            conn,
+            {
+                "filename": "20110714_1356.pdf",
+                "scan_date": "2011-07-14",
+                "merchant": "keystone automotive industries",
+                "total": 98.58,
+                "category": "auto",
+                "receipt_dir": "auto/20110714_1356.pdf",
+                "raw_text": (
+                    "BILL TO\n100200\nSAMPLE AUTO REPAIR (KK)\n"
+                    "100 EXAMPLE RD\nANYTOWN, MI 48000-0000"
+                ),
+                "processed_by": "tesseract",
+            },
+        )
+
+        flagged = query_flagged(conn)
+
+        assert len(flagged) == 1
+        assert "billed_to_other_party (SAMPLE AUTO REPAIR (KK))" in flagged[0]["review_reasons"]
+        assert "raw_text" not in flagged[0]
+    finally:
+        register_purchaser_aliases({})
+
+
+def test_query_flagged_skips_self_referential_bill_to(tmp_path):
+    from intake.purchaser import register_purchaser_aliases
+
+    register_purchaser_aliases({"jordan avery": ["jordan"]})
+    try:
+        conn = init_db(tmp_path / "intake.db")
+        for filename, scan_date in (
+            ("20260222_2241.pdf", "2026-02-22"),
+            ("20260322_2241.pdf", "2026-03-22"),
+        ):
+            upsert_receipt(
+                conn,
+                {
+                    "filename": filename,
+                    "scan_date": scan_date,
+                    "merchant": "anthropic",
+                    "total": 200.0,
+                    "category": "sw/dev",
+                    "receipt_dir": f"sw/dev/{filename}",
+                    "raw_text": "Bill To\nAnthropic, PBC\n548 Market Street",
+                    "processed_by": "tesseract",
+                },
+            )
+
+        flagged = query_flagged(conn)
+
+        all_reasons = [reason for row in flagged for reason in row["review_reasons"]]
+        assert not any(reason.startswith("billed_to_other_party") for reason in all_reasons)
+    finally:
+        register_purchaser_aliases({})
 
 
 def test_query_flagged_adds_recent_novelty_and_outlier_reasons(tmp_path):

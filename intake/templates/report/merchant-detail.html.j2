@@ -299,7 +299,7 @@
           <td>{{ row.scan_date }}</td>
           <td>{% if row.category_uri %}<a href="{{ row.category_uri }}">{{ row.category }}</a>{% else %}{{ row.category }}{% endif %}</td>
           <td>{{ row.total_display }}</td>
-          <td>{{ row.purchaser or "—" }}</td>
+          <td>{% if row.purchaser_href_html %}<a href="{{ row.purchaser_href_html }}">{{ row.purchaser }}</a>{% else %}{{ row.purchaser or "—" }}{% endif %}</td>
           <td>{{ "···· " + row.card_last4 if row.card_last4 else "—" }}</td>
           <td>{{ row.staff_label }}</td>
           <td class="items-cell"><span class="item-summary" title="{{ row.items_full_label }}">{{ row.items_label }}</span></td>

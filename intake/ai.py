@@ -16,7 +16,12 @@ from pathlib import Path
 
 from intake.certification import merge_certifications, receipt_certifications_from_dicts
 from intake.parse import Receipt, receipt_items_from_dicts
-from intake.purchaser import is_blacklisted_purchaser, is_probable_staff_name, normalize_purchaser
+from intake.purchaser import (
+    billed_to_purchaser_fallback,
+    is_blacklisted_purchaser,
+    is_probable_staff_name,
+    normalize_purchaser,
+)
 from intake.staff import receipt_staff_from_dicts
 
 
@@ -124,8 +129,19 @@ def merge_ai_result(receipt: Receipt, ai: dict) -> Receipt:
     purchaser = ai.get("purchaser")
     if purchaser and isinstance(purchaser, str) and purchaser.strip():
         normalized = normalize_purchaser(purchaser)
-        if normalized is not None and not is_probable_staff_name(normalized, receipt.raw_text):
-            kwargs["purchaser"] = normalized
+        if normalized is not None:
+            if not is_probable_staff_name(normalized, receipt.raw_text):
+                kwargs["purchaser"] = normalized
+            else:
+                # The AI named a staff member (advisor, salesperson,
+                # technician, ...) instead of the customer. Some invoices
+                # also print a "Bill To"/"Ship To" name elsewhere — use that
+                # instead of dropping the purchaser entirely.
+                fallback = billed_to_purchaser_fallback(normalized, receipt.raw_text)
+                if fallback:
+                    fallback_normalized = normalize_purchaser(fallback)
+                    if fallback_normalized is not None:
+                        kwargs["purchaser"] = fallback_normalized
 
     card_last4 = ai.get("card_last4")
     if card_last4 and isinstance(card_last4, str):
