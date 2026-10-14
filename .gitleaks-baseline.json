@@ -2,30 +2,6 @@
  {
   "RuleID": "keepass-real-profile-name",
   "Description": "Real KeePass profile name committed to a config or example file",
-  "StartLine": 16,
-  "EndLine": 16,
-  "StartColumn": 16,
-  "EndColumn": 33,
-  "Match": "profile = \"master\"",
-  "Secret": "master",
-  "File": "config/settings.toml.example",
-  "SymlinkFile": "",
-  "Commit": "263f4090bc1fba81976c84cf39adcfcdf6d1eaf1",
-  "Link": "https://github.com/casonk/intake/blob/263f4090bc1fba81976c84cf39adcfcdf6d1eaf1/config/settings.toml.example#L16",
-  "Entropy": 2.5849626,
-  "Author": "Cason Konzer",
-  "Email": "72440835+casonk@users.noreply.github.com",
-  "Date": "2026-04-03T23:52:27Z",
-  "Message": "feat: add repo-local automation hooks",
-  "Tags": [
-   "keepass",
-   "sensitive-config"
-  ],
-  "Fingerprint": "263f4090bc1fba81976c84cf39adcfcdf6d1eaf1:config/settings.toml.example:keepass-real-profile-name:16"
- },
- {
-  "RuleID": "keepass-real-profile-name",
-  "Description": "Real KeePass profile name committed to a config or example file",
   "StartLine": 5,
   "EndLine": 5,
   "StartColumn": 2,
@@ -34,8 +10,7 @@
   "Secret": "master",
   "File": "config/auto-pass.example.ini",
   "SymlinkFile": "",
-  "Commit": "263f4090bc1fba81976c84cf39adcfcdf6d1eaf1",
-  "Link": "https://github.com/casonk/intake/blob/263f4090bc1fba81976c84cf39adcfcdf6d1eaf1/config/auto-pass.example.ini#L5",
+  "Commit": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8",
   "Entropy": 2.5849626,
   "Author": "Cason Konzer",
   "Email": "72440835+casonk@users.noreply.github.com",
@@ -45,7 +20,30 @@
    "keepass",
    "sensitive-config"
   ],
-  "Fingerprint": "263f4090bc1fba81976c84cf39adcfcdf6d1eaf1:config/auto-pass.example.ini:keepass-real-profile-name:5"
+  "Fingerprint": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8:config/auto-pass.example.ini:keepass-real-profile-name:5"
+ },
+ {
+  "RuleID": "keepass-real-profile-name",
+  "Description": "Real KeePass profile name committed to a config or example file",
+  "StartLine": 16,
+  "EndLine": 16,
+  "StartColumn": 16,
+  "EndColumn": 33,
+  "Match": "profile = \"master\"",
+  "Secret": "master",
+  "File": "config/settings.toml.example",
+  "SymlinkFile": "",
+  "Commit": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8",
+  "Entropy": 2.5849626,
+  "Author": "Cason Konzer",
+  "Email": "72440835+casonk@users.noreply.github.com",
+  "Date": "2026-04-03T23:52:27Z",
+  "Message": "feat: add repo-local automation hooks",
+  "Tags": [
+   "keepass",
+   "sensitive-config"
+  ],
+  "Fingerprint": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8:config/settings.toml.example:keepass-real-profile-name:16"
  },
  {
   "RuleID": "portfolio-git-workspace-path",
@@ -58,8 +56,7 @@
   "Secret": "/mnt/4tb-m2/git/",
   "File": "config/settings.toml.example",
   "SymlinkFile": "",
-  "Commit": "263f4090bc1fba81976c84cf39adcfcdf6d1eaf1",
-  "Link": "https://github.com/casonk/intake/blob/263f4090bc1fba81976c84cf39adcfcdf6d1eaf1/config/settings.toml.example#L111",
+  "Commit": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8",
   "Entropy": 3.0778196,
   "Author": "Cason Konzer",
   "Email": "72440835+casonk@users.noreply.github.com",
@@ -69,6 +66,6 @@
    "local-path",
    "machine-specific"
   ],
-  "Fingerprint": "263f4090bc1fba81976c84cf39adcfcdf6d1eaf1:config/settings.toml.example:portfolio-git-workspace-path:111"
+  "Fingerprint": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8:config/settings.toml.example:portfolio-git-workspace-path:111"
  }
 ]
