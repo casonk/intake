@@ -33,7 +33,7 @@ def route_inbox_document(
     """Route one file from the intake inbox into its document store.
 
     The CLI still owns command setup, dry-run handling, corrupt-file handling,
-    and finance-pipeline batch triggering. This module owns the per-document
+    and finance batch triggering. This module owns the per-document
     routing flow so the one-shot process command and daemon stay behaviorally
     aligned.
     """

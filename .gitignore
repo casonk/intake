@@ -44,3 +44,6 @@ CLAUDE.md
 .tachometer/
 
 /REFS-LOCAL.md
+
+# Private downstream consumers; the tracked downstream-repos.toml must not name them.
+config/downstream-repos.local.toml

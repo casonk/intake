@@ -57,7 +57,7 @@ Shared utility repos available for integration:
 - `./util-repos/short-circuit` — WireGuard VPN setup and configuration
 - `./util-repos/snowbridge` — SMB-based file sharing — **receipt source for this repo**
 - `./util-repos/dyno-lab` — unified test bench utilities — fixtures, subprocess/HTTP/env mocks, schema validation, smoke scaffolding, and pytest markers/fixtures
-- `./finance-pipeline` — downstream consumer of aggregated spend data from this repo
+- A private downstream finance repository consumes aggregated spend data from this repo; record its path in `REFS-LOCAL.md` and `config/downstream-repos.local.toml`, not in tracked files
 
 ## Sudo Boundary
 

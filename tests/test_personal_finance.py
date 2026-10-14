@@ -69,7 +69,7 @@ def test_build_receipt_event_includes_expected_fields():
 
 
 def test_trigger_personal_finance_writes_json_and_runs_command(monkeypatch, tmp_path):
-    repo_root = tmp_path / "finance-pipeline"
+    repo_root = tmp_path / "finance-repo"
     repo_root.mkdir()
     event_dir = tmp_path / "events"
 
@@ -146,7 +146,7 @@ def test_trigger_personal_finance_writes_json_and_runs_command(monkeypatch, tmp_
 
 
 def test_trigger_personal_finance_raises_for_failed_command(monkeypatch, tmp_path):
-    repo_root = tmp_path / "finance-pipeline"
+    repo_root = tmp_path / "finance-repo"
     repo_root.mkdir()
 
     class Result:
@@ -168,5 +168,5 @@ def test_trigger_personal_finance_raises_for_failed_command(monkeypatch, tmp_pat
         )
     ]
 
-    with pytest.raises(RuntimeError, match="finance-pipeline trigger failed"):
+    with pytest.raises(RuntimeError, match="finance trigger failed"):
         trigger_personal_finance(settings, receipts, trigger="process")

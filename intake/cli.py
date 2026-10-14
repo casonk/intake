@@ -146,24 +146,24 @@ def _trigger_personal_finance(
     trigger: str,
     prefix: str = "",
 ) -> None:
-    """Run the configured downstream finance-pipeline trigger."""
+    """Run the configured downstream finance trigger."""
     from intake.personal_finance import trigger_personal_finance
 
     try:
         json_path = trigger_personal_finance(settings, receipt_events, trigger=trigger)
     except Exception as exc:  # noqa: BLE001
-        print(f"{prefix}[finance-pipeline] WARNING: {exc}", file=sys.stderr)
+        print(f"{prefix}[finance-trigger] WARNING: {exc}", file=sys.stderr)
         return
 
     if json_path is not None:
-        print(f"{prefix}[finance-pipeline] triggered via {json_path}")
+        print(f"{prefix}[finance-trigger] triggered via {json_path}")
 
 
 def _personal_finance_event_dir(settings: dict) -> Path:
     pf_cfg = settings.get("personal_finance")
     if isinstance(pf_cfg, dict) and pf_cfg.get("event_dir"):
         return Path(str(pf_cfg["event_dir"])).expanduser()
-    return _REPO_ROOT / "data" / "finance-pipeline"
+    return _REPO_ROOT / "data" / "finance-events"
 
 
 def _toml_string(value: str) -> str:
@@ -870,7 +870,7 @@ def _payment_row_from_payment(
 
 
 def _receipt_event_from_row(row: dict, *, tier: str) -> dict:
-    """Build a downstream finance-pipeline event from a serialized row."""
+    """Build a downstream finance event from a serialized row."""
     return {
         "filename": row["filename"],
         "receipt_dir": row["receipt_dir"],
@@ -4126,7 +4126,7 @@ def _cmd_cleanup(args: argparse.Namespace, settings: dict) -> None:
     if selected_pf_events:
         candidates_by_label.append(
             (
-                "finance-pipeline event JSON",
+                "finance event JSON",
                 _cleanup_personal_finance_event_candidates(event_dir, args.keep_events),
             )
         )
@@ -4135,7 +4135,7 @@ def _cmd_cleanup(args: argparse.Namespace, settings: dict) -> None:
     print(f"Cleanup mode: {mode}")
     print(f"Repo root: {root}")
     if selected_pf_events:
-        print(f"finance-pipeline event dir: {event_dir}")
+        print(f"finance event dir: {event_dir}")
         print(f"keeping newest {args.keep_events} receipts-*.json file(s) plus latest.json")
 
     total_candidates = 0
@@ -4604,9 +4604,10 @@ def main() -> None:
     )
     p_cln.add_argument("--root", metavar="PATH", help="Repo root to scan (default: this checkout)")
     p_cln.add_argument(
-        "--finance-pipeline-event-dir",
+        "--finance-event-dir",
+        dest="personal_finance_event_dir",
         metavar="PATH",
-        help="Override the data/finance-pipeline event directory",
+        help="Override the finance event directory (default: data/finance-events)",
     )
     p_cln.add_argument(
         "--pycache",
@@ -4614,9 +4615,10 @@ def main() -> None:
         help="Target Python __pycache__ directories and .pyc files",
     )
     p_cln.add_argument(
-        "--finance-pipeline-events",
+        "--finance-events",
+        dest="personal_finance_events",
         action="store_true",
-        help="Target old data/finance-pipeline/receipts-*.json handoff files",
+        help="Target old receipts-*.json finance handoff files",
     )
     p_cln.add_argument(
         "--all",
@@ -4628,7 +4630,7 @@ def main() -> None:
         metavar="N",
         type=int,
         default=100,
-        help="Newest finance-pipeline receipts-*.json files to retain (default: 100)",
+        help="Newest finance receipts-*.json files to retain (default: 100)",
     )
     p_cln.add_argument(
         "--remove",

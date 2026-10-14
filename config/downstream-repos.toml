@@ -8,6 +8,6 @@ path = "./util-repos/intake"
 
 [downstream_repos]
 tracking_basis = "explicit downstream data-consumer integrations"
-paths = [
-  "./finance-pipeline",  # intake/AGENTS.md documents it as the downstream consumer of aggregated spend data
-]
+# Private downstream consumers are recorded in the gitignored
+# config/downstream-repos.local.toml (see the .example), never here.
+paths = []
