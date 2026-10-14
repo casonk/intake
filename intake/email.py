@@ -1370,7 +1370,7 @@ def _upsert_html_receipt(
             trigger="email",
         )
     except Exception as exc:
-        print(f"    [personal-finance] WARNING: {exc}", file=sys.stderr)
+        print(f"    [finance-trigger] WARNING: {exc}", file=sys.stderr)
 
 
 # ── daemon ─────────────────────────────────────────────────────────────────────

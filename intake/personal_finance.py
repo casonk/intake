@@ -1,4 +1,4 @@
-"""Best-effort downstream trigger for the personal-finance repo."""
+"""Best-effort downstream trigger for a finance repository."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def _pf_config(settings: dict) -> dict:
 
 
 def personal_finance_enabled(settings: dict) -> bool:
-    """Return True when the personal-finance trigger is configured."""
+    """Return True when the finance trigger is configured."""
     cfg = _pf_config(settings)
     if cfg.get("enabled", True) is False:
         return False
@@ -35,7 +35,7 @@ def _event_dir(settings: dict) -> Path:
     if value:
         path = Path(str(value)).expanduser()
         return path if path.is_absolute() else (_INTAKE_REPO_ROOT / path).resolve()
-    return (_INTAKE_REPO_ROOT / "data" / "personal-finance").resolve()
+    return (_INTAKE_REPO_ROOT / "data" / "finance-events").resolve()
 
 
 def _repo_root(settings: dict) -> Path:
@@ -111,13 +111,13 @@ def _render_command(
 
 
 def trigger_personal_finance(settings: dict, receipts: list[dict], *, trigger: str) -> Path | None:
-    """Write receipt JSON and invoke the configured personal-finance command."""
+    """Write receipt JSON and invoke the configured finance command."""
     if not receipts or not personal_finance_enabled(settings):
         return None
 
     repo_root = _repo_root(settings)
     if not repo_root.exists():
-        raise RuntimeError(f"personal-finance repo_root not found: {repo_root}")
+        raise RuntimeError(f"finance trigger repo_root not found: {repo_root}")
 
     json_path = _write_receipts_json(settings, receipts, trigger=trigger)
     cmd = _render_command(settings, json_path, trigger=trigger, receipt_count=len(receipts))
@@ -143,15 +143,13 @@ def trigger_personal_finance(settings: dict, receipts: list[dict], *, trigger: s
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"personal-finance trigger timed out after {timeout}s") from exc
+        raise RuntimeError(f"finance trigger timed out after {timeout}s") from exc
 
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         if detail:
             detail = detail.splitlines()[-1]
         suffix = f": {detail}" if detail else ""
-        raise RuntimeError(
-            f"personal-finance trigger failed with exit code {result.returncode}{suffix}"
-        )
+        raise RuntimeError(f"finance trigger failed with exit code {result.returncode}{suffix}")
 
     return json_path

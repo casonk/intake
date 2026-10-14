@@ -1,6 +1,13 @@
 ## Unreleased
 
 ### Changed
+- The downstream finance trigger no longer names a private repository in
+  tracked files. Its default event directory is now `data/finance-events`;
+  set `[personal_finance] event_dir` to keep using an existing directory. The
+  cleanup flags are renamed to `--finance-events` and `--finance-event-dir`.
+  Log lines are prefixed `[finance-trigger]`.
+  Private downstream consumers move to the gitignored
+  `config/downstream-repos.local.toml`.
 - `*.ai.json` debug artifacts now append new AI model attempts across
   re-extractions and include a fidelity-weighted `models` summary.
 

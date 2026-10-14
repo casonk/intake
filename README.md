@@ -2,7 +2,7 @@
 
 Process incoming receipt PDFs, images, short videos, and non-spend reference documents from a snowbridge SMB share into structured SQLite tables and Markdown/HTML reports.
 
-Consent reference: [`../../doc-repos/my-consent/financial-records.md`](../../doc-repos/my-consent/financial-records.md) documents the explicit consent covering receipt OCR, categorization, reporting, and downstream personal-finance processing handled by this repo.
+Consent reference: [`../../doc-repos/my-consent/financial-records.md`](../../doc-repos/my-consent/financial-records.md) documents the explicit consent covering receipt OCR, categorization, reporting, and downstream finance processing handled by this repo.
 
 ## Prerequisites
 
@@ -63,7 +63,7 @@ warranties are routed under `documents/manuals`, `documents/specs`,
 `documents/warranty`, or `documents/reference`. They are stored in the
 `documents` SQLite table with searchable metadata such as title, model number,
 serial number, and body excerpt. These files are explicitly non-spend records:
-they do not enter receipt reports and do not emit personal-finance events.
+they do not enter receipt reports and do not emit finance events.
 
 Email ingestion also handles issuer, money-movement, and reservation payment
 notifications for supported providers. Capital One, Discover, Venmo, Wise, IRS,
@@ -81,7 +81,7 @@ Every receipt now attempts an itemized breakdown. `intake` first parses line
 items from stored OCR text and, when an OpenAI key is configured, will retry
 with AI extraction if the receipt otherwise looks good but no itemization was
 found. Itemization is stored in the DB, written into sidecars, included in the
-personal-finance batch JSON, and shown in the report.
+finance batch JSON, and shown in the report.
 
 **Backfill itemized breakdowns** for receipts already in the database:
 
@@ -318,11 +318,11 @@ corpus:
 ```bash
 intake cleanup
 intake cleanup --remove
-intake cleanup --personal-finance-events --keep-events 100 --remove
+intake cleanup --finance-events --keep-events 100 --remove
 ```
 
 Without `--remove`, cleanup is a dry-run. It targets Python bytecode caches and
-old `data/personal-finance/receipts-*.json` handoff files, preserving
+old `data/finance-events/receipts-*.json` handoff files, preserving
 `latest.json` and the newest retained event batches.
 
 **Backfill staff/service fields** from stored OCR into historical rows:
@@ -426,17 +426,17 @@ available; the original OCR remains in `receipts.raw_text` and the companion
 If the reply asks for the OCR/image/file itself, intake now sends a follow-up
 Gmail reply with the same Snowbridge receipt, OCR, and JSON links.
 
-**Trigger personal-finance** after receipt ingestion by writing a batch JSON and
+**Trigger a finance repository** after receipt ingestion by writing a batch JSON and
 running a downstream command:
 
 ```toml
 [personal_finance]
-repo_root = "/mnt/4tb-m2/git/personal-finance"
-command = ["python3", "scripts/all/monthly_controller.py"]
+repo_root = "/path/to/finance-repo"
+command = ["python3", "scripts/import_receipts.py", "{receipts_json}"]
 ```
 
-`intake` writes the generated batch JSON under `data/personal-finance/` by
-default and exposes its path to the downstream command via both
+`intake` writes the generated batch JSON under `data/finance-events/` by
+default (set `event_dir` to change it) and exposes its path to the downstream command via both
 `{receipts_json}` command placeholders and the `INTAKE_RECEIPTS_JSON`
 environment variable.
 

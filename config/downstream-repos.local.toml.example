@@ -1,0 +1,8 @@
+# Copy to downstream-repos.local.toml (gitignored) to record private downstream
+# consumers without naming them in the tracked, public downstream-repos.toml.
+
+[downstream_repos]
+tracking_basis = "explicit downstream data-consumer integrations (private consumers)"
+paths = [
+  "./example-private-finance-repo",
+]

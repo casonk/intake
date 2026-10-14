@@ -40,8 +40,8 @@ def test_load_settings_resolves_repo_relative_paths(monkeypatch, tmp_path):
                 'shock_relay_config = "gmail/config.local.yaml"',
                 "",
                 "[personal_finance]",
-                'repo_root = "repos/personal-finance"',
-                'event_dir = "data/personal-finance"',
+                'repo_root = "repos/finance-repo"',
+                'event_dir = "data/finance-events"',
                 "",
             ]
         ),
@@ -61,10 +61,8 @@ def test_load_settings_resolves_repo_relative_paths(monkeypatch, tmp_path):
         repo_root / "signal" / "config.local.yaml"
     )
     assert settings["gmail"]["shock_relay_config"] == str(repo_root / "gmail" / "config.local.yaml")
-    assert settings["personal_finance"]["repo_root"] == str(
-        repo_root / "repos" / "personal-finance"
-    )
-    assert settings["personal_finance"]["event_dir"] == str(repo_root / "data" / "personal-finance")
+    assert settings["personal_finance"]["repo_root"] == str(repo_root / "repos" / "finance-repo")
+    assert settings["personal_finance"]["event_dir"] == str(repo_root / "data" / "finance-events")
 
 
 def test_install_systemd_unit_avoids_repo_working_directory(monkeypatch):
@@ -184,7 +182,7 @@ def test_cmd_cleanup_dry_run_leaves_candidates(tmp_path, capsys):
     venv_cache.mkdir(parents=True)
     venv_pyc_path = venv_cache / "site.cpython-313.pyc"
     venv_pyc_path.write_bytes(b"venv cache")
-    event_dir = root / "data" / "personal-finance"
+    event_dir = root / "data" / "finance-events"
     event_dir.mkdir(parents=True)
     old_event = event_dir / "receipts-20260101T000000Z.json"
     old_event.write_text("{}\n", encoding="utf-8")
@@ -204,7 +202,7 @@ def test_cmd_cleanup_dry_run_leaves_candidates(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "Cleanup mode: dry-run" in output
     assert "Python caches: would remove" in output
-    assert "personal-finance event JSON: would remove" in output
+    assert "finance event JSON: would remove" in output
     assert cache_dir.exists()
     assert pyc_path.exists()
     assert venv_cache.exists()
@@ -577,7 +575,7 @@ def test_cmd_correct_triggers_personal_finance_after_db_change(tmp_path, monkeyp
 
     monkeypatch.setattr(cli, "_trigger_personal_finance", fake_trigger)
 
-    settings = {"personal_finance": {"repo_root": "/tmp/personal-finance"}}
+    settings = {"personal_finance": {"repo_root": "/tmp/finance-repo"}}
     cli._cmd_correct(
         Namespace(
             filename=pdf.name,

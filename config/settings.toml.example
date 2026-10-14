@@ -191,16 +191,16 @@ reports_dir = "reports"
 # # Optional explicit disable switch
 # # enabled = true
 
-# ── personal-finance downstream trigger (optional) ───────────────────────────
-# Writes a receipts JSON batch and runs a local personal-finance command after
+# ── finance downstream trigger (optional) ─────────────────────────────────────
+# Writes a receipts JSON batch and runs a local finance command after
 # successful receipt ingestion.
 #
 # [personal_finance]
-# repo_root = "/path/to/personal-finance"
-# command = ["python3", "scripts/all/monthly_controller.py"]
+# repo_root = "/path/to/finance-repo"
+# command = ["python3", "scripts/import_receipts.py", "{receipts_json}"]
 #
-# # Optional custom event spool dir (defaults to data/personal-finance)
-# # event_dir = "data/personal-finance"
+# # Optional custom event spool dir (defaults to data/finance-events)
+# # event_dir = "data/finance-events"
 #
 # # Available placeholders inside command array strings:
 # #   {receipts_json}  absolute path to the generated batch JSON
