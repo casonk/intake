@@ -36,3 +36,13 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 ## Code Style
 
 This project uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting via pre-commit.
+
+## AI Contribution Disclosure
+
+Parts of this repository's code, documentation and commit history were drafted
+with AI coding assistants, including Claude Code, OpenAI Codex, GitHub Copilot
+and Continue. The maintainer directs that work, reviews and tests each change
+before it merges, and is responsible for the result.
+
+This section is the repository-wide disclosure. Individual commits, pull
+requests and files do not carry per-tool attribution lines.
