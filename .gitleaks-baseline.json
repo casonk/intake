@@ -10,7 +10,7 @@
   "Secret": "master",
   "File": "config/auto-pass.example.ini",
   "SymlinkFile": "",
-  "Commit": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8",
+  "Commit": "4c6700eb6865950982ada69cff761018ea83449e",
   "Entropy": 2.5849626,
   "Author": "Cason Konzer",
   "Email": "72440835+casonk@users.noreply.github.com",
@@ -20,7 +20,7 @@
    "keepass",
    "sensitive-config"
   ],
-  "Fingerprint": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8:config/auto-pass.example.ini:keepass-real-profile-name:5"
+  "Fingerprint": "4c6700eb6865950982ada69cff761018ea83449e:config/auto-pass.example.ini:keepass-real-profile-name:5"
  },
  {
   "RuleID": "keepass-real-profile-name",
@@ -33,7 +33,7 @@
   "Secret": "master",
   "File": "config/settings.toml.example",
   "SymlinkFile": "",
-  "Commit": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8",
+  "Commit": "4c6700eb6865950982ada69cff761018ea83449e",
   "Entropy": 2.5849626,
   "Author": "Cason Konzer",
   "Email": "72440835+casonk@users.noreply.github.com",
@@ -43,7 +43,7 @@
    "keepass",
    "sensitive-config"
   ],
-  "Fingerprint": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8:config/settings.toml.example:keepass-real-profile-name:16"
+  "Fingerprint": "4c6700eb6865950982ada69cff761018ea83449e:config/settings.toml.example:keepass-real-profile-name:16"
  },
  {
   "RuleID": "portfolio-git-workspace-path",
@@ -56,7 +56,7 @@
   "Secret": "/mnt/4tb-m2/git/",
   "File": "config/settings.toml.example",
   "SymlinkFile": "",
-  "Commit": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8",
+  "Commit": "4c6700eb6865950982ada69cff761018ea83449e",
   "Entropy": 3.0778196,
   "Author": "Cason Konzer",
   "Email": "72440835+casonk@users.noreply.github.com",
@@ -66,6 +66,6 @@
    "local-path",
    "machine-specific"
   ],
-  "Fingerprint": "e1680d4eb41f4da82f9521f0834b7764f2ed6fb8:config/settings.toml.example:portfolio-git-workspace-path:111"
+  "Fingerprint": "4c6700eb6865950982ada69cff761018ea83449e:config/settings.toml.example:portfolio-git-workspace-path:111"
  }
 ]
