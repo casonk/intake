@@ -31,6 +31,10 @@ from intake.email_filing import (
     safe_save_receipt_pdf,
     same_mailbox_label,
 )
+from intake.email_local_classifier import (
+    classify_ambiguous_email,
+    is_legal_payment_correspondence,
+)
 from intake.email_provider import (
     fetch_message_by_uid,
     find_message_in_mailboxes,
@@ -43,14 +47,24 @@ from intake.translation import maybe_translate_receipt
 
 _DEFAULT_RECEIPT_SENDER_HINTS = (
     "service@paypal.com",
+    "service.paypal.com",
     "venmo@venmo.com",
     "account.irs.gov",
     "nelnet.studentaid.gov",
     "noreply@wise.com",
     "reserve-noreply@xanterra.com",
+    "info@smbctb.co.jp",
     "americanexpress.com",
     "no-reply@equifax.com",
     "support@s.usa.experian.com",
+    "no-reply@revolut.com",
+    "noreply@gotinder.com",
+    "hello@binance.us",
+    "post.binance.us",
+    "donotreply@mail.schwab.com",
+    "email.huntington.com",
+    "customerservice@e.progressive.com",
+    "email@t.sb.fanduel.com",
 )
 _DEFAULT_REPLY_MAILBOXES = email_reply._DEFAULT_REPLY_MAILBOXES
 _INTAKE_REPLY_SOURCE = email_reply._INTAKE_REPLY_SOURCE
@@ -148,11 +162,16 @@ def fetch_receipts(
                 "we processed your payment",
                 "your payment of",
                 "your scheduled payment",
+                "cash payment",
                 "credit report",
                 "credit score",
                 "FICO",
                 "policy renewal reminder",
                 "reservation confirmation",
+                "thank you for your payment",
+                "payment confirmation",
+                "statement",
+                "monthly interest",
             ]
         )
     )
@@ -166,7 +185,7 @@ def fetch_receipts(
     try:
         with sr.open_imap_connection(config) as conn:
             # Select with write access to allow mark-read + move
-            status, _ = conn.select(mailbox, readonly=False)
+            status, _ = conn.select(mailbox, readonly=dry_run)
             if status != "OK":
                 raise RuntimeError(f"Cannot select mailbox {mailbox!r}")
 
@@ -186,7 +205,9 @@ def fetch_receipts(
             to_expunge = False
             for uid in uids:
                 try:
-                    _status, msg_data = conn.uid("fetch", str(uid), "(RFC822)")
+                    _status, msg_data = conn.uid("fetch", str(uid), "(BODY.PEEK[])")
+                    if _status != "OK":
+                        raise RuntimeError(f"Cannot fetch email uid={uid}")
                     payload = sr.extract_fetch_payload(msg_data)
                     if not payload:
                         result.skipped += 1
@@ -284,7 +305,14 @@ def fetch_receipts(
 
                     text_body, html_body = sr.extract_message_bodies(msg)
                     body_text = _combine_message_body_text(text_body, html_body)
-                    if _is_known_non_receipt_notice(subject, sender, body_text):
+                    attachments = sr.extract_attachments(payload)
+                    pdf_attachments = [
+                        (fn, ct, data)
+                        for fn, ct, data in attachments
+                        if ct == "application/pdf" or fn.lower().endswith(".pdf")
+                    ]
+                    non_receipt_notice = _is_known_non_receipt_notice(subject, sender, body_text)
+                    if not pdf_attachments and non_receipt_notice:
                         if not dry_run:
                             record_email_receipt(
                                 db_conn,
@@ -314,13 +342,6 @@ def fetch_receipts(
                     if verbose:
                         print(f"  Processing: {subject!r}  from={sender}")
 
-                    attachments = sr.extract_attachments(payload)
-                    pdf_attachments = [
-                        (fn, ct, data)
-                        for fn, ct, data in attachments
-                        if ct == "application/pdf" or fn.lower().endswith(".pdf")
-                    ]
-
                     saved_count = 0
                     inline_processed = False
                     if not dry_run:
@@ -339,14 +360,23 @@ def fetch_receipts(
                     result.attachments_saved += saved_count
 
                     # HTML inline receipt (no PDF attachments or alongside them)
-                    if html_body and not dry_run:
-                        plain = html_to_text(html_body)
+                    if body_text and not dry_run and not non_receipt_notice:
+                        plain = html_to_text(html_body) if html_body else text_body
                         structured_email = _extract_structured_finance_email(
                             subject,
                             sender,
                             plain,
                         )
-                        if structured_email is not None or _looks_like_receipt(plain):
+                        legal_payment_discussion = is_legal_payment_correspondence(subject, plain)
+                        if structured_email is None and not pdf_attachments:
+                            structured_email = classify_ambiguous_email(
+                                subject, sender, plain, settings
+                            )
+                        if structured_email is not None or (
+                            not pdf_attachments
+                            and not legal_payment_discussion
+                            and _looks_like_receipt(plain)
+                        ):
                             _upsert_html_receipt(
                                 db_conn,
                                 uid,
@@ -361,7 +391,12 @@ def fetch_receipts(
                             result.html_processed += 1
                             inline_processed = True
                             if verbose:
-                                print("    inline receipt → processed via AI")
+                                kind = (
+                                    "document"
+                                    if structured_email and structured_email.get("document_kind")
+                                    else "receipt"
+                                )
+                                print(f"    inline {kind} → processed")
 
                     if not dry_run:
                         if not _email_was_handled(saved_count, inline_processed):
@@ -425,6 +460,24 @@ def fetch_receipts(
         raise RuntimeError(f"Email fetch failed: {exc}") from exc
 
     try:
+        _fetch_kalshi_spam_liquidations(
+            sr,
+            config,
+            settings,
+            db_conn,
+            result,
+            processed_label=processed_label,
+            since_days=since_days,
+            limit=limit,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+    except Exception as exc:
+        result.errors += 1
+        if verbose:
+            print(f"  WARNING Kalshi spam processing degraded: {exc}")
+
+    try:
         _process_reply_messages(
             config,
             settings,
@@ -443,6 +496,122 @@ def fetch_receipts(
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
+
+
+def _fetch_kalshi_spam_liquidations(
+    sr,
+    config,
+    settings: dict,
+    db_conn,
+    result: FetchResult,
+    *,
+    processed_label: str,
+    since_days: int,
+    limit: int,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Recover only verified-shape Kalshi liquidation notices from Gmail Spam."""
+    if not hasattr(sr, "build_search_terms") or not hasattr(sr, "parse_int_uid_list"):
+        return
+    mailbox = "[Gmail]/Spam"
+    with sr.open_imap_connection(config) as conn:
+        status, _ = select_mailbox(conn, mailbox, readonly=dry_run)
+        if status != "OK":
+            return
+        terms = sr.build_search_terms(from_contains="kalshi", since_days=since_days)
+        status, data = conn.uid("search", config.imap.search_charset, *terms)
+        if status != "OK":
+            return
+        for uid in sorted(sr.parse_int_uid_list(data), reverse=True)[:limit]:
+            try:
+                status, msg_data = conn.uid("fetch", str(uid), "(BODY.PEEK[])")
+                payload = sr.extract_fetch_payload(msg_data)
+                if status != "OK" or not payload:
+                    continue
+                msg = message_from_bytes(payload, policy=default_policy)
+                if not _has_google_apple_relay_authentication(msg):
+                    continue
+                subject = sr.decode_mime_header(msg.get("Subject"))
+                sender = sr.decode_mime_header(msg.get("From"))
+                plain, html = sr.extract_message_bodies(msg)
+                body = plain or (html_to_text(html) if html else "")
+                structured = _extract_structured_finance_email(subject, sender, body)
+                if not structured or structured.get("processed_by") != "email-kalshi-liquidation":
+                    continue
+                result.found += 1
+                message_id = sr.decode_mime_header(msg.get("Message-ID"))
+                if is_email_processed(db_conn, uid, mailbox) or (
+                    message_id and is_email_message_id_processed(db_conn, message_id)
+                ):
+                    if not dry_run:
+                        sr.move_message(conn, uid, processed_label)
+                        conn.expunge()
+                    result.skipped += 1
+                    continue
+                if dry_run:
+                    if verbose:
+                        print(f"  Kalshi Spam candidate: {subject!r}")
+                    continue
+                date_str = str(msg.get("Date", "") or "").strip()
+                _upsert_html_receipt(
+                    db_conn,
+                    uid,
+                    mailbox,
+                    subject,
+                    sender,
+                    date_str,
+                    body,
+                    settings,
+                    structured_email=structured,
+                )
+                _write_processed_email_artifact(
+                    settings,
+                    uid=uid,
+                    mailbox=mailbox,
+                    message_id=message_id,
+                    subject=subject,
+                    sender=sender,
+                    received_at=date_str,
+                    payload=payload,
+                    attachment_count=0,
+                    inline_processed=True,
+                )
+                record_email_receipt(
+                    db_conn,
+                    uid=uid,
+                    mailbox=mailbox,
+                    message_id=message_id,
+                    subject=subject,
+                    sender=sender,
+                    received_at=date_str,
+                    attachment_count=0,
+                )
+                sr.mark_message_read(conn, uid)
+                sr.move_message(conn, uid, processed_label)
+                conn.expunge()
+                result.html_processed += 1
+                if verbose:
+                    print(
+                        f"  Kalshi liquidation → documents/investments; filed to {processed_label!r}"
+                    )
+            except Exception as exc:
+                result.errors += 1
+                if verbose:
+                    print(f"  ERROR Kalshi Spam uid={uid}: {exc}")
+
+
+def _has_google_apple_relay_authentication(msg) -> bool:
+    """Require Gmail's passing Apple private relay checks before promoting Spam."""
+    for value in msg.get_all("Authentication-Results", []):
+        normalized = " ".join(str(value).lower().split())
+        if (
+            normalized.startswith("mx.google.com;")
+            and re.search(r"\bdkim=pass\s+header\.i=@privaterelay\.appleid\.com\b", normalized)
+            and re.search(r"\bdmarc=pass\b", normalized)
+        ):
+            return True
+    return False
 
 
 def _search_receipt_uids(
@@ -752,7 +921,6 @@ _TRANSUNION_SENDER_HINT = email_finance._TRANSUNION_SENDER_HINT
 _CREDIT_KARMA_SENDER_HINT = email_finance._CREDIT_KARMA_SENDER_HINT
 _AMEX_ACCOUNT_ENDING_RE = email_finance._AMEX_ACCOUNT_ENDING_RE
 _AMEX_CARDHOLDER_RE = email_finance._AMEX_CARDHOLDER_RE
-_PROGRESSIVE_SENDER_HINT = email_finance._PROGRESSIVE_SENDER_HINT
 _PAYPAL_SENDER_HINT = email_finance._PAYPAL_SENDER_HINT
 _PAYPAL_SUBJECT_AMOUNT_RE = email_finance._PAYPAL_SUBJECT_AMOUNT_RE
 _VENMO_SENDER_HINT = email_finance._VENMO_SENDER_HINT
@@ -1030,16 +1198,8 @@ def _extract_payment_effective_date(subject: str, plain_text: str):
     return email_finance._extract_payment_effective_date(subject, plain_text)
 
 
-def _extract_progressive_payment_amount(plain_text: str):
-    return email_finance._extract_progressive_payment_amount(plain_text)
-
-
 def _extract_credit_card_payment_email(subject: str, sender: str, plain_text: str):
     return email_finance._extract_credit_card_payment_email(subject, sender, plain_text)
-
-
-def _extract_progressive_payment_email(subject: str, sender: str, plain_text: str):
-    return email_finance._extract_progressive_payment_email(subject, sender, plain_text)
 
 
 def _extract_paypal_receipt_email(subject: str, sender: str, plain_text: str):
@@ -1205,6 +1365,28 @@ def _upsert_html_receipt(
         sender,
         plain_text,
     )
+    if finance_email is not None and finance_email.get("document_kind"):
+        category = finance_email["document_kind"]
+        row = {
+            "filename": synthetic_name,
+            "scan_date": receipt.scan_date.isoformat(),
+            "document_date": finance_email.get("document_date")
+            or (email_header_date.isoformat() if email_header_date else None),
+            "document_kind": category,
+            "title": finance_email["title"],
+            "issuer": finance_email["merchant"],
+            "subject": finance_email.get("subject"),
+            "body_excerpt": finance_email.get("body_excerpt"),
+            "category": category,
+            "receipt_dir": f"email/{category}",
+            "raw_text": plain_text,
+            "processed_by": finance_email.get("processed_by") or "email-finance-notice",
+        }
+        upsert_document(db_conn, row)
+        _write_inline_email_receipt_artifact(
+            settings, category=category, filename=synthetic_name, plain_text=plain_text, row=row
+        )
+        return
     if finance_email is not None and finance_email.get("is_income"):
         # Money credited to the account (e.g. "X paid you $Y" on Venmo) is
         # income, not spend — file it as a non-spend document instead of a
@@ -1233,6 +1415,7 @@ def _upsert_html_receipt(
             receipt_date=finance_email["receipt_date"],
             purchaser=finance_email["purchaser"],
             card_last4=finance_email["card_last4"],
+            currency=finance_email.get("currency") or receipt.currency,
             items=finance_email.get("items", []),
         )
         preferred_category = finance_email.get("category")

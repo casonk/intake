@@ -47,3 +47,7 @@ CLAUDE.md
 
 # Private downstream consumers; the tracked downstream-repos.toml must not name them.
 config/downstream-repos.local.toml
+
+# Local config overrides and backups
+config/*.local.toml
+*.bak-*
