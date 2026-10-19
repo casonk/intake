@@ -115,6 +115,23 @@ def test_install_report_timer_units_writes_noon_schedule(monkeypatch):
     assert timer["persistent"] is True
 
 
+def test_install_newsletter_timer_sends_daily_digest(monkeypatch):
+    monkeypatch.setattr(cli.sys, "executable", "/usr/bin/python3")
+    captured = {}
+
+    def fake_install(manifest_text: str, *, target: str) -> None:
+        captured["manifest"] = tomllib.loads(manifest_text)
+        captured["target"] = target
+
+    monkeypatch.setattr(cli, "_install_clockwork_manifest", fake_install)
+    cli._install_newsletter_timer_units(on_calendar="*-*-* 13:00:00")
+    job = captured["manifest"]["jobs"][0]
+    assert captured["target"] == "systemd-user"
+    assert "exec /usr/bin/python3 -m intake.cli newsletter --send" in job["exec_start"]
+    assert job["timer"]["on_calendar"] == "*-*-* 13:00:00"
+    assert job["timer"]["persistent"] is True
+
+
 def test_install_web_unit_writes_localhost_service(monkeypatch):
     monkeypatch.setattr(cli.sys, "executable", "/usr/bin/python3")
     captured: dict[str, str] = {}

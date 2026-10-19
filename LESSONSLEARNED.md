@@ -12,6 +12,20 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 
 ## Lessons
 
+- Audit email discovery separately from extraction: a finance-related attachment can be missed before its MIME parts are inspected if the subject/sender filters never select the message. Compare recent INBOX and All Mail read-only, and distinguish real attached documents from online statement links and signature images.
+- Fetch candidates with `BODY.PEEK[]` and select read-only for dry runs; `RFC822` fetches can mark skipped messages read before intake has saved anything. Inspect PDFs before ignoring a scheduled-notice body, and accept plain-text bodies as well as HTML.
+- Account agreements, privacy policies, and electronic-signature consent PDFs must route as non-spend financial documents before receipt extraction; fee schedules and example amounts in legal terms are not purchases. Prefer an attached PDF over parsing the same generic receipt body again.
+- Statement-availability subjects from supported financial providers must take precedence over payment extraction; a minimum-payment amount in a statement notice is not evidence of a posted payment.
+- Generic bank subjects such as "Statement Available" need an exact transactional sender hint as well as a non-spend notice parser; verify the configured mailbox contains the message before attempting live recovery.
+- Insurance renewal and payment-reminder emails can include several premium and installment amounts without confirming a charge. Discover their sender, but route the notice as a non-spend document and correct any older receipt row that counted an amount due as spending.
+- Account-status warnings from transactional senders may lack receipt keywords, attachments, and amounts. Discover them with sender and subject checks, then retain the notice as a non-spend document rather than inventing a transaction.
+- Newsletter digests should read IMAP without changing read state or labels, combine overlapping issues, attribute claims to the source email, and persist source message IDs so scheduled sends do not repeat old highlights.
+- Hump Days has both "The Weekly Brief" and "Market Report" editions; test each layout before filtering by body headings. Set digest timing against the actual IMAP arrival time and the reader's timezone, since an early daily timer can run before that day's issue arrives.
+- Gmail Spam is absent from INBOX and All Mail IMAP sweeps. Recover only narrowly identified, authenticated transactional messages there; preserve the raw email, then file it after successful classification. For liquidation notices, a contract count and liquidation price do not establish a realized loss or purchase amount.
+- Cash Advance PIN readiness emails are account notices, even when they describe ATM limits, fees, and APRs. Require the exact issuer sender and readiness content, retain a short financial-document summary, and never infer a withdrawal or store a PIN from the notice.
+- Subscription renewal subjects and crypto bundle purchase subjects often omit receipt/order/payment keywords; include their transactional senders in discovery, and extract the labeled charged total rather than future renewal prices or asset unit prices. Carry explicitly extracted fiat currency into persisted receipt metadata.
+- Brokerage trade-confirmation emails can be availability notices with security symbols but no trade quantities or amounts. Discover their transactional senders, retain them as non-spend investment documents, and parse the labeled trade date rather than the notification date; HTML and plain-text versions can use different date formats.
+
 - Document the repository around its real execution, curation, or integration flow instead of only the top-level folder list.
 - Keep local-only, private, reference-only, or generated boundaries explicit so published or runtime behavior is not confused with offline material or non-committable inputs.
 - Re-run repo-appropriate validation after changing generated artifacts, diagrams, workflows, or other CI-facing files so formatting and compatibility issues are caught before push.
@@ -110,6 +124,12 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 
 - When receipt processing can emit many Gmail notifications in a burst, enable `[gmail].digest = true` so processed-receipt notices are queued through shock-relay and sent as an aggregate.
 - Keep reply-link follow-ups immediate; they are user-requested responses rather than routine operational alerts.
+- When adding a newsletter to an existing digest, keep the same sent-message ID state and attribute each highlight to its publication; otherwise the next run can repeat previously delivered issues or blur which source made a claim.
+- Digest delivery and Gmail filing are separate steps: track emailed and filed message IDs independently so a successful send can be followed by a safe filing retry without sending the same recap again. Respect messages the user has already placed in Trash.
+- A payment subject or invoice mention can be only a plan to pay. For ambiguous legal correspondence, run a local classifier only after narrow candidate discovery and deterministic context checks; permit non-spend document routing, but require explicit completed-payment evidence before treating it as spending. Keep model failure from falling through to broad receipt heuristics.
+- A bank's cash-award notice promising a future deposit is evidence of an expected credit, not a posted income event. Route it as a financial document, preserve the amount/timing in source text, and do not create a receipt or income transaction until separate posted-credit evidence arrives. For multipart/signed mail, retain the raw signed message; the S/MIME signature is not a receipt attachment.
+- "Transfer set up" is a workflow state, not evidence that funds reached Wise, were converted, or were paid out. Preserve transfer IDs and planned amounts as non-spend financial documents; only later confirmed movement should affect transaction records.
+- Digest lookback must cover newsletter delivery gaps and clock/time-zone boundaries while sent-message IDs prevent repeat mail. Keep same-day supplemental reports under distinct filenames, and strip invisible preheader characters before model summarization so the actual article text is included.
 
 ### 2026-06-08 — Japanese cash-tender labels are not transaction totals
 

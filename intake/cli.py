@@ -9,6 +9,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -261,6 +262,22 @@ def _build_report_manifest_text(*, python_executable: str, on_calendar: str) -> 
     )
     return _render_clockwork_template(
         "intake-report.toml.template",
+        {
+            "__EXEC_START__": _toml_string(exec_start),
+            "__ON_CALENDAR__": _toml_string(on_calendar),
+        },
+    )
+
+
+def _build_newsletter_manifest_text(*, python_executable: str, on_calendar: str) -> str:
+    """Render the tracked daily newsletter digest service and timer."""
+    exec_start = _build_wait_exec_start(
+        python_executable=python_executable,
+        ready_message="intake newsletter timer: waiting for intake module path to become available",
+        command="newsletter --send",
+    )
+    return _render_clockwork_template(
+        "intake-newsletter.toml.template",
         {
             "__EXEC_START__": _toml_string(exec_start),
             "__ON_CALENDAR__": _toml_string(on_calendar),
@@ -3166,6 +3183,47 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
     conn.close()
 
 
+def _cmd_newsletter(args: argparse.Namespace, settings: dict) -> None:
+    """Generate a short digest from new subscribed newsletter issues."""
+    if args.install_timer:
+        _install_newsletter_timer_units(on_calendar=args.on_calendar)
+        return
+
+    from intake.newsletter import (
+        fetch_recent_issues,
+        file_sent_issues,
+        pending_issues,
+        render_digest,
+        send_digest,
+        summarize_issues,
+        write_digest,
+    )
+
+    issues = fetch_recent_issues(settings, since_days=args.since_days)
+    state_path = _REPO_ROOT / "data" / "newsletter-digest-state.json"
+    pending = pending_issues(issues, state_path)
+    if not pending:
+        print("No new newsletter issues to summarize.")
+        if args.send:
+            filed = file_sent_issues(issues, settings, state_path)
+            if filed:
+                print(f"Filed {filed} previously summarized newsletter(s).")
+        return
+    output_dir = Path(args.output_dir or settings.get("reports_dir") or _DEFAULT_REPORTS_DIR)
+    output_dir /= "newsletters"
+    digest_date = date.today()
+    summary = summarize_issues(pending, settings)
+    digest = render_digest(pending, summary, digest_date)
+    output = write_digest(pending, summary, output_dir, digest_date)
+    print(f"Newsletter digest written: {output}")
+    if args.send:
+        sent = send_digest(pending, digest, settings, state_path, digest_date)
+        print("Newsletter digest emailed." if sent else "Newsletter digest already emailed.")
+        filed = file_sent_issues(issues, settings, state_path)
+        if filed:
+            print(f"Filed {filed} summarized newsletter(s).")
+
+
 def _email_filename_uid(filename: str) -> int | None:
     """Return the Gmail UID embedded in an inline email receipt filename."""
     parts = Path(filename).stem.split("_", 2)
@@ -3516,6 +3574,17 @@ def _install_report_timer_units(*, on_calendar: str) -> None:
     """Install report service/timer units through the shared clockwork renderer."""
     _install_clockwork_manifest(
         _build_report_manifest_text(
+            python_executable=sys.executable,
+            on_calendar=on_calendar,
+        ),
+        target="systemd-user",
+    )
+
+
+def _install_newsletter_timer_units(*, on_calendar: str) -> None:
+    """Install newsletter digest units through the shared clockwork renderer."""
+    _install_clockwork_manifest(
+        _build_newsletter_manifest_text(
             python_executable=sys.executable,
             on_calendar=on_calendar,
         ),
@@ -4188,6 +4257,20 @@ def main() -> None:
         help="systemd OnCalendar expression for --install-timer (default: daily at noon)",
     )
 
+    # newsletter
+    p_news = sub.add_parser(
+        "newsletter", help="Summarize new Token Metrics, Bloomberg, and Hump Days issues"
+    )
+    p_news.add_argument("--since-days", type=int, default=7, help="Search window (default: 7 days)")
+    p_news.add_argument("--output-dir", metavar="PATH", help="Report root (default: reports_dir)")
+    p_news.add_argument("--send", action="store_true", help="Email the digest to [gmail].recipient")
+    p_news.add_argument("--install-timer", action="store_true", help="Install a daily email timer")
+    p_news.add_argument(
+        "--on-calendar",
+        default="*-*-* 20:00:00",
+        help="systemd OnCalendar for --install-timer (default: daily at 20:00)",
+    )
+
     # serve
     p_srv = sub.add_parser(
         "serve",
@@ -4707,6 +4790,8 @@ def main() -> None:
         _cmd_process(args, settings)
     elif args.command == "report":
         _cmd_report(args, settings)
+    elif args.command == "newsletter":
+        _cmd_newsletter(args, settings)
     elif args.command == "serve":
         _cmd_serve(args, settings)
     elif args.command == "backfill":

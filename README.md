@@ -65,6 +65,12 @@ warranties are routed under `documents/manuals`, `documents/specs`,
 serial number, and body excerpt. These files are explicitly non-spend records:
 they do not enter receipt reports and do not emit finance events.
 
+Schwab trade confirmation notices are stored under
+`email/documents/investments` with their trade date and security
+symbols, separate from spending receipts. Their full confirmations are linked
+online and require a Schwab login; intake archives the email without signing
+in or inventing trade quantities, prices, or amounts.
+
 Email ingestion also handles issuer, money-movement, and reservation payment
 notifications for supported providers. Capital One, Discover, Venmo, Wise, IRS,
 Nelnet, Xanterra, Equifax, Experian, and Capital One CreditWise messages are
@@ -73,6 +79,32 @@ posted/due/booking date, purchaser, and card/account hints extracted from the
 email body. Credit-reporting alerts are stored as non-spend finance records.
 Scheduled/upcoming notices are filed as ignored email records and are not added
 to receipt spending.
+
+Discovery also includes payment confirmations, statement notices, monthly
+interest, Revolut account messages, Tinder renewals, and Binance.US purchase
+messages. Tinder renewals use the charged total rather than future renewal
+prices; successful Binance bundle purchases use the final fiat total rather
+than asset unit prices. Both plain-text and HTML bodies are
+supported. Amex MyCredit Guide alerts use the credit-reporting path; PayPal
+statement notices (also Discover, Capital One, Amex, Revolut, and Huntington statements)
+and GEICO credit-review notices are non-spend financial
+documents, and Wise monthly-interest notices are income documents. Online
+statement links are preserved in the email artifact; intake does not sign in
+to provider websites to download them.
+Progressive renewal, payment-reminder, and policy-document notices are also
+stored as non-spend financial documents; quoted premiums and installments are
+amounts due, not completed payments.
+FanDuel account-dormancy warnings are retained as non-spend account notices.
+
+PDF attachments are saved even when the message body is a scheduled-payment
+notice. Account agreements and privacy/consent documents route to
+`documents/financial`. Generic inline receipts are only parsed when there is
+no PDF, avoiding a second receipt for the same attachment. Other attachment
+formats remain in the archived RFC822 message but
+are not separately downloaded or processed. Discovery scans the first
+configured IMAP mailbox (normally INBOX) within `since_days`; archived messages
+outside that mailbox require a separate review. Fetching uses `BODY.PEEK[]`,
+so skipped candidates and dry runs do not mark messages read.
 
 TODO: keep expanding regression coverage for live payment-confirmation variants
 from Capital One, Discover, and Progressive as new provider templates arrive.
@@ -412,6 +444,40 @@ receipt root.
 When `[gmail].digest = true`, intake writes each processed-receipt notice to
 shock-relay's local Gmail digest queue and the scheduled digest sender emits one
 aggregate email on its configured cadence.
+
+Ambiguous legal payment discussions are classified by the local Ollama model
+after sender and subject discovery. Supported correspondence is saved as a
+non-spend legal document and filed under `[email].processed_label`; an intent
+to pay is never counted as a completed expense. The classifier leaves messages
+untouched when the local model is unavailable or its result is uncertain.
+Set `[email].local_classifier_enabled = false` to disable this pass, or choose
+`[email].local_classifier_model` to use another installed Ollama model.
+
+SMBC Trust Bank GLOBAL PASS cash-award notices are kept as non-spend financial
+documents. A notice promising a future deposit does not create an income or
+receipt transaction; the original amount and timing remain in the archived
+email and document text.
+
+Wise "Transfer set up" messages are also kept as non-spend financial documents.
+They record the transfer ID and planned amount while the money is still on its
+way to Wise; they do not add a receipt or spending event.
+Kalshi perpetual-position liquidation notices sent through the recognized Apple
+private relay format are also recovered from Gmail Spam and kept as investment
+documents. The contract count and liquidation price are recorded as context;
+neither is treated as a loss or purchase amount.
+
+**Daily email highlights:** `intake newsletter` reads recent Token Metrics Pulse,
+Bloomberg, and Hump Days newsletters without marking them read, and writes a short,
+source attributed digest under `reports/newsletters/`. `intake newsletter --send`
+emails new highlights to `[gmail].recipient` once per source email, then marks
+the summarized messages read and files them under `[email].processed_label`.
+To install the daily 8 p.m. user timer through clockwork, run `intake newsletter
+--install-timer`, then `systemctl --user enable --now intake-newsletter.timer`.
+The scheduled run searches a seven-day window and sends only when a new issue
+arrived; newsletters from all three sources are combined when pending.
+`[newsletter].model` can override the default `gpt-4o-mini` summary model.
+Without an OpenAI key, the digest uses short excerpts from the newsletter's
+lead stories.
 
 The `*.ai.json` artifact is cumulative. Each new AI model attempt is appended
 instead of replacing the prior attempt history, and the file includes a

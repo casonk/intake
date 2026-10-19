@@ -103,7 +103,13 @@ _TAX_WAGE_TERMS = (
 
 def classify_document(raw_text: str) -> str:
     """Return a document category path for manuals/specs/warranties/tax forms."""
-    from intake.document_type import is_check_payable_to_known_purchaser  # noqa: PLC0415
+    from intake.document_type import (  # noqa: PLC0415
+        is_check_payable_to_known_purchaser,
+        is_financial_terms_document_text,
+    )
+
+    if is_financial_terms_document_text(raw_text):
+        return "documents/financial"
 
     lowered = raw_text.lower()
     if any(term in lowered for term in _TAX_WAGE_TERMS):
