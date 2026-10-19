@@ -157,6 +157,19 @@ reports_dir = "reports"
 # # Max emails to process per run
 # limit = 500
 
+# ── Career follow-up email (optional) ─────────────────────────────────────────
+# Uses [email].shock_relay_config. The regular email fetch/daemon also scans
+# these employers and writes actionable requests to the career repo's ignored
+# private/intake-email/ folder. Messages stay unread and in Inbox.
+# Run: intake career fetch [--dry-run] | intake career list
+#
+# [career]
+# repo_root = "/path/to/career"
+# since_days = 30
+# limit = 200
+# [career.employers]
+# "example.com" = "Example Employer"
+
 # ── Signal notifications (optional) ──────────────────────────────────────────
 # Sends a Signal message after a receipt is successfully processed.
 #

@@ -163,3 +163,8 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 - Generated local artifacts need first-class cleanup commands instead of ad hoc shell deletion: keep finance handoff retention explicit, default cleanup to dry-run, and treat `.venv` as manual-only.
 - Manuals, hardware specs, warranties, and other reference documents should route under `documents/...` as non-spend records; add synthetic fixtures for new document classes before live examples arrive so receipt and finance paths stay guarded.
 - Vendor spec sheets often contain warranty-period or warranty-statement table rows; classify strong spec signals such as data sheets/product briefs before warranty signals so hardware data sheets stay under `documents/specs`.
+
+### 2026-10-19 — Career follow-ups need a separate action route
+
+- Employer requests to complete a talent profile are actionable career correspondence, not evidence that any specific job application advanced. When one employer has multiple applications, preserve the request as a private shared action and list related application folders without changing statuses.
+- Some legitimate employer action buttons use an `http` tracking link on a subdomain of the sender's domain. Preserve that link in the private action record after checking the hostname; requiring `https` for every extracted link silently drops the next step.
