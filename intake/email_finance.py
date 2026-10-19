@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from contextlib import suppress
 from datetime import date, datetime
+from email.utils import parseaddr
 
 from intake.purchaser import normalize_purchaser
 
@@ -380,22 +381,6 @@ def _extract_payment_effective_date(subject: str, plain_text: str) -> date | Non
     return None
 
 
-def _extract_progressive_payment_amount(plain_text: str) -> float | None:
-    """Extract the due installment amount from a Progressive renewal reminder."""
-    for labels in (
-        ("minimum installment",),
-        ("pay in full",),
-        ("total premium",),
-    ):
-        value = _extract_labeled_block_value(plain_text, labels)
-        if value is None:
-            continue
-        match = re.search(r"\$?\s*(\d+(?:\.\d{2})?)", value)
-        if match:
-            return float(match.group(1))
-    return None
-
-
 def _extract_credit_card_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
     """Return structured fields for known credit-card payment-notification emails."""
     sender_lower = sender.lower()
@@ -418,24 +403,6 @@ def _extract_credit_card_payment_email(subject: str, sender: str, plain_text: st
         "purchaser": _extract_payment_purchaser(plain_text),
         "card_last4": _extract_payment_card_last4(plain_text),
         "category": "finance/credit-card-payment",
-    }
-
-
-def _extract_progressive_payment_email(subject: str, sender: str, plain_text: str) -> dict | None:
-    """Return structured fields for Progressive insurance payment reminders."""
-    if _PROGRESSIVE_SENDER_HINT not in sender.lower():
-        return None
-    if "policy renewal reminder" not in subject.lower():
-        return None
-    if "renewal payment" not in plain_text.lower():
-        return None
-    return {
-        "merchant": "progressive",
-        "total": _extract_progressive_payment_amount(plain_text),
-        "receipt_date": _extract_payment_effective_date(subject, plain_text),
-        "purchaser": _extract_payment_purchaser(plain_text),
-        "card_last4": None,
-        "category": "auto/insurance",
     }
 
 
@@ -791,6 +758,12 @@ def _extract_credit_reporting_email(subject: str, sender: str, plain_text: str) 
         "creditwise" in combined_lower and "credit score" in combined_lower
     ):
         merchant = "capital one creditwise"
+    elif (
+        "americanexpress.com" in sender_lower
+        and ("mycredit" in sender_lower or "mycredit guide" in combined_lower)
+        and ("fico" in combined_lower or "credit score" in combined_lower)
+    ):
+        merchant = "american express mycredit guide"
 
     if merchant is None:
         return None
@@ -809,9 +782,13 @@ def _extract_credit_reporting_email(subject: str, sender: str, plain_text: str) 
 def _extract_structured_finance_email(subject: str, sender: str, plain_text: str) -> dict | None:
     """Return structured fields for known finance/payment notification emails."""
     return (
-        _extract_credit_card_payment_email(subject, sender, plain_text)
+        _extract_kalshi_liquidation_email(subject, sender, plain_text)
+        or _extract_finance_notice_email(subject, sender, plain_text)
+        or _extract_schwab_trade_notice_email(subject, sender, plain_text)
+        or _extract_tinder_renewal_email(subject, sender, plain_text)
+        or _extract_binance_purchase_email(subject, sender, plain_text)
+        or _extract_credit_card_payment_email(subject, sender, plain_text)
         or _extract_amex_payment_email(subject, sender, plain_text)
-        or _extract_progressive_payment_email(subject, sender, plain_text)
         or _extract_paypal_receipt_email(subject, sender, plain_text)
         or _extract_venmo_payment_email(subject, sender, plain_text)
         or _extract_irs_payment_email(subject, sender, plain_text)
@@ -820,3 +797,194 @@ def _extract_structured_finance_email(subject: str, sender: str, plain_text: str
         or _extract_xanterra_reservation_email(subject, sender, plain_text)
         or _extract_credit_reporting_email(subject, sender, plain_text)
     )
+
+
+def _extract_kalshi_liquidation_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Keep executed perpetual liquidations as investment notices, not spending."""
+    address = parseaddr(sender)[1].lower()
+    if not re.fullmatch(
+        r"no-reply_at_kalshi_com_[a-z0-9]+_[a-z0-9]+@privaterelay\.appleid\.com",
+        address,
+    ):
+        return None
+    match = re.fullmatch(
+        r"Your ([A-Z0-9][A-Z0-9 .-]{0,35}) PERP position was liquidated",
+        subject.strip(),
+        re.I,
+    )
+    if not match or not re.search(r"\bLIQUIDATION EXECUTED\b", plain_text, re.I):
+        return None
+    quantity = re.search(r"\bAmount\s+(\d+(?:\.\d+)?)\s+contracts?\b", plain_text, re.I)
+    price = re.search(r"\bLiquidation price\s+\$([\d,]+(?:\.\d{2})?)\b", plain_text, re.I)
+    if not quantity or not price:
+        return None
+    asset = match.group(1).upper()
+    excerpt = f"{asset} PERP liquidation executed: {quantity.group(1)} contracts at liquidation price ${price.group(1)}."
+    return {
+        "merchant": "Kalshi",
+        "document_kind": "documents/investments",
+        "title": subject,
+        "subject": f"{asset} PERP",
+        "body_excerpt": excerpt,
+        "processed_by": "email-kalshi-liquidation",
+    }
+
+
+def _extract_schwab_trade_notice_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Keep online brokerage confirmations without inventing spend or trade amounts."""
+    if "donotreply@mail.schwab.com" not in sender.lower() or not re.search(
+        r"\btrade\s+confirmations?\b", subject, re.IGNORECASE
+    ):
+        return None
+    document_date = None
+    dated = re.search(
+        r"trade confirmation\(s\)\s+for\s+(\d{8}|\d{1,2}/\d{1,2}/\d{4})\b",
+        plain_text,
+        re.IGNORECASE,
+    )
+    if dated:
+        with suppress(ValueError):
+            value = dated.group(1)
+            document_date = (
+                datetime.strptime(value, "%m/%d/%Y" if "/" in value else "%Y%m%d")
+                .date()
+                .isoformat()
+            )
+    symbols = list(
+        dict.fromkeys(
+            re.findall(r"^Symbol:\s*\n\s*([A-Z][A-Z0-9.^/-]*)\s*$", plain_text, re.MULTILINE)
+        )
+    )
+    security_summary = "Securities: " + ", ".join(symbols) if symbols else None
+    return {
+        "merchant": "charles schwab",
+        "document_kind": "documents/investments",
+        "title": subject,
+        "document_date": document_date,
+        "subject": security_summary,
+        "body_excerpt": security_summary,
+        "processed_by": "email-schwab-trade-notice",
+    }
+
+
+def _extract_tinder_renewal_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Extract a completed subscription renewal, excluding future pricing."""
+    if "noreply@gotinder.com" not in sender.lower() or not re.search(
+        r"\bsubscription\b.*\b(?:renewed|receipt)\b", subject, re.IGNORECASE
+    ):
+        return None
+    total = _extract_labeled_money_amount(plain_text, ("total",))
+    if total is None:
+        return None
+    return {
+        "merchant": "tinder",
+        "total": total,
+        "receipt_date": None,
+        "purchaser": None,
+        "card_last4": None,
+        "category": "sw",
+        "processed_by": "email-tinder-renewal",
+    }
+
+
+def _extract_binance_purchase_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Extract a successful bundle purchase from its final fiat total."""
+    if not any(hint in sender.lower() for hint in ("hello@binance.us", "post.binance.us")):
+        return None
+    if not re.search(r"successfully purchased", subject, re.IGNORECASE) or not re.search(
+        r"^Status:\s*Successful\s*$", plain_text, re.IGNORECASE | re.MULTILINE
+    ):
+        return None
+    match = re.search(
+        r"^Total:\s*([\d,]+(?:\.\d+)?)\s+([A-Z]{3})\s*$",
+        plain_text,
+        re.MULTILINE,
+    )
+    if match is None:
+        return None
+    receipt_date = None
+    timestamp = re.search(r"^Date & time:\s*(\d{4}-\d{2}-\d{2})\b", plain_text, re.MULTILINE)
+    if timestamp:
+        with suppress(ValueError):
+            receipt_date = date.fromisoformat(timestamp.group(1))
+    return {
+        "merchant": "binance.us",
+        "total": float(match.group(1).replace(",", "")),
+        "currency": match.group(2),
+        "receipt_date": receipt_date,
+        "purchaser": _extract_payment_purchaser(plain_text),
+        "card_last4": None,
+        "category": "finance/crypto",
+        "processed_by": "email-binance-purchase",
+    }
+
+
+def _extract_finance_notice_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Keep supported account notices as documents without inventing spending."""
+    sender_lower = sender.lower()
+    subject_lower = subject.lower()
+    merchant = None
+    kind = "documents/financial"
+    excerpt = None
+    if (
+        any(hint in sender_lower for hint in ("service@paypal.com", "service.paypal.com"))
+        and "statement" in subject_lower
+    ):
+        merchant = "paypal"
+    elif "statement" in subject_lower:
+        for provider, hint in (
+            ("discover", "discover.com"),
+            ("capital one", "capitalone.com"),
+            ("american express", "americanexpress.com"),
+            ("revolut", "revolut.com"),
+            ("huntington bank", "email.huntington.com"),
+        ):
+            if hint in sender_lower:
+                merchant = provider
+                break
+    elif _PROGRESSIVE_SENDER_HINT in sender_lower and re.search(
+        r"\b(?:reminder to pay|ready to renew|policy renewal reminder|policy documents)\b",
+        subject_lower,
+    ):
+        merchant = "progressive"
+    elif (
+        parseaddr(sender)[1].lower() == "americanexpress@welcome.americanexpress.com"
+        and subject_lower.strip() == "your cash advance pin is ready"
+        and re.search(r"\byour pin is ready\b", plain_text, re.I)
+        and re.search(r"\bview pin\b", plain_text, re.I)
+    ):
+        merchant = "american express"
+        excerpt = (
+            "Cash Advance PIN is available after signing in to American Express. "
+            "No cash withdrawal or advance is reported in this notice."
+        )
+    elif (
+        parseaddr(sender)[1].lower() == "info@smbctb.co.jp"
+        and "global pass" in subject_lower
+        and "cash award notice" in subject_lower
+        and re.search(r"\bwill deposit\b", plain_text, re.I)
+    ):
+        merchant = "SMBC Trust Bank"
+        excerpt = re.sub(r"\s+", " ", plain_text).strip()[:500]
+    elif "email@t.sb.fanduel.com" in sender_lower and "account dormancy" in subject_lower:
+        merchant = "fanduel sportsbook"
+    elif "geico.com" in sender_lower and "credit report" in subject_lower:
+        merchant = "geico"
+    elif (
+        parseaddr(sender)[1].lower() == "noreply@wise.com"
+        and re.fullmatch(r"transfer set up \(#\d+\)", subject.strip(), re.I)
+        and re.search(r"\byour transfer of [\d,]+(?:\.\d+)? [A-Z]{3} is set up\b", plain_text, re.I)
+    ):
+        merchant = "Wise"
+        cleaned = re.sub(r"\s+", " ", plain_text.replace("\u200c", "")).strip()
+        start = re.search(r"\byour transfer of\b", cleaned, re.I)
+        excerpt = cleaned[start.start() : start.start() + 220] if start else cleaned[:220]
+    elif "noreply@wise.com" in sender_lower and "monthly interest" in subject_lower:
+        merchant = "wise"
+        kind = "documents/income"
+    if merchant is None:
+        return None
+    result = {"merchant": merchant, "document_kind": kind, "title": subject}
+    if excerpt:
+        result["body_excerpt"] = excerpt
+    return result

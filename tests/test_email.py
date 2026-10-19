@@ -30,13 +30,13 @@ from intake.email import (
     _extract_irs_payment_email,
     _extract_nelnet_billing_email,
     _extract_paypal_receipt_email,
-    _extract_progressive_payment_email,
     _extract_receipt_filename_from_text,
     _extract_reply_updates,
     _extract_venmo_payment_email,
     _extract_wise_payment_email,
     _extract_xanterra_reservation_email,
     _file_message_to_processed_label,
+    _has_google_apple_relay_authentication,
     _is_intake_generated_message,
     _is_intake_reply_message,
     _is_internal_intake_notification,
@@ -340,31 +340,53 @@ def test_extract_credit_reporting_email_capital_one_creditwise():
     }
 
 
-def test_extract_progressive_payment_email_renewal_reminder():
-    body = """
-    Your auto policy renewal payment is due on 05/01/2026 by 12:01 a.m. EST.
-    Your Payment Options
-    Total Premium
-    $1,125.00
-    Pay In Full
-    $1,028.00
-    Minimum Installment
-    $193.55
-    Alex Sample, your rate went down by $48!
-    """
-    parsed = _extract_progressive_payment_email(
+@pytest.mark.parametrize(
+    "subject",
+    [
         "Progressive policy renewal reminder",
-        "Progressive customerservice@e.progressive.com",
-        body,
+        "Reader, your auto policy is ready to renew.",
+        "Reader, a reminder to pay your auto policy.",
+        "You have new Progressive policy documents",
+    ],
+)
+def test_progressive_policy_notices_are_non_spend_documents(subject):
+    from intake.email import _extract_structured_finance_email
+
+    parsed = _extract_structured_finance_email(
+        subject,
+        "Progressive <customerservice@e.progressive.com>",
+        "Your bill is ready. Total premium: $786.00. Minimum installment: $137.03."
+        " Next payment due 11/01/2026.",
     )
     assert parsed == {
         "merchant": "progressive",
-        "total": 193.55,
-        "receipt_date": date(2026, 5, 1),
-        "purchaser": "alex sample",
-        "card_last4": None,
-        "category": "auto/insurance",
+        "document_kind": "documents/financial",
+        "title": subject,
     }
+    assert (
+        _extract_structured_finance_email(
+            subject, "unrelated@example.com", "Your bill is ready. $137.03 due."
+        )
+        is None
+    )
+
+
+def test_fanduel_dormancy_requires_matching_sender_and_subject():
+    from intake.email import _extract_structured_finance_email
+
+    body = "Your account remains inactive. Log in before 10/20."
+    assert (
+        _extract_structured_finance_email(
+            "Final Warning: Account Dormancy", "other@example.com", body
+        )
+        is None
+    )
+    assert (
+        _extract_structured_finance_email(
+            "Weekend sportsbook offers", "FanDuel <email@t.sb.fanduel.com>", body
+        )
+        is None
+    )
 
 
 def test_extract_paypal_receipt_email_transaction_receipt():
@@ -893,14 +915,24 @@ def test_configured_receipt_sender_hints_include_paypal_default():
     assert hints == [
         "merchant@example.com",
         "service@paypal.com",
+        "service.paypal.com",
         "venmo@venmo.com",
         "account.irs.gov",
         "nelnet.studentaid.gov",
         "noreply@wise.com",
         "reserve-noreply@xanterra.com",
+        "info@smbctb.co.jp",
         "americanexpress.com",
         "no-reply@equifax.com",
         "support@s.usa.experian.com",
+        "no-reply@revolut.com",
+        "noreply@gotinder.com",
+        "hello@binance.us",
+        "post.binance.us",
+        "donotreply@mail.schwab.com",
+        "email.huntington.com",
+        "customerservice@e.progressive.com",
+        "email@t.sb.fanduel.com",
     ]
 
 
@@ -1683,7 +1715,7 @@ def test_fetch_receipts_files_known_non_receipt_notice_as_ignored(db, tmp_path):
             return ("OK", [b"0"])
 
     def fail_extract_attachments(_payload):
-        raise AssertionError("known non-receipt notices must not inspect attachments")
+        return []
 
     sr = SimpleNamespace(
         load_config=lambda _path: SimpleNamespace(
@@ -2052,3 +2084,538 @@ def test_fetch_result_defaults():
     assert r.reply_unmatched == 0
     assert r.errors == 0
     assert r.saved_files == []
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    ("subject", "sender", "body", "pdf", "expected_inline"),
+    [
+        (
+            "Thank you for your payment to Example",
+            "billing@example.com",
+            "Receipt attached",
+            True,
+            False,
+        ),
+        ("Your Revolut account T&Cs", "no-reply@revolut.com", "Terms attached", True, False),
+        ("Your receipt", "shop@example.com", "Total: $12.34", False, True),
+        ("Your receipt", "shop@example.com", "Total: $12.34", True, False),
+        (
+            "Your payment of $12 is scheduled for Oct. 12, 2026",
+            "capitalone@notification.capitalone.com",
+            "Please review your payment details.",
+            True,
+            False,
+        ),
+    ],
+)
+def test_fetch_finance_discovery_plain_text_and_notice_attachments(
+    db, tmp_path, subject, sender, body, pdf, expected_inline, dry_run
+):
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = sender
+    message["Message-ID"] = "<finance@example.com>"
+    message["Date"] = "Sun, 11 Oct 2026 09:30:00 -0400"
+    message.set_content(body)
+    payload = message.as_bytes()
+    moved = []
+
+    class Connection(_NoopImapConnection):
+        def select(self, mailbox, readonly=False):
+            assert readonly is dry_run
+            return "OK", [b"1"]
+
+        def uid(self, command, uid, *args):
+            assert command == "fetch"
+            assert args == ("(BODY.PEEK[])",)
+            return "OK", [b"payload"]
+
+        def expunge(self):
+            return "OK", []
+
+    sr = SimpleNamespace(
+        load_config=lambda _: SimpleNamespace(imap=SimpleNamespace(mailboxes=["INBOX"])),
+        validate_imap=lambda _: None,
+        open_imap_connection=lambda _: Connection(),
+        extract_fetch_payload=lambda _: payload,
+        decode_mime_header=lambda value: str(value or ""),
+        extract_message_bodies=lambda _: (body, ""),
+        extract_attachments=lambda _: (
+            [("notice.pdf", "application/pdf", b"%PDF-1.4\n")] if pdf else []
+        ),
+        mark_message_read=lambda *_: None,
+        move_message=lambda _conn, uid, label: moved.append((uid, label)),
+    )
+    settings = {"receipt_dir": str(tmp_path), "email": {"shock_relay_config": "/tmp/example"}}
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[42]) as search,
+        patch("intake.email._process_reply_messages"),
+        patch("intake.email._upsert_html_receipt") as inline,
+    ):
+        result = fetch_receipts(settings, db, verbose=False, dry_run=dry_run)
+    assert result.errors == 0
+    if dry_run:
+        assert result.attachments_saved == 0
+        assert inline.called is False
+        assert moved == []
+        assert db.execute("select count(*) from email_receipts").fetchone()[0] == 0
+        assert list(tmp_path.rglob("*.pdf")) == []
+        return
+    assert result.attachments_saved == int(pdf)
+    assert inline.called is expected_inline
+    assert moved == [(42, "intake/processed")]
+    assert "thank you for your payment" in search.call_args.args[2]
+    assert "statement" in search.call_args.args[2]
+    assert "no-reply@revolut.com" in search.call_args.kwargs["sender_hints"]
+
+
+def test_amex_mycredit_guide_alert_is_non_spend():
+    result = _extract_credit_reporting_email(
+        "Your FICO® Score* has increased",
+        "American Express MyCredit Guide <noreply@notificationmycredit-guide.americanexpress.com>",
+        "Your FICO score increased to 750.",
+    )
+    assert result["merchant"] == "american express mycredit guide"
+    assert result["total"] is None
+    assert result["processed_by"] == "email-credit-reporting"
+
+
+@pytest.mark.parametrize(
+    ("subject", "sender", "category"),
+    [
+        ("Your statement is ready", "service@paypal.com", "documents/financial"),
+        (
+            "Reader, your September account statement is available.",
+            "PayPal <noreply@service.paypal.com>",
+            "documents/financial",
+        ),
+        (
+            "Statement Available",
+            "Huntington Bank <HuntingtonOnline@email.huntington.com>",
+            "documents/financial",
+        ),
+        (
+            "Reader, a reminder to pay your auto policy.",
+            "Progressive <customerservice@e.progressive.com>",
+            "documents/financial",
+        ),
+        (
+            "Final Warning: Account Dormancy",
+            "FanDuel Sportsbook <email@t.sb.fanduel.com>",
+            "documents/financial",
+        ),
+        (
+            "Reminder: Warning Of Account Dormancy",
+            "FanDuel Sportsbook <email@t.sb.fanduel.com>",
+            "documents/financial",
+        ),
+        (
+            "You have a new statement online",
+            "discover@services.discover.com",
+            "documents/financial",
+        ),
+        ("We reviewed your credit report", "geico@et.geico.com", "documents/financial"),
+        ("You’ve received your monthly interest", "noreply@wise.com", "documents/income"),
+    ],
+)
+def test_finance_notices_are_documents_without_spend(db, tmp_path, subject, sender, category):
+    settings = {"receipt_dir": str(tmp_path)}
+    _upsert_html_receipt(
+        db,
+        42,
+        "INBOX",
+        subject,
+        sender,
+        "Sun, 11 Oct 2026 09:30:00 -0400",
+        "Account notice: $500 balance. Payment Due Date: October 20, 2026. Minimum Payment Due: $35.00.",
+        settings,
+    )
+    assert db.execute("select count(*) from receipts").fetchone()[0] == 0
+    row = dict(db.execute("select * from documents").fetchone())
+    assert row["category"] == category
+    assert row["title"] == subject
+    assert row["document_date"] == "2026-10-11"
+    assert (tmp_path / row["receipt_dir"] / row["filename"]).exists()
+
+
+def test_tinder_renewal_uses_total_instead_of_future_price():
+    from intake.email import _extract_structured_finance_email
+
+    result = _extract_structured_finance_email(
+        "Your Tinder Gold Subscription Has Been Renewed!",
+        "noreply@gotinder.com",
+        "Your payment details\nTotal: $43.99\nExpiration Date: 11/01/2026\n"
+        "Your subscription will automatically continue at $39.99 until you cancel.",
+    )
+    assert result["total"] == 43.99
+    assert result["merchant"] == "tinder"
+    assert result["receipt_date"] is None
+
+
+@pytest.mark.parametrize("total,currency", [(12, "USD"), (25, "USD"), (30, "EUR")])
+def test_binance_bundle_uses_fiat_total_not_asset_prices(total, currency):
+    from intake.email import _extract_structured_finance_email
+
+    result = _extract_structured_finance_email(
+        "Binance.US | You’ve successfully purchased Example bundle",
+        "hello@binance.us",
+        "Status: Successful\nDate & time: 2026-10-10 22:14:27 (UTC)\n"
+        f"Asset: BTC\nAsset cost: 85000.123\nAsset amount: 0.00001\nTotal: {total} {currency}\n",
+    )
+    assert result["total"] == total
+    assert result["currency"] == currency
+    assert result["receipt_date"] == date(2026, 10, 10)
+    assert result["category"] == "finance/crypto"
+
+
+@pytest.mark.parametrize(
+    "subject,sender,body",
+    [
+        ("Now Live in Binance.US Wallet", "hello@binance.us", "Total: 25 USD"),
+        (
+            "Binance.US | You’ve successfully purchased BTC",
+            "hello@binance.us",
+            "Status: Failed\nTotal: 25 USD",
+        ),
+        ("Meet new people on Tinder", "noreply@gotinder.com", "Gold costs $39.99"),
+    ],
+)
+def test_provider_promotions_and_failed_orders_are_not_structured_purchases(subject, sender, body):
+    from intake.email import _extract_structured_finance_email
+
+    assert _extract_structured_finance_email(subject, sender, body) is None
+
+
+def test_tinder_renewal_stores_message_date_not_expiration(db, tmp_path):
+    _upsert_html_receipt(
+        db,
+        42,
+        "INBOX",
+        "Your Tinder Gold Subscription Has Been Renewed!",
+        "noreply@gotinder.com",
+        "Mon, 12 Oct 2026 07:04:55 +0000",
+        "Your payment details\nTotal: $43.99\nExpiration Date: 11/12/2026\n"
+        "Future renewals will cost $39.99.",
+        {"receipt_dir": str(tmp_path)},
+    )
+    row = dict(db.execute("select * from receipts").fetchone())
+    assert row["merchant"] == "tinder"
+    assert row["total"] == 43.99
+    assert row["scan_date"] == "2026-10-12"
+    assert row["processed_by"] == "email-tinder-renewal"
+
+
+@pytest.mark.parametrize("trade_date", ["20261009", "10/09/2026"])
+def test_schwab_trade_notice_is_investment_document_without_spend(db, tmp_path, trade_date):
+    from intake.email import _extract_structured_finance_email
+
+    subject = "Schwab Trade Confirmation eNotification account ending in 123"
+    sender = "Schwab Alerts <donotreply@mail.schwab.com>"
+    body = (
+        f"Your trade confirmation(s) for {trade_date} is available at schwab.com/reports.\n"
+        "Log in to view your report.\nSymbol:\nABC\nSecurity Description:\nExample Fund\n"
+        "Symbol:\nXYZ\nSymbol:\nABC\n"
+    )
+    fields = _extract_structured_finance_email(subject, sender, body)
+    assert fields["document_kind"] == "documents/investments"
+    assert fields["document_date"] == "2026-10-09"
+    assert fields["subject"] == "Securities: ABC, XYZ"
+    with patch("intake.personal_finance.trigger_personal_finance") as downstream:
+        _upsert_html_receipt(
+            db,
+            42,
+            "INBOX",
+            subject,
+            sender,
+            "Sat, 10 Oct 2026 06:27:28 -0600",
+            body,
+            {"receipt_dir": str(tmp_path)},
+        )
+    assert not downstream.called
+    assert db.execute("select count(*) from receipts").fetchone()[0] == 0
+    row = dict(db.execute("select * from documents").fetchone())
+    assert row["document_date"] == "2026-10-09"
+    assert row["scan_date"] == "2026-10-10"
+    assert row["category"] == "documents/investments"
+    assert row["processed_by"] == "email-schwab-trade-notice"
+    artifact = tmp_path / row["receipt_dir"] / row["filename"]
+    assert artifact.read_text() == body
+    assert read_sidecar(artifact)["subject"] == "Securities: ABC, XYZ"
+
+
+@pytest.mark.parametrize(
+    "subject,sender",
+    [
+        ("Schwab Market Update", "donotreply@mail.schwab.com"),
+        ("Schwab Trade Confirmation", "news@example.com"),
+    ],
+)
+def test_schwab_promotions_and_other_senders_do_not_match(subject, sender):
+    from intake.email import _extract_structured_finance_email
+
+    assert _extract_structured_finance_email(subject, sender, "Symbol:\nABC") is None
+
+
+def test_schwab_invalid_trade_date_uses_notification_date(db, tmp_path):
+    _upsert_html_receipt(
+        db,
+        42,
+        "INBOX",
+        "Schwab Trade Confirmation eNotification",
+        "donotreply@mail.schwab.com",
+        "Sat, 10 Oct 2026 06:27:28 -0600",
+        "Your trade confirmation(s) for 20261340 is available online.",
+        {"receipt_dir": str(tmp_path)},
+    )
+    assert db.execute("select document_date from documents").fetchone()[0] == "2026-10-10"
+
+
+def test_kalshi_relay_liquidation_is_investment_document_without_spend(db, tmp_path):
+    from intake.email import _extract_structured_finance_email
+
+    subject = "Your COPPER PERP position was liquidated"
+    sender = "Kalshi <no-reply_at_kalshi_com_abc123_def456@privaterelay.appleid.com>"
+    body = (
+        "Your position was liquidated at $1234.56.\n"
+        "LIQUIDATION EXECUTED\nCOPPER PERP - Long 4.0x\n"
+        "Amount 7 contracts\nLiquidation price $1234.56\n"
+    )
+    fields = _extract_structured_finance_email(subject, sender, body)
+    assert fields["document_kind"] == "documents/investments"
+    assert fields["subject"] == "COPPER PERP"
+    assert "7 contracts" in fields["body_excerpt"]
+    assert "liquidation price $1234.56" in fields["body_excerpt"]
+    _upsert_html_receipt(
+        db,
+        42,
+        "[Gmail]/Spam",
+        subject,
+        sender,
+        "Sun, 18 Oct 2026 22:00:16 +0000",
+        body,
+        {"receipt_dir": str(tmp_path)},
+        structured_email=fields,
+    )
+    assert db.execute("SELECT count(*) FROM receipts").fetchone()[0] == 0
+    row = dict(db.execute("SELECT * FROM documents").fetchone())
+    assert row["document_kind"] == "documents/investments"
+    assert row["processed_by"] == "email-kalshi-liquidation"
+    assert row["document_date"] == "2026-10-18"
+
+
+def test_amex_cash_advance_pin_ready_is_nonspend_document(db, tmp_path):
+    from intake.email import _extract_structured_finance_email
+
+    subject = "Your Cash Advance PIN is Ready"
+    sender = "American Express <AmericanExpress@welcome.americanexpress.com>"
+    body = (
+        "Your PIN is ready below.\nLog into your account to view your secure PIN.\n"
+        "View PIN\nCash Advance Fees and APRs will apply if you withdraw cash."
+    )
+    fields = _extract_structured_finance_email(subject, sender, body)
+    assert fields["document_kind"] == "documents/financial"
+    assert fields["merchant"] == "american express"
+    assert "No cash withdrawal" in fields["body_excerpt"]
+    assert "americanexpress.com" in _configured_receipt_sender_hints({})
+    _upsert_html_receipt(
+        db,
+        43,
+        "INBOX",
+        subject,
+        sender,
+        "Thu, 15 Oct 2026 16:19:07 -0700",
+        body,
+        {"receipt_dir": str(tmp_path)},
+        structured_email=fields,
+    )
+    assert db.execute("SELECT count(*) FROM receipts").fetchone()[0] == 0
+    row = dict(db.execute("SELECT * FROM documents").fetchone())
+    assert row["document_kind"] == "documents/financial"
+    assert row["document_date"] == "2026-10-15"
+
+
+@pytest.mark.parametrize(
+    "subject,sender,body",
+    [
+        (
+            "Your Cash Advance PIN is Ready",
+            "American Express <other@example.com>",
+            "Your PIN is ready. View PIN",
+        ),
+        (
+            "Your Cash Advance PIN is Ready",
+            "AmericanExpress@welcome.americanexpress.com",
+            "Apply for cash advance today. View PIN",
+        ),
+        (
+            "Your cash advance was completed",
+            "AmericanExpress@welcome.americanexpress.com",
+            "Your PIN is ready. View PIN",
+        ),
+    ],
+)
+def test_amex_cash_advance_pin_notice_rejects_other_messages(subject, sender, body):
+    from intake.email import _extract_structured_finance_email
+
+    assert _extract_structured_finance_email(subject, sender, body) is None
+
+
+@pytest.mark.parametrize(
+    "subject,sender,body",
+    [
+        (
+            "Your COPPER PERP position was liquidated",
+            "Kalshi <attacker@example.com>",
+            "LIQUIDATION EXECUTED Amount 7 contracts Liquidation price $1234.56",
+        ),
+        (
+            "New COPPER PERP offer",
+            "no-reply_at_kalshi_com_abc123_def456@privaterelay.appleid.com",
+            "LIQUIDATION EXECUTED Amount 7 contracts Liquidation price $1234.56",
+        ),
+        (
+            "Your COPPER PERP position was liquidated",
+            "no-reply_at_kalshi_com_abc123_def456@privaterelay.appleid.com",
+            "Complete your payment at https://example.com",
+        ),
+    ],
+)
+def test_kalshi_liquidation_rejects_other_messages(subject, sender, body):
+    from intake.email import _extract_structured_finance_email
+
+    assert _extract_structured_finance_email(subject, sender, body) is None
+
+
+def test_spam_recovery_requires_google_apple_relay_authentication():
+    message = EmailMessage()
+    message["Authentication-Results"] = (
+        "mx.google.com; dkim=pass header.i=@privaterelay.appleid.com; "
+        "spf=pass; dmarc=pass header.from=appleid.com"
+    )
+    assert _has_google_apple_relay_authentication(message)
+    spoofed = EmailMessage()
+    spoofed["Authentication-Results"] = (
+        "other.example; dkim=pass header.i=@privaterelay.appleid.com; dmarc=pass"
+    )
+    assert not _has_google_apple_relay_authentication(spoofed)
+
+
+def test_smbc_pending_cash_award_is_nonspend_document(db, tmp_path):
+    from intake.email import _extract_structured_finance_email
+
+    subject = "GLOBAL PASS Start Program Cash Award Notice"
+    sender = "SMBC Trust Bank <info@smbctb.co.jp>"
+    body = (
+        "Your GLOBAL PASS usage amount has met the required condition, and we will "
+        "deposit 10 US Dollar into your PRESTIA MultiMoney USD Savings Deposit account "
+        "in approximately a week. The provision of cash award may be delayed."
+    )
+    parsed = _extract_structured_finance_email(subject, sender, body)
+    assert parsed["document_kind"] == "documents/financial"
+    assert parsed["merchant"] == "SMBC Trust Bank"
+    assert "will deposit 10 US Dollar" in parsed["body_excerpt"]
+    _upsert_html_receipt(
+        db,
+        34841,
+        "INBOX",
+        subject,
+        sender,
+        "Thu, 15 Oct 2026 23:00:50 -0600",
+        body,
+        {"receipt_dir": str(tmp_path)},
+        structured_email=parsed,
+    )
+    row = db.execute("SELECT * FROM documents WHERE filename='email_34841_INBOX.txt'").fetchone()
+    assert row["document_kind"] == "documents/financial"
+    assert (
+        db.execute(
+            "SELECT count(*) FROM receipts WHERE filename='email_34841_INBOX.txt'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert "info@smbctb.co.jp" in _configured_receipt_sender_hints({})
+
+
+@pytest.mark.parametrize(
+    "subject,sender,body",
+    [
+        (
+            "GLOBAL PASS Start Program Cash Award Notice",
+            "news@example.com",
+            "We will deposit 10 US Dollar.",
+        ),
+        ("SMBC newsletter", "info@smbctb.co.jp", "We will deposit 10 US Dollar."),
+        (
+            "GLOBAL PASS Start Program Cash Award Notice",
+            "info@smbctb.co.jp",
+            "Apply now for an award.",
+        ),
+    ],
+)
+def test_smbc_award_parser_rejects_other_messages(subject, sender, body):
+    from intake.email import _extract_structured_finance_email
+
+    assert _extract_structured_finance_email(subject, sender, body) is None
+
+
+def test_wise_transfer_setup_is_pending_nonspend_document(db, tmp_path):
+    from intake.email import _extract_structured_finance_email
+
+    subject = "Transfer set up (#1234567890)"
+    sender = "Wise <noreply@wise.com>"
+    body = (
+        "Communication code: test\nHello Reader,\nYour transfer of 250 USD is set up. "
+        "Your money will get to us in 3 working days. As soon as it gets here, "
+        "we'll convert it. Then we'll send it out to your account."
+    )
+    parsed = _extract_structured_finance_email(subject, sender, body)
+    assert parsed["document_kind"] == "documents/financial"
+    assert parsed["merchant"] == "Wise"
+    assert parsed["body_excerpt"].startswith("Your transfer of 250 USD is set up")
+    _upsert_html_receipt(
+        db,
+        44,
+        "INBOX",
+        subject,
+        sender,
+        "Fri, 16 Oct 2026 04:31:28 +0000",
+        body,
+        {"receipt_dir": str(tmp_path)},
+        structured_email=parsed,
+    )
+    row = db.execute("SELECT * FROM documents WHERE filename='email_44_INBOX.txt'").fetchone()
+    assert row["document_kind"] == "documents/financial"
+    assert (
+        db.execute("SELECT count(*) FROM receipts WHERE filename='email_44_INBOX.txt'").fetchone()[
+            0
+        ]
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    "subject,sender,body",
+    [
+        (
+            "Transfer set up (#1234567890)",
+            "news@example.com",
+            "Your transfer of 250 USD is set up.",
+        ),
+        (
+            "Transfer complete (#1234567890)",
+            "noreply@wise.com",
+            "Your transfer of 250 USD is set up.",
+        ),
+        (
+            "Transfer set up (#1234567890)",
+            "noreply@wise.com",
+            "Your transfer of 250 USD arrived.",
+        ),
+    ],
+)
+def test_wise_setup_parser_requires_pending_status(subject, sender, body):
+    from intake.email import _extract_structured_finance_email
+
+    assert _extract_structured_finance_email(subject, sender, body) is None

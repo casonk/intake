@@ -196,3 +196,22 @@ def test_warranty_routes_as_warranty_document() -> None:
     assert classify_document_type(raw_text, "20260616_1002.pdf") == "document"
     assert document.document_kind == "documents/warranty"
     assert document.serial_number == "SN-123456"
+
+
+def test_financial_policy_documents_never_become_spending():
+    headings = [
+        "Example Prepaid Card Program Cardholder Agreement",
+        "Your Privacy Rights\nIntroduction\nWelcome to Example Bank!",
+        "CUSTOMER PRIVACY POLICY\nEffective date: June 18, 2026",
+        "Example Consent to Electronic Signatures and\nCommunications (ESIGN Consent)",
+        "Your Example Personal Account\nThis document sets out the terms and conditions for your personal account.",
+    ]
+    for heading in headings:
+        text = heading + "\nFees: $100.00\nTotal: $500.00\nTerms and conditions apply."
+        assert classify_document_type(text) == "document"
+        assert classify_document(text) == "documents/financial"
+
+
+def test_receipt_privacy_footer_does_not_become_policy_document():
+    text = "Example Store\nTotal: $12.00\nSee our privacy policy at example.com/privacy."
+    assert classify_document_type(text) == "receipt"

@@ -1,0 +1,20 @@
+[[jobs]]
+name = "intake-newsletter"
+description = "intake daily newsletter digest"
+scope = "user"
+service_type = "oneshot"
+working_directory = "%h"
+exec_start = __EXEC_START__
+after = ["network-online.target"]
+wants = ["network-online.target"]
+standard_output = "journal"
+standard_error = "journal"
+timer_description = "Email intake newsletter highlights daily"
+
+[jobs.environment]
+PYTHONUNBUFFERED = "1"
+
+[jobs.timer]
+kind = "calendar"
+on_calendar = __ON_CALENDAR__
+persistent = true

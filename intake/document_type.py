@@ -154,7 +154,25 @@ def is_identity_document_text(text: str) -> bool:
 
 def is_reference_document_text(text: str) -> bool:
     """Return True when text points to a manual/spec/warranty-style document."""
-    return bool(_REFERENCE_DOCUMENT_RE.search(text or ""))
+    return bool(_REFERENCE_DOCUMENT_RE.search(text or "")) or is_financial_terms_document_text(text)
+
+
+def is_financial_terms_document_text(text: str) -> bool:
+    """Recognize policy/agreement headings before monetary amounts become spend."""
+    opening = (text or "")[:1000]
+    if re.search(
+        r"^[^\n]{0,80}\b(?:cardholder agreement|customer privacy policy"
+        r"|your privacy rights|consent to electronic signatures)\b",
+        opening,
+        re.IGNORECASE | re.MULTILINE,
+    ):
+        return True
+    return bool(
+        re.search(r"\bpersonal account\b", opening, re.IGNORECASE)
+        and re.search(
+            r"\bthis document sets out the terms and conditions\b", opening, re.IGNORECASE
+        )
+    )
 
 
 def is_tax_wage_document_text(text: str) -> bool:

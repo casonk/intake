@@ -129,6 +129,12 @@ reports_dir = "reports"
 # # by default even when this list is left unset.
 # # receipt_senders = ["service@paypal.com", "noreply@wise.com", "venmo@venmo.com", "reserve-noreply@xanterra.com"]
 #
+# # Local Ollama triage for ambiguous legal/payment correspondence. The model
+# # can route supported non-spend documents but cannot create spending records.
+# # Requires the local Ollama service at translation_base_url (default localhost:11434).
+# local_classifier_enabled = true
+# local_classifier_model = "llama3.2:3b-instruct-q8_0"
+#
 # # Optional mailboxes to scan for replies to intake's own Gmail notifications.
 # # Defaults to Gmail sent-mail folders so self-addressed correction replies and
 # # free-form review requests are recorded automatically.
@@ -140,6 +146,9 @@ reports_dir = "reports"
 # archive_processed_messages = true
 #
 # # How far back to search on each run (days)
+# # Searches the first configured shock-relay IMAP mailbox (normally INBOX).
+# # Built-in subjects include payment confirmations, statement and interest
+# # notices; sender hints include Revolut. Only PDF attachments enter OCR.
 # since_days = 90
 #
 # # Daemon polling interval (seconds)
@@ -181,6 +190,13 @@ reports_dir = "reports"
 #
 # # The initial "Receipt processed" email includes the Snowbridge File Browser
 # # link when the receipt path resolves under receipt_dir.
+
+# ── Token Metrics, Bloomberg, and Hump Days highlights (optional) ────────────
+# `intake newsletter --send` uses [email].shock_relay_config and
+# [gmail].recipient; a daily systemd timer can be installed with
+# `intake newsletter --install-timer`.
+# [newsletter]
+# model = "gpt-4o-mini"
 #
 # # Reply to these notification emails with free-form notes or structured lines
 # # like `merchant: kroger` / `total: 88.05`. Intake records the reply in
