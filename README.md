@@ -479,6 +479,16 @@ arrived; newsletters from all three sources are combined when pending.
 Without an OpenAI key, the digest uses short excerpts from the newsletter's
 lead stories.
 
+**Career follow-ups:** Configure `[career].repo_root` and map trusted sender
+domains to employer names in `[career.employers]` (see the settings example).
+The normal `intake email fetch`/daemon scan then saves actionable employer
+requests in the career repo's gitignored `private/intake-email/` folder.
+`intake career fetch --dry-run` previews matching mail; `intake career list`
+shows saved actions. Each action includes the request, any form link, and
+related application folders. A message that does not name a specific role is
+kept as a shared employer action; intake does not advance application status.
+Career mail stays unread in Inbox until the user completes the request.
+
 The `*.ai.json` artifact is cumulative. Each new AI model attempt is appended
 instead of replacing the prior attempt history, and the file includes a
 `models` summary with fidelity weights (`low=1`, `mid=2`, `high=3`) for later
