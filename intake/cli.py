@@ -95,6 +95,10 @@ def _normalise_settings_paths(settings: dict) -> None:
             if pf_cfg.get(key):
                 pf_cfg[key] = str(_repo_relative_path(pf_cfg[key]))
 
+    career_cfg = settings.get("career")
+    if isinstance(career_cfg, dict) and career_cfg.get("repo_root"):
+        career_cfg["repo_root"] = str(_repo_relative_path(career_cfg["repo_root"]))
+
 
 def _promote_misnested_top_level_settings(settings: dict) -> None:
     """Lift known top-level settings out of nested TOML tables.
@@ -3183,6 +3187,20 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
     conn.close()
 
 
+def _cmd_career(args: argparse.Namespace, settings: dict) -> None:
+    from intake.career_email import fetch_actions
+
+    if args.career_command == "fetch":
+        saved = fetch_actions(settings, dry_run=args.dry_run)
+        print(f"Career follow-ups saved: {len(saved)}")
+    elif args.career_command == "list":
+        root = Path(settings.get("career", {}).get("repo_root") or "")
+        if not root.is_dir():
+            raise SystemExit("Set [career].repo_root in config/settings.toml")
+        for path in sorted((root / "private" / "intake-email").glob("*.md")):
+            print(path)
+
+
 def _cmd_newsletter(args: argparse.Namespace, settings: dict) -> None:
     """Generate a short digest from new subscribed newsletter issues."""
     if args.install_timer:
@@ -4779,6 +4797,13 @@ def main() -> None:
     p_em_prune.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
     p_em_prune.add_argument("--dry-run", action="store_true", help="Show changes without writing")
 
+    # career mail
+    p_career = sub.add_parser("career", help="Capture employer follow-ups in the career repo")
+    p_career_sub = p_career.add_subparsers(dest="career_command", required=True)
+    p_career_fetch = p_career_sub.add_parser("fetch", help="Scan employer mail for actions")
+    p_career_fetch.add_argument("--dry-run", action="store_true")
+    p_career_sub.add_parser("list", help="List saved career follow-ups")
+
     args = parser.parse_args()
     settings = _load_settings()
 
@@ -4837,6 +4862,8 @@ def main() -> None:
         _cmd_audit(args, settings)
     elif args.command == "email":
         _cmd_email(args, settings)
+    elif args.command == "career":
+        _cmd_career(args, settings)
     elif args.command == "daemon":
         _cmd_daemon(args, settings)
 
