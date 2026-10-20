@@ -3191,7 +3191,7 @@ def _cmd_career(args: argparse.Namespace, settings: dict) -> None:
     from intake.career_email import fetch_actions
 
     if args.career_command == "fetch":
-        saved = fetch_actions(settings, dry_run=args.dry_run)
+        saved = fetch_actions(settings, dry_run=args.dry_run, refile=getattr(args, "refile", False))
         print(f"Career follow-ups saved: {len(saved)}")
     elif args.career_command == "list":
         root = Path(settings.get("career", {}).get("repo_root") or "")
@@ -4802,6 +4802,11 @@ def main() -> None:
     p_career_sub = p_career.add_subparsers(dest="career_command", required=True)
     p_career_fetch = p_career_sub.add_parser("fetch", help="Scan employer mail for actions")
     p_career_fetch.add_argument("--dry-run", action="store_true")
+    p_career_fetch.add_argument(
+        "--refile",
+        action="store_true",
+        help="also label messages saved earlier ([career].file_mail)",
+    )
     p_career_sub.add_parser("list", help="List saved career follow-ups")
 
     args = parser.parse_args()
