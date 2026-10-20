@@ -91,6 +91,37 @@ _KINDS = (
 )
 # Kinds that ask something of the applicant: their record carries an open action box.
 _OPEN_KINDS = {"request", "screening", "interview", "offer"}
+# Gmail labels under [career].label_prefix ("Career/Rejection", ...).
+LABEL_NAMES = {
+    "confirmation": "Confirmation",
+    "request": "Request",
+    "screening": "Screening",
+    "interview": "Interview",
+    "offer": "Offer",
+    "rejection": "Rejection",
+    "code": "Security code",
+}
+
+
+def file_career_mail(sr, conn, items: list[tuple[int, str]], prefix: str = "Career") -> int:
+    """Label each message; keep ones that need a reply in Inbox, starred; archive the rest.
+
+    Read state is never changed. Returns how many messages were filed.
+    """
+    archived = False
+    for uid, item in items:
+        kind, _, done = item.partition(":")  # "request:done" once its action box is ticked
+        label = f"{prefix}/{LABEL_NAMES.get(kind, kind.title())}"
+        if kind in _OPEN_KINDS and not done:
+            conn.create(label)
+            conn.uid("copy", str(uid), label)
+            conn.uid("store", str(uid), "+FLAGS", r"(\Flagged)")
+        else:
+            sr.move_message(conn, uid, label)  # copy to the label, then leave Inbox
+            archived = True
+    if archived:
+        conn.expunge()
+    return len(items)
 
 
 class _ActionLinks(HTMLParser):
@@ -283,8 +314,15 @@ def save_action(root: Path, message: CareerMessage) -> Path | None:
     return path
 
 
-def fetch_actions(settings: dict, *, dry_run: bool = False, verbose: bool = True) -> list[Path]:
-    """Read matching employer mail without changing Inbox flags or labels."""
+def fetch_actions(
+    settings: dict, *, dry_run: bool = False, verbose: bool = True, refile: bool = False
+) -> list[Path]:
+    """Save career mail to the career repo; with [career].file_mail, label it in Gmail too.
+
+    Filing applies Career/<Kind> labels, keeps messages that need a reply in Inbox
+    (starred), archives the rest, and never changes read state. Only newly saved
+    messages are filed, or every matching one with ``refile``.
+    """
     career = settings.get("career", {})
     root_value = str(career.get("repo_root") or "").strip()
     employers = career.get("employers") or {}
@@ -301,8 +339,10 @@ def fetch_actions(settings: dict, *, dry_run: bool = False, verbose: bool = True
     sr.validate_imap(config)
     mailbox = config.imap.mailboxes[0] if config.imap.mailboxes else "INBOX"
     saved: list[Path] = []
+    filing: list[tuple[int, str]] = []
+    file_mail = bool(career.get("file_mail")) and not dry_run
     with sr.open_imap_connection(config) as conn:
-        status, _ = select_mailbox(conn, mailbox, readonly=True)
+        status, _ = select_mailbox(conn, mailbox, readonly=not file_mail)
         if status != "OK":
             raise RuntimeError(f"Cannot select mailbox {mailbox!r}")
         uids: set[int] = set()
@@ -337,15 +377,21 @@ def fetch_actions(settings: dict, *, dry_run: bool = False, verbose: bool = True
                 ).total_seconds() <= CODE_FRESH_SECONDS
                 if verbose and fresh:
                     print(f"  Career verification code: {organization} (saved for career fill)")
+                created = None
                 if not dry_run and (
                     created := save_code(root, message_id, organization, code, stamp, sender)
                 ):
                     saved.append(created)
+                if created or refile:
+                    filing.append((uid, "code"))
                 continue
             kind = classify(subject, body)
             if not kind or not (_CAREER.search(f"{subject} {body[:6000]}") or _is_portal(sender)):
                 continue
             path = _record_path(root, message_id)
+            if refile and path.exists():
+                ticked = "- [x]" in path.read_text(encoding="utf-8").lower()
+                filing.append((uid, f"{kind}:done" if ticked else kind))
             if path.exists() and "- Action link:" in path.read_text(encoding="utf-8"):
                 continue
             received = stamp.date()
@@ -356,4 +402,13 @@ def fetch_actions(settings: dict, *, dry_run: bool = False, verbose: bool = True
                 print(f"  Career {kind}: {organization}: {subject} -> {path}")
             if not dry_run and (created := save_action(root, message)):
                 saved.append(created)
+                filing.append((uid, kind))
+        if file_mail and filing:
+            filed = file_career_mail(
+                sr, conn, list(dict.fromkeys(filing)), str(career.get("label_prefix") or "Career")
+            )
+            if verbose:
+                print(
+                    f"  Career mail filed: {filed} message(s) labelled under {career.get('label_prefix') or 'Career'}/"
+                )
     return saved

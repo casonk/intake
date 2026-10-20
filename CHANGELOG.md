@@ -1,6 +1,11 @@
 ## Unreleased
 
 ### Added
+- Career mail filing (`[career] file_mail`, `label_prefix`): each career
+  email gets a `Career/<Kind>` Gmail label; requests, screenings, interviews,
+  and offers stay in Inbox, starred, while confirmations, rejections, security
+  codes, and completed requests are archived. Read state is never changed.
+  `intake career fetch --refile` files messages saved earlier.
 - Career mail: application-portal senders (Greenhouse, Workday, Lever, Ashby)
   are recognised, with the employer taken from the subject or an exact
   address key; every career email is saved with a `Kind:` line
