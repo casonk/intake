@@ -1,5 +1,14 @@
 ## Unreleased
 
+### Added
+- Career mail: application-portal senders (Greenhouse, Workday, Lever, Ashby)
+  are recognised, with the employer taken from the subject or an exact
+  address key; every career email is saved with a `Kind:` line
+  (confirmation, request, screening, interview, offer, rejection), and only
+  requests and outcomes needing a reply keep an open action box; emailed
+  verification codes are written owner-only to career's
+  `private/verification-codes/` and never printed.
+
 ### Changed
 - The downstream finance trigger no longer names a private repository in
   tracked files. Its default event directory is now `data/finance-events`;
