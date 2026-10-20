@@ -163,3 +163,36 @@ def test_codes_go_to_career_owner_only_and_records_carry_their_kind(tmp_path):
     saved = save_action(root, message).read_text()
     assert "- Kind: confirmation" in saved and "- [x] Nothing to do (confirmation)" in saved
     assert "jobs/lat" in saved
+
+
+def test_filing_labels_keeps_open_kinds_starred_and_archives_the_rest():
+    from intake.career_email import file_career_mail
+
+    calls = []
+
+    class Conn:
+        def create(self, mailbox):
+            calls.append(("create", mailbox))
+
+        def uid(self, *args):
+            calls.append(("uid", *args))
+            return "OK", []
+
+        def expunge(self):
+            calls.append(("expunge",))
+
+    class SR:
+        @staticmethod
+        def move_message(conn, uid, dest):
+            calls.append(("move", uid, dest))
+
+    filed = file_career_mail(
+        SR, Conn(), [(1, "interview"), (2, "rejection"), (3, "code"), (4, "request:done")]
+    )
+    assert filed == 4
+    assert ("move", 4, "Career/Request") in calls  # a request already completed is archived
+    assert ("uid", "copy", "1", "Career/Interview") in calls
+    assert ("uid", "store", "1", "+FLAGS", r"(\Flagged)") in calls  # starred, still in Inbox
+    assert ("move", 2, "Career/Rejection") in calls and ("move", 3, "Career/Security code") in calls
+    assert calls[-1] == ("expunge",)
+    assert not any("Seen" in str(c) for c in calls)  # read state untouched

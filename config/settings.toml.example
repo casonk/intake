@@ -171,6 +171,9 @@ reports_dir = "reports"
 # repo_root = "/path/to/career"
 # since_days = 30
 # limit = 200
+# file_mail = true        # Career/<Kind> labels; replies needed stay in Inbox (starred),
+#                         # the rest are archived; read state is never changed
+# label_prefix = "Career"
 # [career.employers]
 # "example.com" = "Example Employer"
 # "example@myworkday.com" = "Example Employer"   # an exact portal address
