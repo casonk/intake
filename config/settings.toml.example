@@ -159,8 +159,12 @@ reports_dir = "reports"
 
 # ── Career follow-up email (optional) ─────────────────────────────────────────
 # Uses [email].shock_relay_config. The regular email fetch/daemon also scans
-# these employers and writes actionable requests to the career repo's ignored
-# private/intake-email/ folder. Messages stay unread and in Inbox.
+# these employers and the application portals (Greenhouse, Workday, Lever,
+# Ashby; the employer comes from the subject) and writes each career email to
+# the career repo's ignored private/intake-email/ folder with a Kind line
+# (confirmation, request, screening, interview, offer, rejection). Emailed
+# verification codes go to private/verification-codes/ for career's filler.
+# Messages stay unread and in Inbox.
 # Run: intake career fetch [--dry-run] | intake career list
 #
 # [career]
@@ -169,6 +173,7 @@ reports_dir = "reports"
 # limit = 200
 # [career.employers]
 # "example.com" = "Example Employer"
+# "example@myworkday.com" = "Example Employer"   # an exact portal address
 
 # ── Signal notifications (optional) ──────────────────────────────────────────
 # Sends a Signal message after a receipt is successfully processed.
