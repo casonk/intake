@@ -56,6 +56,7 @@ from intake.email import (
     fetch_receipts,
     html_to_text,
 )
+from intake.email_local_classifier import ClassifierUnavailable
 from intake.parse import ReceiptItem
 from intake.sidecar import read_sidecar
 
@@ -1818,6 +1819,22 @@ def test_fetch_receipts_classifies_an_unmatched_candidate_only_once(db, tmp_path
         (42001, "INBOX"),
     ).fetchone()
     assert row["status"] == "unmatched"
+
+    # An outage is not a verdict: the next poll must classify again.
+    db.execute("DELETE FROM email_receipts")
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[42001]),
+        patch("intake.email._process_reply_messages"),
+        patch(
+            "intake.email.classify_ambiguous_email",
+            side_effect=ClassifierUnavailable("held"),
+        ) as unavailable,
+    ):
+        fetch_receipts(settings, db, dry_run=False, verbose=False)
+        fetch_receipts(settings, db, dry_run=False, verbose=False)
+    assert unavailable.call_count == 2
+    assert not is_email_processed(db, uid=42001, mailbox="INBOX")
 
 
 def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monkeypatch):

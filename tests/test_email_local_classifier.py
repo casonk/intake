@@ -8,6 +8,7 @@ import pytest
 from intake.db import init_db
 from intake.email import _looks_like_receipt, _upsert_html_receipt
 from intake.email_local_classifier import (
+    ClassifierUnavailable,
     classify_ambiguous_email,
     is_legal_payment_correspondence,
 )
@@ -59,6 +60,16 @@ def test_local_classifier_only_routes_unpaid_legal_correspondence(monkeypatch):
     assert "bank transfer" in document["body_excerpt"]
     assert classify_ambiguous_email(*args) is None
     assert classify_ambiguous_email(*args) is None
+
+
+def test_local_classifier_reports_an_unavailable_model(monkeypatch):
+    def unreachable(_request, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("intake.email_local_classifier.urlopen", unreachable)
+    args = ("Re: cash payment", "Counsel <counsel@example.com>", _BODY, {"email": {}})
+    with pytest.raises(ClassifierUnavailable):
+        classify_ambiguous_email(*args)
 
 
 def test_legal_payment_thread_is_stored_as_document_without_spend(db, tmp_path, monkeypatch):

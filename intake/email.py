@@ -32,6 +32,7 @@ from intake.email_filing import (
     same_mailbox_label,
 )
 from intake.email_local_classifier import (
+    ClassifierUnavailable,
     classify_ambiguous_email,
     is_legal_payment_correspondence,
 )
@@ -356,6 +357,7 @@ def fetch_receipts(
 
                     saved_count = 0
                     inline_processed = False
+                    classifier_unavailable = False
                     if not dry_run:
                         for filename, _ct, data in pdf_attachments:
                             dest = _safe_save_receipt_pdf(
@@ -381,9 +383,12 @@ def fetch_receipts(
                         )
                         legal_payment_discussion = is_legal_payment_correspondence(subject, plain)
                         if structured_email is None and not pdf_attachments:
-                            structured_email = classify_ambiguous_email(
-                                subject, sender, plain, settings
-                            )
+                            try:
+                                structured_email = classify_ambiguous_email(
+                                    subject, sender, plain, settings
+                                )
+                            except ClassifierUnavailable:
+                                classifier_unavailable = True
                         if structured_email is not None or (
                             not pdf_attachments
                             and not legal_payment_discussion
@@ -412,6 +417,15 @@ def fetch_receipts(
 
                     if not dry_run:
                         if not _email_was_handled(saved_count, inline_processed):
+                            if classifier_unavailable:
+                                # No verdict yet (model down or held by the GPU
+                                # gate): leave it unrecorded to classify next poll.
+                                if verbose:
+                                    print(
+                                        f"    skip (classifier unavailable, retry later): {subject!r}"
+                                    )
+                                result.skipped += 1
+                                continue
                             # Remember the verdict so the next poll does not
                             # classify the same message again.
                             record_email_receipt(
