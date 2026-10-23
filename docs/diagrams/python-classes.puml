@@ -1,4 +1,4 @@
-@startuml classes_intake
+@startuml classes_checkout
 set namespaceSeparator none
 class "Card" as intake.parse_card.Card {
   card_date : date | None
@@ -9,6 +9,17 @@ class "Card" as intake.parse_card.Card {
   recipient : str | None
   scan_date : date
   sender : str | None
+}
+class "CareerMessage" as intake.career_email.CareerMessage {
+  body : str
+  html : str
+  kind : str
+  message_id : str
+  organization : str
+  received : date
+  sender : str
+  subject : str
+  uid : int
 }
 class "Document" as intake.parse_document.Document {
   body_excerpt : str
@@ -44,6 +55,15 @@ class "Letter" as intake.parse_letter.Letter {
   scan_date : date
   sender : str | None
   subject : str | None
+}
+class "NewsletterIssue" as intake.newsletter.NewsletterIssue {
+  body : str
+  mailbox : str
+  message_id : str
+  sent_date : date
+  source : str
+  subject : str
+  uid : int
 }
 class "Payment" as intake.parse_payment.Payment {
   account_last4 : str | None
@@ -100,6 +120,13 @@ class "ReceiptStaff" as intake.staff.ReceiptStaff {
 class "RoutedDocument" as intake.document_routing.RoutedDocument {
   personal_finance_event : dict | None
   processed : bool
+}
+class "_ActionLinks" as intake.career_email._ActionLinks {
+  links : list[tuple[str, str]]
+  sender_domain : str
+  handle_data(data: str) -> None
+  handle_endtag(tag: str) -> None
+  handle_starttag(tag: str, attrs: list[tuple[str, str | None]]) -> None
 }
 class "_ReportHandler" as intake.web._ReportHandler {
   do_GET() -> None
