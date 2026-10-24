@@ -32,6 +32,7 @@ from intake.email_filing import (
     same_mailbox_label,
 )
 from intake.email_local_classifier import (
+    ClassifierUnavailable,
     classify_ambiguous_email,
     is_legal_payment_correspondence,
 )
@@ -75,6 +76,8 @@ _INTAKE_RECEIPT_DIR_HEADER = email_reply._INTAKE_RECEIPT_DIR_HEADER
 _PORTFOLIO_SERVICE_HEADER = email_reply._PORTFOLIO_SERVICE_HEADER
 _CREW_CHIEF_INTENT_HEADER = email_reply._CREW_CHIEF_INTENT_HEADER
 _INTAKE_SERVICE_VALUE = email_reply._INTAKE_SERVICE_VALUE
+# Recorded for candidates with no receipt content: skipped later, never filed.
+UNMATCHED_STATUS = "unmatched"
 _INTAKE_GENERATED_INTENTS = email_reply._INTAKE_GENERATED_INTENTS
 
 
@@ -282,6 +285,16 @@ def fetch_receipts(
                     if is_email_processed(db_conn, uid, mailbox) or (
                         message_id and is_email_message_id_processed(db_conn, message_id)
                     ):
+                        tracking = _email_message_tracking_state(
+                            db_conn, uid=uid, mailbox=mailbox, message_id=message_id
+                        )
+                        if tracking["status"] == UNMATCHED_STATUS:
+                            # Checked before and not a receipt: leave it in the
+                            # inbox, and do not classify it (an LLM call) again.
+                            if verbose:
+                                print(f"    skip (no receipt content, checked before): {subject!r}")
+                            result.skipped += 1
+                            continue
                         if not dry_run:
                             filed = _file_message_to_processed_label(
                                 sr,
@@ -344,6 +357,7 @@ def fetch_receipts(
 
                     saved_count = 0
                     inline_processed = False
+                    classifier_unavailable = False
                     if not dry_run:
                         for filename, _ct, data in pdf_attachments:
                             dest = _safe_save_receipt_pdf(
@@ -369,9 +383,12 @@ def fetch_receipts(
                         )
                         legal_payment_discussion = is_legal_payment_correspondence(subject, plain)
                         if structured_email is None and not pdf_attachments:
-                            structured_email = classify_ambiguous_email(
-                                subject, sender, plain, settings
-                            )
+                            try:
+                                structured_email = classify_ambiguous_email(
+                                    subject, sender, plain, settings
+                                )
+                            except ClassifierUnavailable:
+                                classifier_unavailable = True
                         if structured_email is not None or (
                             not pdf_attachments
                             and not legal_payment_discussion
@@ -400,6 +417,28 @@ def fetch_receipts(
 
                     if not dry_run:
                         if not _email_was_handled(saved_count, inline_processed):
+                            if classifier_unavailable:
+                                # No verdict yet (model down or held by the GPU
+                                # gate): leave it unrecorded to classify next poll.
+                                if verbose:
+                                    print(
+                                        f"    skip (classifier unavailable, retry later): {subject!r}"
+                                    )
+                                result.skipped += 1
+                                continue
+                            # Remember the verdict so the next poll does not
+                            # classify the same message again.
+                            record_email_receipt(
+                                db_conn,
+                                uid=uid,
+                                mailbox=mailbox,
+                                message_id=message_id,
+                                subject=subject,
+                                sender=sender,
+                                received_at=date_str,
+                                attachment_count=0,
+                                status=UNMATCHED_STATUS,
+                            )
                             if verbose:
                                 print(f"    skip (no receipt content matched): {subject!r}")
                             result.skipped += 1

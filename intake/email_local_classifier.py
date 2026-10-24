@@ -21,6 +21,10 @@ _PAYMENT_COMPLETED = re.compile(
 _MODEL = "llama3.2:3b-instruct-q8_0"
 
 
+class ClassifierUnavailable(RuntimeError):
+    """The local model gave no verdict (down, busy, or unparseable); ask again later."""
+
+
 def is_legal_payment_correspondence(subject: str, body: str) -> bool:
     """Identify payment discussion in a legal thread before receipt heuristics."""
     current_text = body.split("差出人:", 1)[0].split("From:", 1)[0]
@@ -37,6 +41,8 @@ def classify_ambiguous_email(subject: str, sender: str, body: str, settings: dic
 
     The model is a triage aid. It cannot create a receipt or infer a payment from
     an intent to pay. Unknown and unavailable-model results remain in the inbox.
+    Raises ClassifierUnavailable when the model gives no verdict, so a caller
+    that remembers verdicts does not mistake an outage for "not a document".
     """
     email_cfg = settings.get("email", {})
     if email_cfg.get("local_classifier_enabled", True) is False:
@@ -75,8 +81,8 @@ def classify_ambiguous_email(subject: str, sender: str, body: str, settings: dic
         with urlopen(request, timeout=45) as response:  # noqa: S310
             payload = json.load(response)
         result = json.loads(str(payload.get("response") or ""))
-    except (HTTPError, URLError, TimeoutError, ValueError, OSError):
-        return None
+    except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+        raise ClassifierUnavailable(f"local classifier {model} gave no verdict: {exc}") from exc
     if not isinstance(result, dict) or result.get("kind") != "legal_correspondence":
         return None
     if result.get("payment_completed") is not False:

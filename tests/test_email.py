@@ -56,6 +56,7 @@ from intake.email import (
     fetch_receipts,
     html_to_text,
 )
+from intake.email_local_classifier import ClassifierUnavailable
 from intake.parse import ReceiptItem
 from intake.sidecar import read_sidecar
 
@@ -1753,6 +1754,87 @@ def test_fetch_receipts_files_known_non_receipt_notice_as_ignored(db, tmp_path):
     ).fetchone()
     assert row["status"] == "ignored"
     assert get_receipt(db, "email_41001_INBOX.txt") is None
+
+
+def test_fetch_receipts_classifies_an_unmatched_candidate_only_once(db, tmp_path):
+    message = EmailMessage()
+    message["Message-ID"] = "<conversation@example.com>"
+    message["Subject"] = "RE: Alex - cash payment"
+    message["From"] = "Pat <pat@example.com>"
+    message["Date"] = "Fri, 01 May 2026 09:32:35 +0000"
+    message.set_content("Thanks, let's talk about it on Monday.")
+    payload = message.as_bytes()
+    read_uids: list[int] = []
+    moved_uids: list[tuple[int, str]] = []
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [b"1"])
+
+        def uid(self, command, uid, *args):
+            assert command == "fetch"
+            return ("OK", [b"payload"])
+
+        def expunge(self):
+            return ("OK", [b"0"])
+
+    sr = SimpleNamespace(
+        load_config=lambda _path: SimpleNamespace(
+            imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None)
+        ),
+        validate_imap=lambda _config: None,
+        open_imap_connection=lambda _config: _Connection(),
+        extract_fetch_payload=lambda _msg_data: payload,
+        decode_mime_header=lambda value: str(value or ""),
+        extract_message_bodies=lambda _msg: ("Thanks, let's talk about it on Monday.", ""),
+        extract_attachments=lambda _payload: [],
+        mark_message_read=lambda _conn, uid: read_uids.append(uid),
+        move_message=lambda _conn, uid, label: moved_uids.append((uid, label)),
+    )
+    settings = {
+        "receipt_dir": str(tmp_path / "receipts"),
+        "email": {"shock_relay_config": "/tmp/config.local.yaml"},
+    }
+
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[42001]),
+        patch("intake.email._process_reply_messages"),
+        patch("intake.email.classify_ambiguous_email", return_value=None) as classify,
+    ):
+        first = fetch_receipts(settings, db, dry_run=False, verbose=False)
+        second = fetch_receipts(settings, db, dry_run=False, verbose=False)
+
+    assert classify.call_count == 1, "a known non-receipt must not be classified again"
+    assert (first.skipped, second.skipped) == (1, 1)
+    assert moved_uids == [] and read_uids == [], "an unmatched message stays in the inbox"
+    row = db.execute(
+        "SELECT status FROM email_receipts WHERE uid = ? AND mailbox = ?",
+        (42001, "INBOX"),
+    ).fetchone()
+    assert row["status"] == "unmatched"
+
+    # An outage is not a verdict: the next poll must classify again.
+    db.execute("DELETE FROM email_receipts")
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[42001]),
+        patch("intake.email._process_reply_messages"),
+        patch(
+            "intake.email.classify_ambiguous_email",
+            side_effect=ClassifierUnavailable("held"),
+        ) as unavailable,
+    ):
+        fetch_receipts(settings, db, dry_run=False, verbose=False)
+        fetch_receipts(settings, db, dry_run=False, verbose=False)
+    assert unavailable.call_count == 2
+    assert not is_email_processed(db, uid=42001, mailbox="INBOX")
 
 
 def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monkeypatch):
