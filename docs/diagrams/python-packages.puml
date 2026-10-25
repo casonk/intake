@@ -3,11 +3,12 @@ set namespaceSeparator none
 top to bottom direction
 skinparam componentStyle rectangle
 rectangle "conftest\n1 python file" as conftest
-rectangle "intake\n1 child pkg, 38 modules\n41 python files\nexamples: ai, ai_card, ai_letter" as intake
+rectangle "intake\n1 child pkg, 41 modules\n44 python files\nexamples: ai, ai_card, ai_letter" as intake
 rectangle "intake.ai\n1 python file" as intake.ai
 rectangle "intake.ai_card\n1 python file" as intake.ai_card
 rectangle "intake.ai_letter\n1 python file" as intake.ai_letter
 rectangle "intake.ai_payment\n1 python file" as intake.ai_payment
+rectangle "intake.career_email\n1 python file" as intake.career_email
 rectangle "intake.certification\n1 python file" as intake.certification
 rectangle "intake.classify\n1 python file" as intake.classify
 rectangle "intake.cli\n1 python file" as intake.cli
@@ -17,6 +18,7 @@ rectangle "intake.document_type\n1 python file" as intake.document_type
 rectangle "intake.email\n1 python file" as intake.email
 rectangle "intake.email_filing\n1 python file" as intake.email_filing
 rectangle "intake.email_finance\n1 python file" as intake.email_finance
+rectangle "intake.email_local_classifier\n1 python file" as intake.email_local_classifier
 rectangle "intake.email_provider\n1 python file" as intake.email_provider
 rectangle "intake.email_reply\n1 python file" as intake.email_reply
 rectangle "intake.email_text\n1 python file" as intake.email_text
@@ -27,6 +29,7 @@ rectangle "intake.language\n1 python file" as intake.language
 rectangle "intake.media\n1 python file" as intake.media
 rectangle "intake.merchant\n1 python file" as intake.merchant
 rectangle "intake.naming\n1 python file" as intake.naming
+rectangle "intake.newsletter\n1 python file" as intake.newsletter
 rectangle "intake.notify\n1 python file" as intake.notify
 rectangle "intake.ocr\n1 python file" as intake.ocr
 rectangle "intake.parse\n1 python file" as intake.parse
@@ -55,7 +58,11 @@ intake.ai_letter --> intake.ai
 intake.ai_letter --> intake.parse_letter
 intake.ai_payment --> intake.ai
 intake.ai_payment --> intake.parse_payment
+intake.career_email --> intake.email
+intake.career_email --> intake.email_provider
+intake.career_email --> intake.email_text
 intake.cli --> intake.ai
+intake.cli --> intake.career_email
 intake.cli --> intake.certification
 intake.cli --> intake.classify
 intake.cli --> intake.db
@@ -68,6 +75,7 @@ intake.cli --> intake.language
 intake.cli --> intake.media
 intake.cli --> intake.merchant
 intake.cli --> intake.naming
+intake.cli --> intake.newsletter
 intake.cli --> intake.notify
 intake.cli --> intake.ocr
 intake.cli --> intake.parse
@@ -99,12 +107,14 @@ intake.document_routing --> intake.sidecar
 intake.document_type --> intake.purchaser
 intake.email --> intake
 intake.email --> intake.ai
+intake.email --> intake.career_email
 intake.email --> intake.certification
 intake.email --> intake.classify
 intake.email --> intake.db
 intake.email --> intake.email
 intake.email --> intake.email_filing
 intake.email --> intake.email_finance
+intake.email --> intake.email_local_classifier
 intake.email --> intake.email_provider
 intake.email --> intake.email_reply
 intake.email --> intake.email_text
@@ -135,6 +145,10 @@ intake.extract --> intake.parse_letter
 intake.extract --> intake.parse_payment
 intake.extract --> intake.translation
 intake.file_links --> intake.media
+intake.newsletter --> intake.email
+intake.newsletter --> intake.email_filing
+intake.newsletter --> intake.email_provider
+intake.newsletter --> intake.email_text
 intake.notify --> intake.file_links
 intake.notify --> intake.parse
 intake.ocr --> intake.media
