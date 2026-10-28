@@ -1,8 +1,13 @@
 ## Unreleased
 
+- Rename the career-mail module to `intake.job_search_mail` (and its test) so the
+  repository no longer carries a path that matches a private repository name.
+  Behaviour, the `[career]` settings section, the `intake career` command, and
+  the default `Career` label prefix are unchanged.
+
 ### Added
 - Career mail filing (`[career] file_mail`, `label_prefix`): each career
-  email gets a `Career/<Kind>` Gmail label; requests, screenings, interviews,
+  email gets a `<label_prefix>/<Kind>` Gmail label; requests, screenings, interviews,
   and offers stay in Inbox, starred, while confirmations, rejections, security
   codes, and completed requests are archived. Read state is never changed.
   `intake career fetch --refile` files messages saved earlier.
