@@ -91,7 +91,7 @@ _KINDS = (
 )
 # Kinds that ask something of the applicant: their record carries an open action box.
 _OPEN_KINDS = {"request", "screening", "interview", "offer"}
-# Gmail labels under [career].label_prefix ("Career/Rejection", ...).
+# Gmail labels under [career].label_prefix (<prefix>/Rejection, ...).
 LABEL_NAMES = {
     "confirmation": "Confirmation",
     "request": "Request",
@@ -319,7 +319,7 @@ def fetch_actions(
 ) -> list[Path]:
     """Save career mail to the career repo; with [career].file_mail, label it in Gmail too.
 
-    Filing applies Career/<Kind> labels, keeps messages that need a reply in Inbox
+    Filing applies <label_prefix>/<Kind> labels, keeps messages that need a reply in Inbox
     (starred), archives the rest, and never changes read state. Only newly saved
     messages are filed, or every matching one with ``refile``.
     """

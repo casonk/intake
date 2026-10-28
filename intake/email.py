@@ -533,7 +533,7 @@ def fetch_receipts(
 
     if settings.get("career", {}).get("repo_root"):
         try:
-            from intake.career_email import fetch_actions  # noqa: PLC0415
+            from intake.job_search_mail import fetch_actions  # noqa: PLC0415
 
             fetch_actions(settings, dry_run=dry_run, verbose=verbose)
         except Exception as exc:

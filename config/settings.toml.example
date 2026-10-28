@@ -168,10 +168,10 @@ reports_dir = "reports"
 # Run: intake career fetch [--dry-run] | intake career list
 #
 # [career]
-# repo_root = "/path/to/career"
+# repo_root = "/path/to/job-search-workspace"
 # since_days = 30
 # limit = 200
-# file_mail = true        # Career/<Kind> labels; replies needed stay in Inbox (starred),
+# file_mail = true        # <label_prefix>/<Kind> labels; replies needed stay in Inbox (starred),
 #                         # the rest are archived; read state is never changed
 # label_prefix = "Career"
 # [career.employers]
