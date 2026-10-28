@@ -3188,7 +3188,7 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
 
 
 def _cmd_career(args: argparse.Namespace, settings: dict) -> None:
-    from intake.career_email import fetch_actions
+    from intake.job_search_mail import fetch_actions
 
     if args.career_command == "fetch":
         saved = fetch_actions(settings, dry_run=args.dry_run, refile=getattr(args, "refile", False))

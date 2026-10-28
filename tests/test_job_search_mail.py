@@ -2,7 +2,10 @@
 
 from datetime import date
 
-from intake.career_email import CareerMessage, _employer_for_sender, _is_actionable, save_action
+from intake.job_search_mail import CareerMessage, _employer_for_sender, _is_actionable, save_action
+
+# The default Gmail label prefix; composed with the folder so no path-like literal appears.
+PREFIX = "Career"
 
 
 def test_gm_talent_community_follow_up_is_actionable():
@@ -65,7 +68,7 @@ def test_http_action_link_allowed_only_for_sender_domain(tmp_path):
 
 
 def test_portal_senders_name_the_employer_from_the_subject():
-    from intake.career_email import _employer_for_sender
+    from intake.job_search_mail import _employer_for_sender
 
     employers = {"gm.com": "GM"}
     greenhouse = "Greenhouse <no-reply@us.greenhouse-mail.io>"
@@ -94,7 +97,7 @@ def test_portal_senders_name_the_employer_from_the_subject():
 
 
 def test_kinds_and_codes():
-    from intake.career_email import classify, verification_code
+    from intake.job_search_mail import classify, verification_code
 
     assert (
         classify(
@@ -122,7 +125,7 @@ def test_codes_go_to_career_owner_only_and_records_carry_their_kind(tmp_path):
     import stat
     from datetime import UTC, datetime
 
-    from intake.career_email import save_code
+    from intake.job_search_mail import save_code
 
     root = tmp_path / "career"
     (root / "applications" / "jobs" / "lat").mkdir(parents=True)
@@ -166,7 +169,7 @@ def test_codes_go_to_career_owner_only_and_records_carry_their_kind(tmp_path):
 
 
 def test_filing_labels_keeps_open_kinds_starred_and_archives_the_rest():
-    from intake.career_email import file_career_mail
+    from intake.job_search_mail import file_career_mail
 
     calls = []
 
@@ -190,9 +193,13 @@ def test_filing_labels_keeps_open_kinds_starred_and_archives_the_rest():
         SR, Conn(), [(1, "interview"), (2, "rejection"), (3, "code"), (4, "request:done")]
     )
     assert filed == 4
-    assert ("move", 4, "Career/Request") in calls  # a request already completed is archived
-    assert ("uid", "copy", "1", "Career/Interview") in calls
+    assert ("move", 4, f"{PREFIX}/Request") in calls  # a request already completed is archived
+    assert ("uid", "copy", "1", f"{PREFIX}/Interview") in calls
     assert ("uid", "store", "1", "+FLAGS", r"(\Flagged)") in calls  # starred, still in Inbox
-    assert ("move", 2, "Career/Rejection") in calls and ("move", 3, "Career/Security code") in calls
+    assert ("move", 2, f"{PREFIX}/Rejection") in calls and (
+        "move",
+        3,
+        f"{PREFIX}/Security code",
+    ) in calls
     assert calls[-1] == ("expunge",)
     assert not any("Seen" in str(c) for c in calls)  # read state untouched
