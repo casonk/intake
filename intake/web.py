@@ -7,6 +7,15 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+
+def _portfolio_site():
+    """Where the portfolio theme files come from (resolved per request, so a new link is seen)."""
+    from intake.portfolio import site
+
+    here = Path(__file__).resolve()
+    return site.resolve(here.parents[1], vendored=here.parent / "portfolio")
+
+
 CHROME_TAG = b'<script src="/_portfolio/chrome.js" defer></script>'
 
 
@@ -31,7 +40,23 @@ class _ReportHandler(SimpleHTTPRequestHandler):
         self.send_header("Location", f"/{self._index_name}")
         self.end_headers()
 
+    def _send_portfolio(self) -> None:
+        asset = _portfolio_site().response(self.path)
+        if asset is None:
+            self.send_error(404, "not found")
+            return
+        body, content_type = asset
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:  # noqa: N802
+        if self.path.startswith("/_portfolio/"):
+            self._send_portfolio()
+            return
         if self.path in ("", "/") and Path(self.directory, self._index_name).exists():
             self._redirect_to_index()
             return
