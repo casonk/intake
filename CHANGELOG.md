@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Load the portfolio top bar (`<script src="/_portfolio/chrome.js" defer></script>`, served by the shared Caddy) on the report pages it serves (added when a page is served, so reports generated earlier get it too), so the global navigation and theme rotator appear here too.
 - Rename the career-mail module to `intake.job_search_mail` (and its test) so the
   repository no longer carries a path that matches a private repository name.
   Behaviour, the `[career]` settings section, the `intake career` command, and
