@@ -30,3 +30,15 @@ def test_templates_use_theme_tokens_not_literal_colours():
         found = re.findall(r"(?<![&\w])#[0-9a-fA-F]{3,8}\b|rgba?\(", "\n".join(lines))
         assert found == [], f"{path.name}: {found[:4]}"
         assert "prefers-color-scheme" not in text, path.name
+
+
+def test_a_lone_half_width_chart_card_is_not_left_half_empty():
+    text = (TEMPLATES[0].parent / "intake-report.html.j2").read_text(encoding="utf-8")
+    cards = re.findall(r'<article class="chart-card (half|wide)"', text)
+    run = 0
+    for kind in [*cards, "wide"]:
+        if kind == "half":
+            run += 1
+        else:
+            assert run % 2 == 0, "a half-width chart card has no partner in its row"
+            run = 0
