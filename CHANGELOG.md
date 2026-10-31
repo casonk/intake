@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Answer `/_portfolio/*` itself from a vendored portfolio site seam (`intake/portfolio/`), so the theme and top bar work with no Caddy in front: the owner-only site store first, then a pinned fallback copy. Add `/.portfolio` (ignored) and `config/portfolio-site.example.toml`. See traction-control `docs/portfolio-sites.md`.
+
 - Show the "Extraction Model Mix" chart at full width; it was the only half-width card in its row and left the other half empty.
 
 - Follow the portfolio system themes: the report pages take their colours from the shared tokens (`/_portfolio/theme.css`), so the theme chosen in the top bar restyles them. Reports generated before this change keep their old colours until `intake report` is run again.

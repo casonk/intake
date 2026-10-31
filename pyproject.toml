@@ -62,7 +62,7 @@ where = ["."]
 include = ["intake*"]
 
 [tool.setuptools.package-data]
-intake = ["templates/report/*.j2"]
+intake = ["templates/report/*.j2", "portfolio/*.css", "portfolio/*.js", "portfolio/*.sha256"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

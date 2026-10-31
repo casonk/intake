@@ -51,3 +51,6 @@ config/downstream-repos.local.toml
 # Local config overrides and backups
 config/*.local.toml
 *.bak-*
+
+# Link to this checkout's entry in the portfolio site store (owner-only, local)
+/.portfolio
