@@ -4,14 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Merchant Directory</title>
+<link rel="stylesheet" href="/_portfolio/theme.css">
+<script src="/_portfolio/theme.js"></script>
 <style>
   :root {
-    --ink: #18212f;
-    --muted: #667085;
-    --panel: rgba(255, 255, 255, 0.92);
-    --line: rgba(24, 33, 47, 0.12);
-    --shadow: 0 18px 40px rgba(24, 33, 47, 0.09);
-    --blue: #375a9e;
+    --ink: var(--text);
+    --panel: color-mix(in srgb, var(--surface) 92%, transparent);
+    --line: var(--border);
+    --shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+    --blue: var(--accent);
   }
   * { box-sizing: border-box; }
   body {
@@ -19,8 +20,8 @@
     font-family: "Avenir Next", "Segoe UI", sans-serif;
     color: var(--ink);
     background:
-      radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 32%),
-      linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
+      radial-gradient(circle at top left, color-mix(in srgb, var(--green) 14%, transparent), transparent 32%),
+      var(--bg);
   }
   .page {
     width: 100%;
@@ -30,7 +31,7 @@
   }
   .hero, .panel {
     background: var(--panel);
-    border: 1px solid rgba(24, 33, 47, 0.08);
+    border: 1px solid var(--border);
     border-radius: 24px;
     box-shadow: var(--shadow);
     padding: 24px;
@@ -61,8 +62,8 @@
     display: inline-flex;
     padding: 10px 14px;
     border-radius: 999px;
-    background: rgba(220, 231, 255, 0.78);
-    border: 1px solid rgba(55, 90, 158, 0.18);
+    background: color-mix(in srgb, var(--accent-dim) 78%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
     text-decoration: none;
   }
   .summary-grid { margin-top: 20px; }
@@ -71,8 +72,8 @@
     min-width: 180px;
     padding: 16px;
     border-radius: 18px;
-    background: rgba(248, 247, 243, 0.88);
-    border: 1px solid rgba(24, 33, 47, 0.06);
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    border: 1px solid var(--border);
   }
   .summary-card .label {
     display: block;
@@ -106,22 +107,22 @@
     width: 100%;
     padding: 12px 14px;
     border-radius: 14px;
-    border: 1px solid rgba(24, 33, 47, 0.14);
+    border: 1px solid var(--border);
     font: inherit;
   }
   table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 16px;
-    background: rgba(255, 255, 255, 0.86);
-    border: 1px solid rgba(24, 33, 47, 0.08);
+    background: color-mix(in srgb, var(--surface) 86%, transparent);
+    border: 1px solid var(--border);
     border-radius: 18px;
     overflow: hidden;
   }
   th, td {
     padding: 12px;
     text-align: left;
-    border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+    border-bottom: 1px solid var(--border);
     vertical-align: top;
   }
   .items-cell {
@@ -142,10 +143,10 @@
     letter-spacing: 0.10em;
     text-transform: uppercase;
     color: var(--muted);
-    background: rgba(243, 239, 230, 0.95);
+    background: color-mix(in srgb, var(--surface2) 95%, transparent);
   }
   tbody tr:nth-child(even) td {
-    background: rgba(248, 247, 243, 0.7);
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
   }
   tbody tr:last-child td { border-bottom: none; }
   a {
@@ -157,14 +158,14 @@
   .empty-state {
     padding: 18px;
     border-radius: 16px;
-    background: rgba(248, 247, 243, 0.85);
-    border: 1px dashed rgba(24, 33, 47, 0.16);
+    background: color-mix(in srgb, var(--bg) 85%, transparent);
+    border: 1px dashed var(--border);
     color: var(--muted);
   }
   /* ── column resize ── */
   th { position: relative; }
   .col-resizer { position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;user-select:none; }
-  .col-resizer:hover,.col-resizer.rsz-active { background:rgba(24,33,47,.18); }
+  .col-resizer:hover,.col-resizer.rsz-active { background:color-mix(in srgb, var(--text) 18%, transparent); }
   table.resizing { user-select:none;cursor:col-resize; }
   /* ── cell expand ── */
   td.expanded { white-space:normal!important;max-width:none!important;overflow:visible!important; }

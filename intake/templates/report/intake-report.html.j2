@@ -4,22 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Intake Receipt Report</title>
+<link rel="stylesheet" href="/_portfolio/theme.css">
+<script src="/_portfolio/theme.js"></script>
 <style>
   :root {
-    --ink: #18212f;
-    --muted: #667085;
-    --paper: #f3efe6;
-    --panel: rgba(255, 255, 255, 0.9);
-    --line: rgba(24, 33, 47, 0.12);
-    --shadow: 0 20px 45px rgba(24, 33, 47, 0.09);
-    --teal: #0f766e;
-    --teal-soft: #d3f1ec;
-    --amber: #c77d2b;
-    --amber-soft: #f7dfc4;
-    --blue: #375a9e;
-    --blue-soft: #dce7ff;
-    --rose: #b5475d;
-    --rose-soft: #f7d9e0;
+    --ink: var(--text);
+    --paper: var(--bg);
+    --panel: color-mix(in srgb, var(--surface) 90%, transparent);
+    --line: var(--border);
+    --shadow: 0 20px 45px rgba(0, 0, 0, 0.18);
+    --teal: var(--green);
+    --teal-soft: var(--green-dim);
+    --amber: var(--yellow);
+    --amber-soft: var(--yellow-dim);
+    --blue: var(--accent);
+    --blue-soft: var(--accent-dim);
+    --rose: var(--red);
+    --rose-soft: var(--red-dim);
   }
   * { box-sizing: border-box; }
   body {
@@ -27,9 +28,9 @@
     font-family: "Avenir Next", "Segoe UI", sans-serif;
     color: var(--ink);
     background:
-      radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 34%),
-      radial-gradient(circle at top right, rgba(199, 125, 43, 0.14), transparent 30%),
-      linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
+      radial-gradient(circle at top left, color-mix(in srgb, var(--green) 7%, transparent), transparent 34%),
+      radial-gradient(circle at top right, color-mix(in srgb, var(--yellow) 6%, transparent), transparent 30%),
+      var(--bg);
   }
   .page {
     width: 100%;
@@ -38,8 +39,8 @@
     padding: 32px clamp(12px, 1.5vw, 28px) 56px;
   }
   .hero {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 248, 244, 0.92));
-    border: 1px solid rgba(24, 33, 47, 0.08);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--surface) 96%, transparent), color-mix(in srgb, var(--bg) 92%, transparent));
+    border: 1px solid var(--border);
     border-radius: 26px;
     box-shadow: var(--shadow);
     padding: 28px;
@@ -76,8 +77,8 @@
     margin: 18px 0 22px;
     padding: 12px 14px;
     border-radius: 20px;
-    background: rgba(255, 255, 255, 0.88);
-    border: 1px solid rgba(24, 33, 47, 0.08);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    border: 1px solid var(--border);
     box-shadow: var(--shadow);
     backdrop-filter: blur(10px);
   }
@@ -99,8 +100,8 @@
     align-items: center;
     padding: 8px 12px;
     border-radius: 999px;
-    background: rgba(220, 231, 255, 0.78);
-    border: 1px solid rgba(55, 90, 158, 0.18);
+    background: color-mix(in srgb, var(--accent-dim) 78%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
     font-size: 0.92rem;
   }
   .hero-links {
@@ -115,12 +116,12 @@
     gap: 8px;
     padding: 10px 14px;
     border-radius: 999px;
-    background: rgba(220, 231, 255, 0.78);
-    border: 1px solid rgba(55, 90, 158, 0.18);
+    background: color-mix(in srgb, var(--accent-dim) 78%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
   }
   .summary-card {
     background: var(--panel);
-    border: 1px solid rgba(24, 33, 47, 0.08);
+    border: 1px solid var(--border);
     border-radius: 20px;
     padding: 18px 18px 16px;
   }
@@ -157,7 +158,7 @@
   .chart-card {
     grid-column: span 12;
     background: var(--panel);
-    border: 1px solid rgba(24, 33, 47, 0.08);
+    border: 1px solid var(--border);
     border-radius: 24px;
     padding: 18px 18px 20px;
     box-shadow: var(--shadow);
@@ -187,9 +188,9 @@
   .empty-state {
     padding: 20px;
     border-radius: 18px;
-    background: rgba(255, 255, 255, 0.72);
+    background: color-mix(in srgb, var(--surface) 72%, transparent);
     color: var(--muted);
-    border: 1px dashed rgba(24, 33, 47, 0.16);
+    border: 1px dashed var(--border);
   }
   .line-chart {
     width: 100%;
@@ -197,12 +198,12 @@
     display: block;
     overflow: visible;
   }
-  .line-chart .grid { stroke: rgba(24, 33, 47, 0.10); stroke-width: 1; }
+  .line-chart .grid { stroke: var(--border); stroke-width: 1; }
   .line-chart .axis-label {
     fill: var(--muted);
     font-size: 11px;
   }
-  .line-chart .area { fill: rgba(15, 118, 110, 0.14); }
+  .line-chart .area { fill: color-mix(in srgb, var(--green) 14%, transparent); }
   .line-chart .trend {
     fill: none;
     stroke: var(--teal);
@@ -211,7 +212,7 @@
     stroke-linejoin: round;
   }
   .line-chart .point {
-    fill: white;
+    fill: var(--surface);
     stroke: var(--teal);
     stroke-width: 2.5;
   }
@@ -227,8 +228,8 @@
   .bar-row {
     padding: 10px 12px;
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid rgba(24, 33, 47, 0.05);
+    background: color-mix(in srgb, var(--surface) 72%, transparent);
+    border: 1px solid var(--border);
   }
   .bar-meta,
   .bar-foot {
@@ -250,7 +251,7 @@
     height: 12px;
     border-radius: 999px;
     overflow: hidden;
-    background: rgba(24, 33, 47, 0.08);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
     margin: 8px 0 6px;
     max-width: min(100%, 15rem);
   }
@@ -258,9 +259,9 @@
     height: 100%;
     border-radius: 999px;
   }
-  .fill-category { background: linear-gradient(90deg, var(--teal), #35a69f); }
-  .fill-merchant { background: linear-gradient(90deg, var(--amber), #e4a44c); }
-  .fill-model { background: linear-gradient(90deg, var(--blue), #6f8fe3); }
+  .fill-category { background: linear-gradient(90deg, var(--teal), var(--green)); }
+  .fill-merchant { background: linear-gradient(90deg, var(--amber), var(--yellow)); }
+  .fill-model { background: linear-gradient(90deg, var(--blue), var(--accent)); }
   .trend-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -269,8 +270,8 @@
   .trend-card {
     padding: 14px 14px 12px;
     border-radius: 18px;
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid rgba(24, 33, 47, 0.05);
+    background: color-mix(in srgb, var(--surface) 72%, transparent);
+    border: 1px solid var(--border);
   }
   .trend-meta {
     display: flex;
@@ -299,11 +300,11 @@
     display: block;
   }
   .sparkline .grid {
-    stroke: rgba(24, 33, 47, 0.10);
+    stroke: var(--border);
     stroke-width: 1;
   }
   .sparkline .area {
-    fill: rgba(199, 125, 43, 0.14);
+    fill: color-mix(in srgb, var(--yellow) 6%, transparent);
   }
   .sparkline .trend {
     fill: none;
@@ -329,8 +330,8 @@
   .detail-table {
     width: 100%;
     border-collapse: collapse;
-    background: rgba(255, 255, 255, 0.86);
-    border: 1px solid rgba(24, 33, 47, 0.08);
+    background: color-mix(in srgb, var(--surface) 86%, transparent);
+    border: 1px solid var(--border);
     border-radius: 18px;
     overflow: hidden;
     box-shadow: var(--shadow);
@@ -339,7 +340,7 @@
   .detail-table td {
     padding: 11px 12px;
     text-align: left;
-    border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+    border-bottom: 1px solid var(--border);
     vertical-align: top;
   }
   .detail-table .items-cell {
@@ -360,10 +361,10 @@
     letter-spacing: 0.10em;
     text-transform: uppercase;
     color: var(--muted);
-    background: rgba(243, 239, 230, 0.95);
+    background: color-mix(in srgb, var(--surface2) 95%, transparent);
   }
   .detail-table tbody tr:nth-child(even) td {
-    background: rgba(248, 247, 243, 0.7);
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
   }
   .detail-table tbody tr:last-child td {
     border-bottom: none;
@@ -380,7 +381,7 @@
   /* ── column resize ── */
   th { position: relative; }
   .col-resizer { position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;user-select:none; }
-  .col-resizer:hover,.col-resizer.rsz-active { background:rgba(24,33,47,.18); }
+  .col-resizer:hover,.col-resizer.rsz-active { background:color-mix(in srgb, var(--text) 18%, transparent); }
   table.resizing { user-select:none;cursor:col-resize; }
   /* ── cell expand ── */
   td.expanded { white-space:normal!important;max-width:none!important;overflow:visible!important; }
