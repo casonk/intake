@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Follow the portfolio system themes: the report pages take their colours from the shared tokens (`/_portfolio/theme.css`), so the theme chosen in the top bar restyles them. Reports generated before this change keep their old colours until `intake report` is run again.
+
 - Load the portfolio top bar (`<script src="/_portfolio/chrome.js" defer></script>`, served by the shared Caddy) on the report pages it serves (added when a page is served, so reports generated earlier get it too), so the global navigation and theme rotator appear here too.
 - Rename the career-mail module to `intake.job_search_mail` (and its test) so the
   repository no longer carries a path that matches a private repository name.

@@ -4,22 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Intake Audit</title>
+<link rel="stylesheet" href="/_portfolio/theme.css">
+<script src="/_portfolio/theme.js"></script>
 <style>
   :root {
-    --ink: #18212f;
-    --muted: #667085;
-    --paper: #f3efe6;
-    --panel: rgba(255, 255, 255, 0.9);
-    --line: rgba(24, 33, 47, 0.12);
-    --shadow: 0 20px 45px rgba(24, 33, 47, 0.09);
-    --teal: #0f766e;
-    --teal-soft: #d3f1ec;
-    --amber: #c77d2b;
-    --amber-soft: #f7dfc4;
-    --blue: #375a9e;
-    --blue-soft: #dce7ff;
-    --rose: #b5475d;
-    --rose-soft: #f7d9e0;
+    --ink: var(--text);
+    --paper: var(--bg);
+    --panel: color-mix(in srgb, var(--surface) 90%, transparent);
+    --line: var(--border);
+    --shadow: 0 20px 45px rgba(0, 0, 0, 0.18);
+    --teal: var(--green);
+    --teal-soft: var(--green-dim);
+    --amber: var(--yellow);
+    --amber-soft: var(--yellow-dim);
+    --blue: var(--accent);
+    --blue-soft: var(--accent-dim);
+    --rose: var(--red);
+    --rose-soft: var(--red-dim);
   }
   * { box-sizing: border-box; }
   body {
@@ -27,14 +28,14 @@
     font-family: "Avenir Next", "Segoe UI", sans-serif;
     color: var(--ink);
     background:
-      radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 34%),
-      radial-gradient(circle at top right, rgba(199, 125, 43, 0.14), transparent 30%),
-      linear-gradient(180deg, #f8f5ef 0%, #f2eee6 100%);
+      radial-gradient(circle at top left, color-mix(in srgb, var(--green) 7%, transparent), transparent 34%),
+      radial-gradient(circle at top right, color-mix(in srgb, var(--yellow) 6%, transparent), transparent 30%),
+      var(--bg);
   }
   .page { width: 100%; max-width: none; margin: 0; padding: 32px clamp(12px, 1.5vw, 28px) 56px; }
   .hero {
-    background: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(248,248,244,0.92));
-    border: 1px solid rgba(24,33,47,0.08);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--surface) 96%, transparent), color-mix(in srgb, var(--bg) 92%, transparent));
+    border: 1px solid var(--border);
     border-radius: 26px;
     box-shadow: var(--shadow);
     padding: 28px;
@@ -45,8 +46,8 @@
   .hero-links { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
   .hero-links a {
     display:inline-flex; align-items:center; gap:8px; padding:10px 14px;
-    border-radius:999px; background:rgba(220,231,255,0.78);
-    border:1px solid rgba(55,90,158,0.18); color:var(--blue);
+    border-radius:999px; background:color-mix(in srgb, var(--accent-dim) 78%, transparent);
+    border:1px solid color-mix(in srgb, var(--accent) 18%, transparent); color:var(--blue);
     text-decoration:none; font-size:.92rem; font-weight:600;
   }
   .hero-links a:hover { text-decoration:underline; }
@@ -54,8 +55,8 @@
     margin: 18px 0 14px;
     padding: 18px 18px 14px;
     border-radius: 20px;
-    background: rgba(255,255,255,0.88);
-    border: 1px solid rgba(24,33,47,0.08);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    border: 1px solid var(--border);
     box-shadow: var(--shadow);
   }
   .filter-row { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
@@ -65,8 +66,8 @@
   .filter-field input,
   .filter-field select {
     padding:8px 10px; border-radius:10px;
-    border:1px solid rgba(24,33,47,0.16);
-    background:rgba(243,239,230,0.7);
+    border:1px solid var(--border);
+    background:color-mix(in srgb, var(--surface2) 70%, transparent);
     font-size:.92rem; color:var(--ink);
     font-family:inherit;
   }
@@ -75,10 +76,10 @@
   .filter-field--btn { justify-content:flex-end; }
   .filter-field--btn button {
     padding:8px 16px; border-radius:10px; border:none;
-    background:rgba(24,33,47,0.1); color:var(--ink);
+    background:color-mix(in srgb, var(--text) 10%, transparent); color:var(--ink);
     font-size:.92rem; font-family:inherit; cursor:pointer;
   }
-  .filter-field--btn button:hover { background:rgba(24,33,47,0.18); }
+  .filter-field--btn button:hover { background:color-mix(in srgb, var(--text) 18%, transparent); }
   .stat-bar {
     margin-top:12px; font-size:.92rem; color:var(--muted);
   }
@@ -90,13 +91,13 @@
   }
   .detail-table {
     width:100%; border-collapse:collapse;
-    background:rgba(255,255,255,0.86);
-    border:1px solid rgba(24,33,47,0.08);
+    background:color-mix(in srgb, var(--surface) 86%, transparent);
+    border:1px solid var(--border);
     border-radius:18px; overflow:hidden;
   }
   .detail-table th, .detail-table td {
     padding:10px 12px; text-align:left;
-    border-bottom:1px solid rgba(24,33,47,0.08); vertical-align:top;
+    border-bottom:1px solid var(--border); vertical-align:top;
     white-space:nowrap;
   }
   .detail-table .items-cell {
@@ -115,7 +116,7 @@
   }
   .detail-table th {
     font-size:11px; letter-spacing:.10em; text-transform:uppercase;
-    color:var(--muted); background:rgba(243,239,230,0.95);
+    color:var(--muted); background:color-mix(in srgb, var(--surface2) 95%, transparent);
     position:sticky; top:0; z-index:2;
   }
   .detail-table th.sortable { cursor:pointer; user-select:none; }
@@ -123,9 +124,9 @@
   .detail-table th .sort-arrow { margin-left:4px; opacity:.4; }
   .detail-table th.sort-asc .sort-arrow::after { content:"▲"; opacity:1; }
   .detail-table th.sort-desc .sort-arrow::after { content:"▼"; opacity:1; }
-  .detail-table tbody tr:nth-child(even) td { background:rgba(248,247,243,0.7); }
+  .detail-table tbody tr:nth-child(even) td { background:color-mix(in srgb, var(--bg) 70%, transparent); }
   .detail-table tbody tr:last-child td { border-bottom:none; }
-  .detail-table tbody tr:hover td { background:rgba(220,231,255,0.3); }
+  .detail-table tbody tr:hover td { background:color-mix(in srgb, var(--accent-dim) 30%, transparent); }
   .detail-table td.merchant { max-width:200px; overflow:hidden; text-overflow:ellipsis; }
   a { color:var(--blue); text-decoration:none; font-weight:600; }
   a:hover { text-decoration:underline; }
@@ -136,14 +137,14 @@
   .badge--ok { background:var(--teal-soft); color:var(--teal); }
   .empty-state {
     padding:32px; text-align:center; color:var(--muted);
-    background:rgba(255,255,255,0.72); border-radius:18px;
-    border:1px dashed rgba(24,33,47,0.16);
+    background:color-mix(in srgb, var(--surface) 72%, transparent); border-radius:18px;
+    border:1px dashed var(--border);
   }
   section[id], h2[id] { scroll-margin-top:80px; }
   /* ── column resize ── */
   .detail-table th { position: relative; }
   .col-resizer { position:absolute;right:0;top:0;bottom:0;width:4px;cursor:col-resize;user-select:none; }
-  .col-resizer:hover,.col-resizer.rsz-active { background:rgba(24,33,47,.18); }
+  .col-resizer:hover,.col-resizer.rsz-active { background:color-mix(in srgb, var(--text) 18%, transparent); }
   .detail-table.resizing { user-select:none;cursor:col-resize; }
   /* ── cell expand ── */
   .detail-table td.expanded { white-space:normal!important;max-width:none!important;overflow:visible!important; }
