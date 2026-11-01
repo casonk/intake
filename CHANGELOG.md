@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Re-vendor the portfolio theme fallback: the top bar's theme menu offers This site / Everywhere and "Follow the global theme".
 - Answer `/_portfolio/*` itself from a vendored portfolio site seam (`intake/portfolio/`), so the theme and top bar work with no Caddy in front: the owner-only site store first, then a pinned fallback copy. Add `/.portfolio` (ignored) and `config/portfolio-site.example.toml`. See traction-control `docs/portfolio-sites.md`.
 
 - Show the "Extraction Model Mix" chart at full width; it was the only half-width card in its row and left the other half empty.
