@@ -54,3 +54,9 @@ config/*.local.toml
 
 # Link to this checkout's entry in the portfolio site store (owner-only, local)
 /.portfolio
+
+# coverage output
+coverage.xml
+.coverage
+.coverage.*
+htmlcov/
