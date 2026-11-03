@@ -58,6 +58,11 @@ reports_dir = "reports"
 # By default this uses the shared local crew-chief/Ollama service to avoid API
 # usage. Set translation_provider = "none" to disable translation persistence.
 #
+# translation_provider = "openai" (and `intake translate --provider openai`) falls back to this
+# local path whenever OpenAI fails, has no key, or returns nothing usable: the receipt is read with
+# local OCR and translated by the local model above (the metadata records `fallback_from`).
+# If the local model fails too, the receipt keeps its local OCR text and no translation.
+#
 # translation_provider = "ollama"
 # translation_model = "aya-expanse:8b"
 # translation_base_url = "http://localhost:11434"
