@@ -10,6 +10,12 @@ Mark items `[x]` when complete and move them to Done.
 
 ## Pending
 
+- [ ] [manual:2026-11-02] **Make `translation_provider = "openai"` work at ingest, or reject it** —
+  ingest-time translation (`maybe_translate_receipt`, called from `extract_receipt` and the email
+  path) passes no API key, so choosing the OpenAI provider in `settings.toml` silently translates
+  nothing (and would send the local default model name to OpenAI if a key were added). The OpenAI
+  provider only works through `intake translate`. Either thread `openai_api_key` and a sensible
+  model through, or warn and fall back when the OpenAI provider is configured for ingest.
 - [ ] [manual:2026-11-02] **Decide who may drive reply handling** — reply processing
   (`intake/email_reply.py`) applies structured field updates (merchant, total, purchaser, card)
   and sends a Snowbridge file link to the `From` address of any message whose subject contains
