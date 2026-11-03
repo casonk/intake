@@ -288,8 +288,9 @@ def _parse_reply_update_value(field: str, value: str):
     if field == "merchant":
         return cleaned.lower()
     if field == "total":
-        match = re.search(r"-?\d+(?:\.\d{2})?", cleaned.replace(",", ""))
-        return float(match.group(0)) if match else ...
+        # Any number of decimals: "12.5" is 12.50, not 12 (the cents were silently dropped).
+        match = re.search(r"-?\d+(?:\.\d+)?", cleaned.replace(",", ""))
+        return round(float(match.group(0)), 2) if match else ...
     if field == "purchaser":
         return cleaned
     if field == "card_last4":
