@@ -107,7 +107,9 @@ def file_sent_issues(issues: list[NewsletterIssue], settings: dict, state_path: 
         return 0
     state = json.loads(state_path.read_text(encoding="utf-8"))
     sent_ids = set(state.get("sent_message_ids", []))
-    filed_ids = set(state.get("filed_message_ids", []))
+    # A dict keeps insertion order, so the cap below keeps the newest ids (a set would keep an
+    # arbitrary 500, and could drop the ones filed in this very run).
+    filed_ids = dict.fromkeys(state.get("filed_message_ids", []))
     candidates = [
         issue
         for issue in issues
@@ -138,7 +140,7 @@ def file_sent_issues(issues: list[NewsletterIssue], settings: dict, state_path: 
                     sr.mark_message_read(conn, issue.uid)
                     sr.label_message(conn, issue.uid, label)
                 filed += 1
-                filed_ids.add(issue.message_id)
+                filed_ids[issue.message_id] = None
             if needs_expunge:
                 conn.expunge()
     state["filed_message_ids"] = list(filed_ids)[-500:]
