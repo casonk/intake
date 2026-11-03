@@ -10,14 +10,7 @@ Mark items `[x]` when complete and move them to Done.
 
 ## Pending
 
-- [ ] [manual:2026-11-02] **Decide who may drive reply handling** — reply processing
-  (`intake/email_reply.py`) applies structured field updates (merchant, total, purchaser, card)
-  and sends a Snowbridge file link to the `From` address of any message whose subject contains
-  "Receipt processed" and that references or quotes an intake notification. The sender is never
-  checked, so anyone who can email the mailbox can change a receipt or be sent a file link.
-  Choose an allowed-sender rule (the notification recipients, or a configured list), apply
-  updates and send links only for those senders, and record everything else for review (for
-  example as `reply-untrusted`) with a test for each branch.
+- [ ] [manual:2026-11-03] Verify the sender of a reply with DKIM/SPF (`Authentication-Results`), not only the `From` header, before acting on it.
 - [ ] [manual:2026-10-15] **Ask GitHub Support to purge pre-rewrite commits** — this
   repository's published history was rewritten (most recently on 2026-10-15,
   to remove per-commit AI attribution trailers). GitHub keeps serving the old
@@ -31,6 +24,7 @@ Mark items `[x]` when complete and move them to Done.
 
 ## Done
 
+- [x] [manual:2026-11-03] Limit reply handling and all outgoing mail to `[email].allowed_addresses` (fails closed; untrusted replies are recorded as `reply-untrusted`).
 - [x] [manual:2026-11-03] Make a failing or key-less OpenAI translation fall back to local OCR and the local translation model (fixes `translation_provider = "openai"` silently translating nothing at ingest).
 - [x] [manual:2026-06-15] Extract the file-inbox document routing pipeline from `intake/cli.py` into a dedicated module so `process` and daemon ingestion share one implementation for duplicate handling, OCR, document-type routing, moves, sidecars, DB writes, notifications, and finance events.
 - [x] [manual:2026-06-15] Move large inline report templates out of `intake/report.py` into tracked template files, preserving the static HTML/Markdown output contract and focused report regression tests.

@@ -98,6 +98,13 @@ reports_dir = "reports"
 # [email]
 # shock_relay_config = "/path/to/shock-relay/services/gmail-imap/config.local.yaml"
 #
+# Intake exchanges mail only with the addresses listed here: a reply from any other sender is
+# never acted on (no receipt field changes, no file link), and nothing is ever sent to any other
+# address, including [gmail].recipient(s) and newsletter digests. With no list, nobody is allowed
+# and intake warns on stderr. Matching is on the bare address (display name and case ignored).
+# The check reads the From header; it keeps strangers out but does not prove who sent a message.
+# allowed_addresses = ["you@example.com", "second-account@example.org"]
+#
 # # Gmail label to move processed emails into (created automatically if absent)
 # processed_label = "intake/processed"
 #

@@ -131,7 +131,7 @@ def test_send_digest_is_once_per_message_id(monkeypatch, tmp_path):
 
     monkeypatch.setattr("intake.newsletter.subprocess.run", fake_run)
     settings = {
-        "email": {"shock_relay_config": str(config)},
+        "email": {"shock_relay_config": str(config), "allowed_addresses": ["reader@example.com"]},
         "gmail": {"recipient": "reader@example.com"},
     }
     state = tmp_path / "state.json"
