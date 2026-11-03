@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Limit intake's mail to `[email].allowed_addresses`: replies from any other sender are recorded as `reply-untrusted` and never acted on (no receipt change, no Snowbridge link), and no notification, file-link reply or newsletter digest is sent to any other address. With no list configured nobody is allowed and intake says so on stderr, so **set `allowed_addresses` in your local `settings.toml`** or notifications stop. The check reads the `From` header only; DKIM/SPF verification is a separate step.
+- Fall back to local OCR and the local translation model whenever a remote translation fails: if OpenAI errors, has no API key, or returns nothing usable (or the text unchanged), the receipt text is translated by the local Crew Chief/Ollama model instead, for `translation_provider = "openai"` at ingest and for `intake translate --provider openai` (which re-reads the receipt with local OCR). The stored translation metadata records `fallback_from`. A disabled or unknown provider never falls back, and if the local model fails too the receipt keeps its OCR text untranslated.
 - Re-vendor the portfolio theme fallback: the top bar's theme menu offers This site / Everywhere and "Follow the global theme".
 - Answer `/_portfolio/*` itself from a vendored portfolio site seam (`intake/portfolio/`), so the theme and top bar work with no Caddy in front: the owner-only site store first, then a pinned fallback copy. Add `/.portfolio` (ignored) and `config/portfolio-site.example.toml`. See traction-control `docs/portfolio-sites.md`.
 

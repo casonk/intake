@@ -17,6 +17,8 @@ DEFAULT_OPENAI_TRANSLATION_MODEL = "gpt-4.1"
 DEFAULT_TRANSLATION_BASE_URL = "http://localhost:11434"
 DEFAULT_TRANSLATION_TIMEOUT_SECONDS = 60
 _DISABLED_TRANSLATION_PROVIDERS = {"", "0", "false", "none", "off", "disabled"}
+_LOCAL_TRANSLATION_PROVIDER = "ollama"
+_KNOWN_TRANSLATION_PROVIDERS = {_LOCAL_TRANSLATION_PROVIDER, "openai"}
 
 
 def normalize_translation_provider(value: object | None) -> str:
@@ -54,6 +56,7 @@ def maybe_translate_receipt(
     model: str = DEFAULT_TRANSLATION_MODEL,
     base_url: str = DEFAULT_TRANSLATION_BASE_URL,
     timeout_seconds: int = DEFAULT_TRANSLATION_TIMEOUT_SECONDS,
+    local_model: str = DEFAULT_TRANSLATION_MODEL,
 ) -> Receipt:
     """Return *receipt* with ``translated_text`` filled when translation succeeds."""
     if not needs_translation(
@@ -70,6 +73,7 @@ def maybe_translate_receipt(
         model=model,
         base_url=base_url,
         timeout_seconds=timeout_seconds,
+        local_model=local_model,
     )
     if not translated_text:
         return receipt
@@ -92,33 +96,96 @@ def translate_receipt_text(
     base_url: str = DEFAULT_TRANSLATION_BASE_URL,
     timeout_seconds: int = DEFAULT_TRANSLATION_TIMEOUT_SECONDS,
     openai_api_key: str | None = None,
+    local_model: str = DEFAULT_TRANSLATION_MODEL,
 ) -> tuple[str | None, dict | None]:
-    """Translate receipt OCR text into English using the configured provider."""
+    """Translate receipt OCR text into English using the configured provider.
+
+    When a remote provider (OpenAI) fails, has no key, or returns nothing usable, the text is
+    translated locally instead (the shared Crew Chief/Ollama service, with *local_model*), so a
+    remote outage or a missing key never leaves a receipt untranslated. The returned metadata then
+    names the provider that failed in ``fallback_from``. A disabled or unknown provider never
+    falls back: that is a choice, not a failure.
+    """
     normalized_provider = normalize_translation_provider(provider)
     if normalized_provider in _DISABLED_TRANSLATION_PROVIDERS:
         return None, None
+    if normalized_provider not in _KNOWN_TRANSLATION_PROVIDERS:
+        return None, None
 
+    translated = _translate_with_provider(
+        raw_text,
+        language=language,
+        provider=normalized_provider,
+        model=model,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        openai_api_key=openai_api_key,
+    )
+    if translated and translated != raw_text.strip():
+        return translated, {"provider": normalized_provider, "model": model}
+
+    if normalized_provider == _LOCAL_TRANSLATION_PROVIDER:
+        return None, None
+    return _translate_locally(
+        raw_text,
+        language=language,
+        failed_provider=normalized_provider,
+        local_model=local_model,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _translate_with_provider(
+    raw_text: str,
+    *,
+    language: str | None,
+    provider: str,
+    model: str,
+    base_url: str,
+    timeout_seconds: int,
+    openai_api_key: str | None,
+) -> str | None:
+    """One translation attempt; any failure is ``None`` rather than an error."""
     try:
-        if normalized_provider == "ollama":
+        if provider == _LOCAL_TRANSLATION_PROVIDER:
             prompt = _translation_prompt(raw_text, language=language)
             client_class = _load_crew_chief_client_class()
             client = client_class(base_url=base_url, model=model, timeout=timeout_seconds)
-            translated = _sanitize_translation_output(client.generate(prompt))
-        elif normalized_provider == "openai":
-            translated = _translate_text_with_openai(
-                raw_text,
-                language=language,
-                api_key=openai_api_key,
-                model=model,
-            )
-        else:
-            return None, None
+            return _sanitize_translation_output(client.generate(prompt))
+        return _translate_text_with_openai(
+            raw_text, language=language, api_key=openai_api_key, model=model
+        )
     except Exception:  # noqa: BLE001
-        return None, None
+        return None
 
+
+def _translate_locally(
+    raw_text: str,
+    *,
+    language: str | None,
+    failed_provider: str,
+    local_model: str,
+    base_url: str,
+    timeout_seconds: int,
+) -> tuple[str | None, dict | None]:
+    """The local fallback: translate the locally read text with the local model."""
+    translated = _translate_with_provider(
+        raw_text,
+        language=language,
+        provider=_LOCAL_TRANSLATION_PROVIDER,
+        model=local_model,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        openai_api_key=None,
+    )
     if not translated or translated == raw_text.strip():
         return None, None
-    return translated, {"provider": normalized_provider, "model": model}
+    return translated, {
+        "provider": _LOCAL_TRANSLATION_PROVIDER,
+        "model": local_model,
+        "fallback_from": failed_provider,
+    }
 
 
 def translate_receipt_artifact(
@@ -131,8 +198,15 @@ def translate_receipt_artifact(
     base_url: str = DEFAULT_TRANSLATION_BASE_URL,
     timeout_seconds: int = DEFAULT_TRANSLATION_TIMEOUT_SECONDS,
     openai_api_key: str | None = None,
+    local_model: str = DEFAULT_TRANSLATION_MODEL,
 ) -> tuple[str | None, dict | None]:
-    """Translate a receipt artifact image/PDF into English."""
+    """Translate a receipt artifact image/PDF into English.
+
+    The OpenAI provider reads the receipt image itself. If that fails, has no key, or returns
+    nothing, the receipt is read with local OCR and translated with the local model instead
+    (``fallback_from`` in the metadata names what failed), so only a disabled provider or a
+    failure of the local path as well leaves the receipt untranslated.
+    """
     normalized_provider = normalize_translation_provider(provider)
     if normalized_provider in _DISABLED_TRANSLATION_PROVIDERS:
         return None, None
@@ -147,10 +221,27 @@ def translate_receipt_artifact(
                 model=model,
             )
         except Exception:  # noqa: BLE001
+            translated = None
+        if translated:
+            return translated, {
+                "provider": normalized_provider,
+                "model": model,
+                "source": "artifact",
+            }
+        local_text = _local_ocr_text(receipt_path, raw_text)
+        if not local_text:
             return None, None
-        if not translated:
-            return None, None
-        return translated, {"provider": normalized_provider, "model": model, "source": "artifact"}
+        translated, metadata = _translate_locally(
+            local_text,
+            language=language,
+            failed_provider=normalized_provider,
+            local_model=local_model,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+        )
+        if metadata:
+            metadata["source"] = "local-ocr"
+        return translated, metadata
 
     if raw_text is None:
         from intake.ocr import extract_text
@@ -164,7 +255,21 @@ def translate_receipt_artifact(
         base_url=base_url,
         timeout_seconds=timeout_seconds,
         openai_api_key=openai_api_key,
+        local_model=local_model,
     )
+
+
+def _local_ocr_text(receipt_path: Path, raw_text: str | None) -> str | None:
+    """The text to translate locally: what was already read, else a fresh local OCR pass."""
+    if raw_text is not None and raw_text.strip():
+        return raw_text
+    try:
+        from intake.ocr import extract_text
+
+        text = extract_text(receipt_path)
+    except Exception:  # noqa: BLE001
+        return None
+    return text if text and text.strip() else None
 
 
 def _translation_prompt(raw_text: str, *, language: str | None) -> str:
