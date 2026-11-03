@@ -77,6 +77,7 @@ def test_gmail_notifications_enabled_with_email_config_fallback():
     settings = {
         "email": {
             "shock_relay_config": "/tmp/gmail-imap/config.local.yaml",
+            "allowed_addresses": ["me@example.com"],
         },
         "gmail": {
             "recipient": "me@example.com",
@@ -317,6 +318,7 @@ def test_send_processed_receipt_gmail_notification_invokes_sender(monkeypatch, t
         "receipt_dir": str(receipt_root),
         "email": {
             "shock_relay_config": str(config_path),
+            "allowed_addresses": ["me@example.com"],
         },
         "gmail": {
             "recipient": "me@example.com",
@@ -392,12 +394,13 @@ def test_send_processed_receipt_gmail_notification_queues_digest(monkeypatch, tm
     monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
 
     settings = {
+        "email": {"allowed_addresses": ["me@example.com"]},
         "gmail": {
             "shock_relay_config": str(config_path),
             "recipient": "me@example.com",
             "subject_prefix": "[intake] ",
             "digest": True,
-        }
+        },
     }
 
     sent = send_processed_receipt_gmail_notification(
@@ -470,6 +473,7 @@ def test_send_receipt_file_link_gmail_reply_invokes_sender(monkeypatch, tmp_path
         "receipt_dir": str(receipt_root),
         "email": {
             "shock_relay_config": str(config_path),
+            "allowed_addresses": ["alexsample@gmail.com"],
         },
     }
 
@@ -646,10 +650,11 @@ def test_send_processed_receipt_gmail_notification_raises_on_sender_error(monkey
     monkeypatch.setattr("intake.notify.subprocess.run", lambda *args, **kwargs: Result())
 
     settings = {
+        "email": {"allowed_addresses": ["me@example.com"]},
         "gmail": {
             "shock_relay_config": str(config_path),
             "recipient": "me@example.com",
-        }
+        },
     }
 
     with pytest.raises(RuntimeError, match="Gmail notification failed"):
@@ -726,10 +731,11 @@ def test_send_corrupt_intake_gmail_notification_sends_to_recipient(monkeypatch, 
     monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
 
     settings = {
+        "email": {"allowed_addresses": ["me@example.com"]},
         "gmail": {
             "shock_relay_config": str(config_path),
             "recipient": "me@example.com",
-        }
+        },
     }
 
     count = send_corrupt_intake_gmail_notification(settings, ["IMG_2365.JPG", "IMG_2381.JPG"])
@@ -766,3 +772,73 @@ def test_send_corrupt_intake_notifications_returns_sent_and_errors(monkeypatch, 
     sent, errors = send_corrupt_intake_notifications(settings, ["IMG_2365.JPG"])
     assert sent.get("signal") == 1
     assert errors == {}
+
+
+# --- mail only goes to the configured addresses -------------------------------------------
+
+
+def _mail_settings(tmp_path, recipients, allowed):
+    config_path = tmp_path / "gmail-imap" / "config.local.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("x: 1\n")
+    (config_path.parent / "send_email.py").write_text("print('ok')\n")
+    return {
+        "email": {"shock_relay_config": str(config_path), "allowed_addresses": allowed},
+        "gmail": {"recipients": recipients, "subject_prefix": ""},
+    }
+
+
+def test_notifications_go_only_to_listed_recipients(monkeypatch, tmp_path, capsys):
+    from types import SimpleNamespace
+
+    sent = []
+
+    def fake_run(cmd, **kwargs):
+        sent.append(cmd)
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
+    settings = _mail_settings(
+        tmp_path, ["me@example.com", "stranger@example.net"], ["me@example.com"]
+    )
+    count = send_corrupt_intake_gmail_notification(settings, ["a.jpg"])
+    assert count == 1 and len(sent) == 1
+    assert "me@example.com" in sent[0] and "stranger@example.net" not in sent[0]
+    assert "stranger@example.net is not in [email].allowed_addresses" in capsys.readouterr().err
+
+
+def test_with_no_list_no_notification_is_sent_and_notifications_read_as_disabled(
+    monkeypatch, tmp_path
+):
+    def fake_run(*a, **k):
+        raise AssertionError("nothing may be sent")
+
+    monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
+    settings = _mail_settings(tmp_path, ["me@example.com"], [])
+    assert send_corrupt_intake_gmail_notification(settings, ["a.jpg"]) == 0
+    assert gmail_notifications_enabled(settings) is False
+
+
+def test_a_file_link_is_never_sent_to_an_address_that_is_not_listed(monkeypatch, tmp_path):
+    def fake_run(*a, **k):
+        raise AssertionError("nothing may be sent")
+
+    monkeypatch.setattr("intake.notify.subprocess.run", fake_run)
+    settings = _mail_settings(tmp_path, [], ["me@example.com"])
+    with pytest.raises(RuntimeError, match="not in .*allowed_addresses"):
+        send_receipt_file_link_gmail_reply(
+            settings,
+            recipient="Stranger <stranger@example.net>",
+            subject="Re: x",
+            receipt_row={
+                "filename": "a.jpg",
+                "receipt_dir": "email/general",
+                "category": "general",
+            },
+        )
+    unset = _mail_settings(tmp_path, [], [])
+    with pytest.raises(RuntimeError, match="allowed_addresses is not set"):
+        send_receipt_file_link_gmail_reply(
+            unset, recipient="me@example.com", subject="Re: x",
+            receipt_row={"filename": "a.jpg", "receipt_dir": "email/general", "category": "general"},
+        )  # fmt: skip
