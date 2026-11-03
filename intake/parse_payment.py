@@ -25,8 +25,10 @@ class Payment:
 
 _AMOUNT_RE = re.compile(r"\$\s*(\d{1,6}(?:,\d{3})*\.\d{2})\b")
 _ACCOUNT_LAST4_RE = re.compile(r"\b(?:ending|ending\s+in|x{2,}|card)\s*(\d{4})\b", re.IGNORECASE)
+# The keyword needs a word boundary after it: without one, "conf" matched the start of
+# "Confirmation" and the rest of the word ("irmation") was read as the confirmation number.
 _CONFIRMATION_RE = re.compile(
-    r"\b(?:confirmation|reference|conf|ref|auth(?:orization)?)\s*(?:#|no\.?|number|:)?\s*:?\s*([A-Z0-9\-]{5,24})\b",
+    r"\b(?:confirmation|reference|conf|ref|auth(?:orization)?)\b\s*(?:#|no\.?|number|:)?\s*:?\s*([A-Z0-9\-]{5,24})\b",
     re.IGNORECASE,
 )
 
