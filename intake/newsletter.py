@@ -13,6 +13,7 @@ from email.policy import default as default_policy
 from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 
+from intake.addresses import require_allowed_address
 from intake.email_filing import file_message_to_processed_label
 from intake.email_provider import load_shock_relay, select_mailbox
 from intake.email_text import html_to_text
@@ -306,6 +307,7 @@ def send_digest(
         raise RuntimeError(
             "[gmail].recipient and the shock-relay config are required to send digests"
         )
+    recipient = require_allowed_address(settings, recipient, purpose="newsletter digest")
     sender = Path(config_path).with_name("send_email.py")
     subject = f"[intake] Daily email highlights — {digest_date.isoformat()}"
     result = subprocess.run(

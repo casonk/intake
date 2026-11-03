@@ -634,7 +634,10 @@ def sender(monkeypatch):
     return state
 
 
-GMAIL = {"gmail": {"recipient": "me@example.com", "shock_relay_config": "/cfg/mail/settings.toml"}}
+GMAIL = {
+    "email": {"allowed_addresses": ["me@example.com"]},
+    "gmail": {"recipient": "me@example.com", "shock_relay_config": "/cfg/mail/settings.toml"},
+}
 
 
 def test_nothing_is_sent_when_every_issue_was_already_emailed(sender, tmp_path):
@@ -658,7 +661,7 @@ def test_sending_needs_a_recipient_and_a_config(sender, tmp_path):
 def test_the_email_config_is_used_when_gmail_has_none(sender, tmp_path):
     settings = {
         "gmail": {"recipient": "me@example.com"},
-        "email": {"shock_relay_config": "/e/c.toml"},
+        "email": {"shock_relay_config": "/e/c.toml", "allowed_addresses": ["me@example.com"]},
     }
     assert nl.send_digest([issue()], "digest", settings, tmp_path / "s.json", date(2026, 10, 18))
     cmd = sender.calls[0][0]
@@ -717,3 +720,26 @@ def test_the_sent_list_is_capped_at_the_newest_five_hundred(sender, tmp_path):
     nl.send_digest([issue("<new@x>")], "d", GMAIL, state, date(2026, 10, 18))
     sent = json.loads(state.read_text())["sent_message_ids"]
     assert len(sent) == 500 and sent[-1] == "<new@x>"
+
+
+def test_a_digest_is_never_sent_to_an_address_that_is_not_listed(sender, tmp_path):
+    state = tmp_path / "state.json"
+    settings = {
+        "email": {"allowed_addresses": ["me@example.com"]},
+        "gmail": {
+            "recipient": "stranger@example.net",
+            "shock_relay_config": "/cfg/mail/settings.toml",
+        },
+    }
+    with pytest.raises(RuntimeError, match="not in .*allowed_addresses"):
+        nl.send_digest([issue()], "digest", settings, state, date(2026, 10, 18))
+    assert sender.calls == [] and not state.exists()
+
+
+def test_a_digest_is_not_sent_when_no_list_is_configured(sender, tmp_path):
+    settings = {
+        "gmail": {"recipient": "me@example.com", "shock_relay_config": "/cfg/mail/settings.toml"}
+    }
+    with pytest.raises(RuntimeError, match="allowed_addresses is not set"):
+        nl.send_digest([issue()], "digest", settings, tmp_path / "s.json", date(2026, 10, 18))
+    assert sender.calls == []

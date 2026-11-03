@@ -8,6 +8,7 @@ import sys
 from email.utils import parseaddr
 from pathlib import Path
 
+from intake.addresses import filter_allowed, require_allowed_address
 from intake.file_links import (
     build_receipt_companion_filebrowser_links,
     build_receipt_filebrowser_link,
@@ -142,7 +143,10 @@ def _gmail_config(settings: dict) -> dict:
 
 
 def _gmail_recipients(settings: dict) -> list[str]:
-    return _configured_recipients(_gmail_config(settings))
+    """Configured Gmail recipients, minus any address not in ``[email].allowed_addresses``."""
+    return filter_allowed(
+        settings, _configured_recipients(_gmail_config(settings)), purpose="Gmail notification"
+    )
 
 
 def _gmail_config_path(settings: dict) -> str:
@@ -459,6 +463,10 @@ def send_receipt_file_link_gmail_reply(
     recipient_address = parseaddr(recipient)[1].strip()
     if not recipient_address:
         raise RuntimeError(f"Invalid reply recipient: {recipient!r}")
+    # The recipient comes from an incoming message, so it is only ever mailed if it is listed.
+    recipient_address = require_allowed_address(
+        settings, recipient_address, purpose="file link reply"
+    )
 
     config_path = Path(_gmail_config_path(settings)).expanduser()
     send_script = config_path.with_name("send_email.py")

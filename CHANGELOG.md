@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Limit intake's mail to `[email].allowed_addresses`: replies from any other sender are recorded as `reply-untrusted` and never acted on (no receipt change, no Snowbridge link), and no notification, file-link reply or newsletter digest is sent to any other address. With no list configured nobody is allowed and intake says so on stderr, so **set `allowed_addresses` in your local `settings.toml`** or notifications stop. The check reads the `From` header only; DKIM/SPF verification is a separate step.
 - Re-vendor the portfolio theme fallback: the top bar's theme menu offers This site / Everywhere and "Follow the global theme".
 - Answer `/_portfolio/*` itself from a vendored portfolio site seam (`intake/portfolio/`), so the theme and top bar work with no Caddy in front: the owner-only site store first, then a pinned fallback copy. Add `/.portfolio` (ignored) and `config/portfolio-site.example.toml`. See traction-control `docs/portfolio-sites.md`.
 
