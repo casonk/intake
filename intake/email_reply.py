@@ -7,6 +7,7 @@ from email import message_from_bytes
 from email.policy import default as default_policy
 from pathlib import Path
 
+from intake.addresses import is_allowed_address
 from intake.db import (
     get_receipt,
     is_email_message_id_processed,
@@ -583,6 +584,30 @@ def _process_reply_messages(
                     sender = sr.decode_mime_header(msg.get("From"))
                     message_id = sr.decode_mime_header(msg.get("Message-ID"))
                     date_str = str(msg.get("Date", "") or "").strip()
+
+                    # A reply can change a receipt and request a file link, so it is only acted on
+                    # when it comes from one of the configured addresses (checked before anything
+                    # else is read or done with it).
+                    if not is_allowed_address(settings, sender):
+                        if not is_email_processed(db_conn, uid, mailbox):
+                            record_email_receipt(
+                                db_conn,
+                                uid=uid,
+                                mailbox=mailbox,
+                                message_id=message_id,
+                                subject=subject,
+                                sender=sender,
+                                received_at=date_str,
+                                attachment_count=0,
+                                status="reply-untrusted",
+                            )
+                        result.skipped += 1
+                        if verbose:
+                            print(
+                                "    skip (reply sender is not in [email].allowed_addresses): "
+                                f"{subject!r}"
+                            )
+                        continue
 
                     full_text = _message_text(msg, sr)
                     note_text = _trim_reply_note_text(full_text)

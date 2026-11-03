@@ -752,9 +752,11 @@ def run_replies(db, monkeypatch, link_sender):
         monkeypatch.setattr(er, "_fetch_message_by_uid", fetch)
         monkeypatch.setattr(er, "_find_message_in_mailboxes", lambda *a, **k: None)
         result = Result()
+        settings = settings or {"email": {"reply_mailboxes": ["INBOX"]}}
+        email_cfg = {"allowed_addresses": ["me@example.com"], **settings.get("email", {})}
         er._process_reply_messages(
             CONFIG,
-            settings or {"email": {"reply_mailboxes": ["INBOX"]}},
+            {**settings, "email": email_cfg},
             db,
             result,
             since_days=since_days,
@@ -1011,3 +1013,73 @@ def test_a_sidecar_module_that_cannot_be_imported_does_not_undo_the_update(
     )
     assert status == "reply-applied"
     assert get_receipt(db, FILENAME)["total"] == 11.0
+
+
+# --- only the configured addresses may drive replies ---------------------------------------
+
+
+def only(*addresses):
+    return {"email": {"reply_mailboxes": ["INBOX"], "allowed_addresses": list(addresses)}}
+
+
+def test_a_reply_from_an_address_that_is_not_listed_changes_nothing_and_sends_nothing(
+    db, run_replies, link_sender
+):
+    body = f"total: 1\nplease send the receipt file\nfilename: {FILENAME}"
+    result, _ = run_replies(
+        {"INBOX": {5: reply(body, sender="Stranger <stranger@example.net>")}},
+        settings=only("me@example.com"),
+    )
+    assert get_receipt(db, FILENAME)["total"] == 66.0
+    assert link_sender == []
+    assert email_status(db, 5) == "reply-untrusted"
+    assert (result.skipped, result.reply_applied, result.reply_processed) == (1, 0, 0)
+    assert query_receipt_updates(db, filename=FILENAME) == []
+
+
+def test_a_reply_from_a_listed_address_is_acted_on_whatever_its_display_name(db, run_replies):
+    result, _ = run_replies(
+        {
+            "INBOX": {
+                5: reply(f"total: 9\nfilename: {FILENAME}", sender="Anyone At All <ME@Example.com>")
+            }
+        },
+        settings=only("me@example.com"),
+    )
+    assert get_receipt(db, FILENAME)["total"] == 9.0 and result.reply_applied == 1
+
+
+def test_with_no_list_configured_no_reply_is_acted_on(db, run_replies):
+    result, _ = run_replies(
+        {"INBOX": {5: reply(f"total: 9\nfilename: {FILENAME}")}}, settings=only()
+    )
+    assert get_receipt(db, FILENAME)["total"] == 66.0
+    assert email_status(db, 5) == "reply-untrusted" and result.skipped == 1
+
+
+def test_a_look_alike_sender_is_not_trusted(db, run_replies):
+    run_replies(
+        {"INBOX": {5: reply(f"total: 9\nfilename: {FILENAME}", sender="x@example.com.evil.test")}},
+        settings=only("me@example.com", "x@example.com"),
+    )
+    assert get_receipt(db, FILENAME)["total"] == 66.0
+
+
+def test_an_untrusted_reply_is_recorded_once_and_reported_when_verbose(db, run_replies, capsys):
+    mailboxes = {"INBOX": {5: reply(f"total: 9\nfilename: {FILENAME}", sender="s@example.net")}}
+    run_replies(mailboxes, settings=only("me@example.com"), verbose=True)
+    assert "reply sender is not in [email].allowed_addresses" in capsys.readouterr().out
+    first = db.execute("SELECT processed_at FROM email_receipts WHERE uid = 5").fetchone()[0]
+    run_replies(mailboxes, settings=only("me@example.com"))
+    assert (
+        db.execute("SELECT processed_at FROM email_receipts WHERE uid = 5").fetchone()[0] == first
+    )
+
+
+def test_the_sender_check_comes_before_the_receipt_is_even_looked_up(db, run_replies, link_sender):
+    result, _ = run_replies(
+        {"INBOX": {5: reply("total: 1\nfilename: ghost.txt", sender="s@example.net")}},
+        settings=only("me@example.com"),
+    )
+    assert email_status(db, 5) == "reply-untrusted"  # not "reply-unmatched"
+    assert result.reply_unmatched == 0
