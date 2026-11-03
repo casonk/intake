@@ -250,13 +250,19 @@ def test_any_failure_means_no_translation_not_an_error(crew):
     assert tr.translate_receipt_text("こんにちは", language="ja") == (None, None)
 
 
-def test_the_openai_provider_without_a_key_makes_no_request(no_openai):
-    assert tr.translate_receipt_text(
-        "こんにちは", language="ja", provider="openai", openai_api_key=None
-    ) == (None, None)
-    assert tr.translate_receipt_text(
-        "こんにちは", language="ja", provider="openai", openai_api_key=""
-    ) == (None, None)
+def test_the_openai_provider_without_a_key_makes_no_request_and_translates_locally(no_openai, crew):
+    crew.reply = "Hello, total 100 yen"
+    for key in (None, ""):
+        text, meta = tr.translate_receipt_text(
+            "こんにちは",
+            language="ja",
+            provider="openai",
+            openai_api_key=key,
+            local_model="local-m",
+        )
+        assert text == "Hello, total 100 yen"
+        assert meta == {"provider": "ollama", "model": "local-m", "fallback_from": "openai"}
+    assert crew.instances[0].args[1] == "local-m"  # the local model, not the OpenAI model name
 
 
 def test_the_openai_provider_sends_one_bounded_request(openai):
@@ -273,16 +279,63 @@ def test_the_openai_provider_sends_one_bounded_request(openai):
     assert "こんにちは" in request["messages"][0]["content"]
 
 
-def test_an_openai_error_or_empty_answer_is_no_translation(openai):
-    openai.error = RuntimeError("rate limited")
+@pytest.mark.parametrize("failure", ["error", "none", "blank", "identical"])
+def test_an_openai_failure_falls_back_to_the_local_model(openai, crew, failure):
+    if failure == "error":
+        openai.error = RuntimeError("rate limited")
+    elif failure == "none":
+        openai.content = None
+    elif failure == "blank":
+        openai.content = "   "
+    else:
+        openai.content = "こんにちは"  # came back untranslated
+    crew.reply = "Hello"
+    text, meta = tr.translate_receipt_text(
+        "こんにちは", language="ja", provider="openai", openai_api_key="sk", model="gpt-x",
+        base_url="http://c:1", timeout_seconds=9, local_model="local-m",
+    )  # fmt: skip
+    assert (text, meta) == (
+        "Hello",
+        {"provider": "ollama", "model": "local-m", "fallback_from": "openai"},
+    )
+    assert crew.instances[0].args == ("http://c:1", "local-m", 9)
+
+
+def test_a_working_openai_translation_never_touches_the_local_model(openai, crew):
+    openai.content = "Hello"
+    text, meta = tr.translate_receipt_text(
+        "こんにちは", language="ja", provider="openai", openai_api_key="sk"
+    )
+    assert text == "Hello" and meta["provider"] == "openai" and "fallback_from" not in meta
+    assert crew.instances == []
+
+
+def test_when_the_local_model_fails_too_there_is_no_translation(openai, crew):
+    openai.error = RuntimeError("down")
+    for failure in (RuntimeError("crew-chief down"), None):
+        crew.error = failure
+        crew.reply = "" if failure is None else crew.reply
+        assert tr.translate_receipt_text(
+            "こんにちは", language="ja", provider="openai", openai_api_key="sk"
+        ) == (None, None)
+    crew.error = None
+    crew.reply = "こんにちは"  # untranslated by the local model as well
     assert tr.translate_receipt_text(
-        "x", language="ja", provider="openai", openai_api_key="sk"
+        "こんにちは", language="ja", provider="openai", openai_api_key="sk"
     ) == (None, None)
-    openai.error = None
-    openai.content = None
-    assert tr.translate_receipt_text(
-        "x", language="ja", provider="openai", openai_api_key="sk"
-    ) == (None, None)
+
+
+def test_the_local_provider_failing_is_not_retried_or_sent_elsewhere(openai, crew):
+    crew.error = RuntimeError("down")
+    assert tr.translate_receipt_text("こんにちは", language="ja", provider="ollama") == (None, None)
+    assert len(crew.instances) == 1  # one attempt, no second pass
+    assert openai.requests == []
+
+
+@pytest.mark.parametrize("provider", ["none", "off", "disabled", "mystery"])
+def test_a_disabled_or_unknown_provider_never_falls_back(provider, no_openai, crew):
+    assert tr.translate_receipt_text("こんにちは", language="ja", provider=provider) == (None, None)
+    assert crew.instances == []
 
 
 # --- translating a whole receipt -----------------------------------------------------------
@@ -328,9 +381,25 @@ def test_debug_attempts_are_carried_over_as_a_copy(crew):
     assert not hasattr(tr.maybe_translate_receipt(odd), "_debug_ai_attempts")
 
 
-def test_the_whole_receipt_path_never_contacts_openai_because_no_key_is_passed(no_openai, crew):
-    original = receipt()
-    assert tr.maybe_translate_receipt(original, provider="openai") is original
+def test_the_whole_receipt_path_translates_locally_when_openai_is_configured_without_a_key(
+    no_openai, crew
+):
+    crew.reply = "Hello, total 100 yen"
+    updated = tr.maybe_translate_receipt(
+        receipt(), provider="openai", model="gpt-x", local_model="local-m"
+    )
+    assert updated.translated_text == "Hello, total 100 yen"
+    assert updated._debug_translation == {
+        "provider": "ollama",
+        "model": "local-m",
+        "fallback_from": "openai",
+    }
+    assert crew.instances[0].args[1] == "local-m"
+
+
+def test_the_local_model_for_the_whole_receipt_path_defaults_to_the_local_default(no_openai, crew):
+    tr.maybe_translate_receipt(receipt(), provider="openai", model="gpt-x")
+    assert crew.instances[0].args[1] == tr.DEFAULT_TRANSLATION_MODEL
 
 
 # --- translating a receipt file ------------------------------------------------------------
@@ -378,12 +447,22 @@ def test_the_local_provider_reuses_text_that_was_already_read(monkeypatch, crew)
     assert tr.translate_receipt_artifact(Path("r.pdf"), raw_text="こんにちは", language="ja")[0]
 
 
-def test_the_openai_artifact_path_without_a_key_sends_nothing(no_openai, preview):
-    assert tr.translate_receipt_artifact(Path("r.pdf"), provider="openai", openai_api_key=None) == (
-        None,
-        None,
-    )
-    assert preview == []  # the image is not even rendered
+def test_the_openai_artifact_path_without_a_key_sends_no_image_and_translates_locally(
+    no_openai, preview, crew
+):
+    crew.reply = "Hello"
+    text, meta = tr.translate_receipt_artifact(
+        Path("r.pdf"), raw_text="こんにちは", language="ja", provider="openai", openai_api_key=None,
+        local_model="local-m",
+    )  # fmt: skip
+    assert text == "Hello"
+    assert meta == {
+        "provider": "ollama",
+        "model": "local-m",
+        "fallback_from": "openai",
+        "source": "local-ocr",
+    }
+    assert preview == []  # the image is never rendered or sent
 
 
 def test_the_openai_artifact_request_carries_the_prompt_bounded_ocr_text_and_image(openai, preview):
@@ -420,18 +499,82 @@ def test_blank_ocr_text_is_not_added_to_the_artifact_request(openai, preview):
         assert [p["type"] for p in request["messages"][0]["content"]] == ["text", "image_url"]
 
 
-def test_an_openai_artifact_failure_or_empty_answer_is_no_translation(openai, preview):
+@pytest.mark.parametrize("failure", ["error", "blank"])
+def test_an_openai_artifact_failure_falls_back_to_local_ocr_and_the_local_model(
+    openai, preview, crew, monkeypatch, failure
+):
+    if failure == "error":
+        openai.error = RuntimeError("boom")
+    else:
+        openai.content = "  "
+    read = []
+    monkeypatch.setattr("intake.ocr.extract_text", lambda p: read.append(p) or "こんにちは")
+    crew.reply = "Hello"
+    text, meta = tr.translate_receipt_artifact(
+        Path("r.jpg"), provider="openai", openai_api_key="sk", language="ja", local_model="local-m"
+    )
+    assert text == "Hello"
+    assert meta == {
+        "provider": "ollama",
+        "model": "local-m",
+        "fallback_from": "openai",
+        "source": "local-ocr",
+    }
+    assert read == [Path("r.jpg")]  # the receipt was read again with local OCR
+
+
+def test_text_that_was_already_read_is_not_read_again_for_the_fallback(
+    openai, preview, crew, monkeypatch
+):
     openai.error = RuntimeError("boom")
+    monkeypatch.setattr("intake.ocr.extract_text", lambda p: pytest.fail("must not OCR again"))
+    crew.reply = "Hello"
+    text, _ = tr.translate_receipt_artifact(
+        Path("r.jpg"), raw_text="こんにちは", provider="openai", openai_api_key="sk"
+    )
+    assert text == "Hello"
+
+
+def test_a_working_artifact_translation_never_reads_or_translates_locally(
+    openai, preview, crew, monkeypatch
+):
+    openai.content = "Fully translated"
+    monkeypatch.setattr("intake.ocr.extract_text", lambda p: pytest.fail("must not OCR"))
+    text, meta = tr.translate_receipt_artifact(
+        Path("r.jpg"), provider="openai", openai_api_key="sk"
+    )
+    assert (
+        text == "Fully translated" and meta["source"] == "artifact" and "fallback_from" not in meta
+    )
+    assert crew.instances == []
+
+
+def test_with_no_local_text_or_no_local_translation_the_artifact_is_left_untranslated(
+    openai, preview, crew, monkeypatch
+):
+    openai.error = RuntimeError("boom")
+    monkeypatch.setattr("intake.ocr.extract_text", lambda p: "   ")
     assert tr.translate_receipt_artifact(Path("r.jpg"), provider="openai", openai_api_key="sk") == (
         None,
         None,
     )
-    openai.error = None
-    openai.content = "  "
+
+    def broken(path):
+        raise ValueError("unsupported")
+
+    monkeypatch.setattr("intake.ocr.extract_text", broken)
     assert tr.translate_receipt_artifact(Path("r.jpg"), provider="openai", openai_api_key="sk") == (
         None,
         None,
     )
+
+    monkeypatch.setattr("intake.ocr.extract_text", lambda p: "こんにちは")
+    crew.error = RuntimeError("crew-chief down")
+    assert tr.translate_receipt_artifact(Path("r.jpg"), provider="openai", openai_api_key="sk") == (
+        None,
+        None,
+    )
+    assert crew.instances and openai.requests  # both were tried
 
 
 # --- finding the Crew Chief client ---------------------------------------------------------

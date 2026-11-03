@@ -10,12 +10,6 @@ Mark items `[x]` when complete and move them to Done.
 
 ## Pending
 
-- [ ] [manual:2026-11-02] **Make `translation_provider = "openai"` work at ingest, or reject it** —
-  ingest-time translation (`maybe_translate_receipt`, called from `extract_receipt` and the email
-  path) passes no API key, so choosing the OpenAI provider in `settings.toml` silently translates
-  nothing (and would send the local default model name to OpenAI if a key were added). The OpenAI
-  provider only works through `intake translate`. Either thread `openai_api_key` and a sensible
-  model through, or warn and fall back when the OpenAI provider is configured for ingest.
 - [ ] [manual:2026-11-02] **Decide who may drive reply handling** — reply processing
   (`intake/email_reply.py`) applies structured field updates (merchant, total, purchaser, card)
   and sends a Snowbridge file link to the `From` address of any message whose subject contains
@@ -37,6 +31,7 @@ Mark items `[x]` when complete and move them to Done.
 
 ## Done
 
+- [x] [manual:2026-11-03] Make a failing or key-less OpenAI translation fall back to local OCR and the local translation model (fixes `translation_provider = "openai"` silently translating nothing at ingest).
 - [x] [manual:2026-06-15] Extract the file-inbox document routing pipeline from `intake/cli.py` into a dedicated module so `process` and daemon ingestion share one implementation for duplicate handling, OCR, document-type routing, moves, sidecars, DB writes, notifications, and finance events.
 - [x] [manual:2026-06-15] Move large inline report templates out of `intake/report.py` into tracked template files, preserving the static HTML/Markdown output contract and focused report regression tests.
 - [x] [manual:2026-06-15] Split low-level email body text, IMAP provider, and filing/save helpers out of `intake/email.py` while preserving compatibility wrappers for existing tests and patch points.
