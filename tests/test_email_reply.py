@@ -62,8 +62,16 @@ def make_message(
     sender="Me <me@example.com>",
     headers=None,
     html=None,
+    authenticated=True,
 ):
     msg = EmailMessage()
+    if authenticated:
+        # What the receiving server (Gmail) prepends for a message that passed DMARC.
+        domain = sender.rsplit("@", 1)[-1].rstrip(">").strip()
+        msg["Authentication-Results"] = (
+            f"mx.google.com; dkim=pass header.i=@{domain}; spf=pass smtp.mailfrom={domain}; "
+            f"dmarc=pass (p=NONE sp=NONE dis=NONE) header.from={domain}"
+        )
     msg["Subject"] = subject
     msg["From"] = sender
     msg["Message-ID"] = message_id
@@ -1083,3 +1091,32 @@ def test_the_sender_check_comes_before_the_receipt_is_even_looked_up(db, run_rep
     )
     assert email_status(db, 5) == "reply-untrusted"  # not "reply-unmatched"
     assert result.reply_unmatched == 0
+
+
+def test_a_reply_the_server_did_not_authenticate_is_recorded_and_ignored(db, run_replies):
+    # A forged From: with an allowed address, but no passing verdict from the receiving server.
+    payload = reply(f"total: 99\nfilename: {FILENAME}", authenticated=False)
+    result, _ = run_replies({"INBOX": {5: payload}})
+
+    assert get_receipt(db, FILENAME)["total"] == 66.0
+    assert email_status(db, 5) == "reply-unauthenticated"
+    assert (result.reply_applied, result.skipped, result.errors) == (0, 1, 0)
+
+
+def test_a_forged_verdict_below_the_servers_own_does_not_authenticate_a_reply(db, run_replies):
+    msg = make_message(body=f"total: 99\nfilename: {FILENAME}", authenticated=False)
+    msg["Authentication-Results"] = "mx.google.com; dmarc=fail header.from=example.com"
+    msg["Authentication-Results"] = "mx.google.com; dmarc=pass header.from=example.com"
+    result, _ = run_replies({"INBOX": {5: msg.as_bytes()}})
+
+    assert get_receipt(db, FILENAME)["total"] == 66.0
+    assert email_status(db, 5) == "reply-unauthenticated"
+
+
+def test_authentication_can_be_switched_off_explicitly(db, run_replies):
+    payload = reply(f"total: 12.5\nfilename: {FILENAME}", authenticated=False)
+    settings = {"email": {"reply_mailboxes": ["INBOX"], "require_authenticated_replies": False}}
+    result, _ = run_replies({"INBOX": {5: payload}}, settings=settings)
+
+    assert get_receipt(db, FILENAME)["total"] == 12.5
+    assert email_status(db, 5) == "reply-applied"
