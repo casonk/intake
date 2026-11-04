@@ -16,6 +16,12 @@ def _portfolio_site():
     return site.resolve(here.parents[1], vendored=here.parent / "portfolio")
 
 
+def _is_loopback_bind(host: str) -> bool:
+    from intake.portfolio import site
+
+    return site.is_loopback_name(site.host_name(host))
+
+
 CHROME_TAG = b'<script src="/_portfolio/chrome.js" defer></script>'
 
 
@@ -31,9 +37,28 @@ def with_chrome(document: bytes) -> bytes:
 class _ReportHandler(SimpleHTTPRequestHandler):
     """Static file handler that prefers the generated HTML report as the root page."""
 
-    def __init__(self, *args, directory: str, index_name: str = "intake-report.html", **kwargs):
+    def __init__(
+        self,
+        *args,
+        directory: str,
+        index_name: str = "intake-report.html",
+        enforce_host: bool = True,
+        **kwargs,
+    ):
         self._index_name = index_name
+        self._enforce_host = enforce_host
         super().__init__(*args, directory=directory, **kwargs)
+
+    def _host_refused(self) -> bool:
+        """DNS-rebinding guard: answer 403 unless Host is loopback or a name this site has.
+
+        A page on an attacker's hostname that resolves to this machine could otherwise read the
+        generated reports (receipts, spending) as "same origin". The header is not echoed.
+        """
+        if not self._enforce_host or _portfolio_site().host_allowed(self.headers.get("Host", "")):
+            return False
+        self.send_error(403, "Forbidden: unexpected Host header")
+        return True
 
     def _redirect_to_index(self) -> None:
         self.send_response(302)
@@ -54,6 +79,8 @@ class _ReportHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
+        if self._host_refused():
+            return
         if self.path.startswith("/_portfolio/"):
             self._send_portfolio()
             return
@@ -72,6 +99,8 @@ class _ReportHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_HEAD(self) -> None:  # noqa: N802
+        if self._host_refused():
+            return
         if self.path in ("", "/") and Path(self.directory, self._index_name).exists():
             self._redirect_to_index()
             return
@@ -85,7 +114,11 @@ class _ReportHandler(SimpleHTTPRequestHandler):
 def serve_reports(output_dir: Path, *, host: str = "127.0.0.1", port: int = 5200) -> None:
     """Serve *output_dir* over HTTP until interrupted."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    handler = partial(_ReportHandler, directory=str(output_dir))
+    # A server bound beyond loopback cannot know the names it is reached by, so it is only
+    # checked once the site has a registered hostname (or PORTFOLIO_ALLOWED_HOSTS lists some).
+    site = _portfolio_site()
+    enforce = _is_loopback_bind(host) or bool(site.allowed_hosts())
+    handler = partial(_ReportHandler, directory=str(output_dir), enforce_host=enforce)
     httpd = ThreadingHTTPServer((host, port), handler)
     print(f"intake web : http://{host}:{port}/")
     print(f"report dir : {output_dir}")

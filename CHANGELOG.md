@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Refuse report requests (GET and HEAD) whose `Host` header is not a loopback name or this site's registered hostname (from the portfolio site store, or `PORTFOLIO_ALLOWED_HOSTS`). The report server had no host check, so a DNS-rebinding page, which sends its own hostname as `Host`, could read the generated reports (receipts, spending) as "same origin". The shared check lives in the vendored portfolio site seam (re-vendored here). A server bound beyond loopback with no registered name is not checked. **Upgrade note:** a deployment reached through a proxy under an unregistered name will get 403.
+
 - Authenticate the sender of a reply, not just its `From:` header: a reply is acted on only when the receiving server's topmost `Authentication-Results` header (default `mx.google.com`) reports `dmarc=pass` for the sender's own domain. Otherwise it is recorded as `reply-unauthenticated` and ignored. This fails closed: a mailbox whose server adds no such header needs `[email].require_authenticated_replies = false`; `[email].authentication_server` names a different trusted server.
 
 - Tighten the Kalshi Spam-recovery trust check: only Gmail's own (topmost) `Authentication-Results` header counts, so a forged header supplied by the sender can no longer authenticate a message, and the signing domain must be `privaterelay.appleid.com` itself rather than a longer name that begins with it. An infinite `notification_inbox_grace_*` value now falls back to the default instead of raising `OverflowError`.
