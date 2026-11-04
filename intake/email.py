@@ -651,16 +651,22 @@ def _fetch_kalshi_spam_liquidations(
 
 
 def _has_google_apple_relay_authentication(msg) -> bool:
-    """Require Gmail's passing Apple private relay checks before promoting Spam."""
-    for value in msg.get_all("Authentication-Results", []):
-        normalized = " ".join(str(value).lower().split())
-        if (
-            normalized.startswith("mx.google.com;")
-            and re.search(r"\bdkim=pass\s+header\.i=@privaterelay\.appleid\.com\b", normalized)
-            and re.search(r"\bdmarc=pass\b", normalized)
-        ):
-            return True
-    return False
+    """Require Gmail's passing Apple private relay checks before promoting Spam.
+
+    Only the topmost ``Authentication-Results`` header counts: Gmail prepends its
+    own verdict, so any further header was supplied by the sender and may be
+    forged. The signing domain must be the relay domain itself, not a longer
+    name that merely starts with it.
+    """
+    values = msg.get_all("Authentication-Results", [])
+    if not values:
+        return False
+    normalized = " ".join(str(values[0]).lower().split())
+    return bool(
+        normalized.startswith("mx.google.com;")
+        and re.search(r"\bdkim=pass\s+header\.i=@privaterelay\.appleid\.com(?=[\s;]|$)", normalized)
+        and re.search(r"\bdmarc=pass\b", normalized)
+    )
 
 
 def _search_receipt_uids(
@@ -725,7 +731,7 @@ def _notification_inbox_grace_seconds(email_cfg: dict) -> int:
         multiplier = 60
     try:
         return max(0, int(float(raw_value) * multiplier))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 60 * 60
 
 
