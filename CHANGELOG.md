@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Authenticate the sender of a reply, not just its `From:` header: a reply is acted on only when the receiving server's topmost `Authentication-Results` header (default `mx.google.com`) reports `dmarc=pass` for the sender's own domain. Otherwise it is recorded as `reply-unauthenticated` and ignored. This fails closed: a mailbox whose server adds no such header needs `[email].require_authenticated_replies = false`; `[email].authentication_server` names a different trusted server.
+
 - Tighten the Kalshi Spam-recovery trust check: only Gmail's own (topmost) `Authentication-Results` header counts, so a forged header supplied by the sender can no longer authenticate a message, and the signing domain must be `privaterelay.appleid.com` itself rather than a longer name that begins with it. An infinite `notification_inbox_grace_*` value now falls back to the default instead of raising `OverflowError`.
 
 - Limit intake's mail to `[email].allowed_addresses`: replies from any other sender are recorded as `reply-untrusted` and never acted on (no receipt change, no Snowbridge link), and no notification, file-link reply or newsletter digest is sent to any other address. With no list configured nobody is allowed and intake says so on stderr, so **set `allowed_addresses` in your local `settings.toml`** or notifications stop. The check reads the `From` header only; DKIM/SPF verification is a separate step.

@@ -10,7 +10,7 @@ Mark items `[x]` when complete and move them to Done.
 
 ## Pending
 
-- [ ] [manual:2026-11-03] Verify the sender of a reply with DKIM/SPF (`Authentication-Results`), not only the `From` header, before acting on it.
+- [x] [manual:2026-11-03] Verify the sender of a reply with DKIM/SPF (`Authentication-Results`), not only the `From` header, before acting on it. (done: `sender_is_authenticated`, intake#30)
 - [ ] [manual:2026-10-15] **Ask GitHub Support to purge pre-rewrite commits** — this
   repository's published history was rewritten (most recently on 2026-10-15,
   to remove per-commit AI attribution trailers). GitHub keeps serving the old
