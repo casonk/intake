@@ -102,8 +102,12 @@ reports_dir = "reports"
 # never acted on (no receipt field changes, no file link), and nothing is ever sent to any other
 # address, including [gmail].recipient(s) and newsletter digests. With no list, nobody is allowed
 # and intake warns on stderr. Matching is on the bare address (display name and case ignored).
-# The check reads the From header; it keeps strangers out but does not prove who sent a message.
+# The From header alone is forgeable, so a reply is also acted on only when the receiving server
+# vouches for the sender: its topmost Authentication-Results header must report dmarc=pass for the
+# sender's own domain. Replies that fail are recorded as `reply-unauthenticated` and ignored.
 # allowed_addresses = ["you@example.com", "second-account@example.org"]
+# require_authenticated_replies = true      # set to false only for a mailbox whose server adds no such header
+# authentication_server = "mx.google.com"   # the server whose Authentication-Results is trusted
 #
 # # Gmail label to move processed emails into (created automatically if absent)
 # processed_label = "intake/processed"

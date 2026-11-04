@@ -7,7 +7,7 @@ from email import message_from_bytes
 from email.policy import default as default_policy
 from pathlib import Path
 
-from intake.addresses import is_allowed_address
+from intake.addresses import is_allowed_address, sender_is_authenticated
 from intake.db import (
     get_receipt,
     is_email_message_id_processed,
@@ -606,6 +606,29 @@ def _process_reply_messages(
                             print(
                                 "    skip (reply sender is not in [email].allowed_addresses): "
                                 f"{subject!r}"
+                            )
+                        continue
+
+                    # The From header is forgeable, so the receiving server must also vouch for
+                    # the sender (DMARC pass for the sender's own domain).
+                    if not sender_is_authenticated(settings, msg, sender):
+                        if not is_email_processed(db_conn, uid, mailbox):
+                            record_email_receipt(
+                                db_conn,
+                                uid=uid,
+                                mailbox=mailbox,
+                                message_id=message_id,
+                                subject=subject,
+                                sender=sender,
+                                received_at=date_str,
+                                attachment_count=0,
+                                status="reply-unauthenticated",
+                            )
+                        result.skipped += 1
+                        if verbose:
+                            print(
+                                "    skip (reply sender is not authenticated by "
+                                f"Authentication-Results): {subject!r}"
                             )
                         continue
 

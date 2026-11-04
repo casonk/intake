@@ -7,8 +7,9 @@ with no list configured, no address is allowed (and a warning says so), because 
 must never mean "everyone".
 
 The check compares the bare, lower-cased address (``Name <a@b.example>`` and ``a@b.example`` are
-the same). It looks at the ``From`` header only, so it keeps strangers out but does not prove who
-sent a message; DKIM/SPF verification is a separate, stronger step.
+the same). The ``From`` header alone only keeps strangers out; it does not prove who sent a
+message. :func:`sender_is_authenticated` is the stronger step: it requires the receiving server's
+own DMARC pass for the sender's domain.
 """
 
 from __future__ import annotations
@@ -73,3 +74,46 @@ def require_allowed_address(settings: dict, value: object, *, purpose: str) -> s
     if not is_allowed_address(settings, address):
         raise RuntimeError(_refusal(settings, address, purpose))
     return address
+
+
+DEFAULT_AUTHENTICATION_SERVER = "mx.google.com"
+
+
+def _authentication_enabled(settings: dict) -> bool:
+    email_cfg = settings.get("email") if isinstance(settings, dict) else None
+    return not (
+        isinstance(email_cfg, dict) and email_cfg.get("require_authenticated_replies") is False
+    )
+
+
+def sender_is_authenticated(settings: dict, msg, sender: object) -> bool:
+    """True when the receiving server vouches that *sender* really sent *msg*.
+
+    Only the topmost ``Authentication-Results`` header counts: the receiving server prepends its
+    own verdict, so any further header was supplied by the sender and may be forged. That header
+    must come from the configured server (``[email].authentication_server``, default
+    ``mx.google.com``) and report ``dmarc=pass`` for the domain of the sender's address. Fails
+    closed: a missing header, another server, a failed check or a different domain is not
+    authenticated. ``[email].require_authenticated_replies = false`` turns the check off.
+    """
+    if not _authentication_enabled(settings):
+        return True
+    address = normalize_address(sender)
+    if not address:
+        return False
+    domain = address.rsplit("@", 1)[1]
+    values = msg.get_all("Authentication-Results", [])
+    if not values:
+        return False
+    email_cfg = settings.get("email") if isinstance(settings, dict) else {}
+    configured = str((email_cfg or {}).get("authentication_server") or "").strip().lower()
+    server = configured or DEFAULT_AUTHENTICATION_SERVER
+    normalized = " ".join(str(values[0]).lower().split())
+    if not normalized.startswith(f"{server};"):
+        return False
+    if not re.search(r"(?:^|[\s;])dmarc=pass(?=[\s;(]|$)", normalized):
+        return False
+    return (
+        re.search(rf"(?:^|[\s;(])header\.from={re.escape(domain)}(?=[\s;)]|$)", normalized)
+        is not None
+    )
