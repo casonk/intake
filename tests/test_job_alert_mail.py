@@ -11,7 +11,7 @@ import json
 import stat
 
 from intake import job_search_mail as jm
-from tests.test_job_search_mail_fetch import raw  # career is a fixture
+from tests.test_job_search_mail_fetch import career, raw  # noqa: F401  career is a fixture
 
 HTML = """<table><style>a {color: #00688C;}</style><tr><td>Welcome to your jobs update.</td></tr>
 <tr><td class="reqList"><a href="https://careers.oracle.com/en/sites/jobsearch/job/340493/?utm_medium=career+site&utm_source=job+alert">Pre-Sales Engineer</a><br>
