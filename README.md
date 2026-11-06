@@ -493,6 +493,15 @@ related application folders. A message that does not name a specific role is
 kept as a shared employer action; intake does not advance application status.
 Career mail stays unread in Inbox until the user completes the request.
 
+**Job alerts:** list the senders of employers' "new jobs for you" digests in `[career.alerts]` (an exact
+address or a domain, mapped to the employer name). The same scan saves each digest as
+`private/job-alerts/<id>.json` in the career repo with the posting links on the employer's own domain
+(unsubscribe, profile and "see all jobs" links are dropped), for career's `career.py mail-leads`, which
+reads each posting and ranks it as a lead (contract: career's `docs/job-alert-contract.md`). With
+`[career].file_mail` the digest gets the `<label_prefix>/Job alerts` label and otherwise stays in
+Inbox; read state is never changed. A message from an alert sender that answers an application is still
+saved as a career action.
+
 The `*.ai.json` artifact is cumulative. Each new AI model attempt is appended
 instead of replacing the prior attempt history, and the file includes a
 `models` summary with fidelity weights (`low=1`, `mid=2`, `high=3`) for later
