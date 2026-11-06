@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Capture employers' job-alert digests: senders listed in `[career.alerts]` are saved as `private/job-alerts/<id>.json` in the career repo with the posting links on the employer's own domain, for career's `mail-leads`. With `[career].file_mail` the digest is labelled `Career/Job alerts` and stays in Inbox, unread. A message from an alert sender that answers an application is still a career action.
+
 - Refuse report requests (GET and HEAD) whose `Host` header is not a loopback name or this site's registered hostname (from the portfolio site store, or `PORTFOLIO_ALLOWED_HOSTS`). The report server had no host check, so a DNS-rebinding page, which sends its own hostname as `Host`, could read the generated reports (receipts, spending) as "same origin". The shared check lives in the vendored portfolio site seam (re-vendored here). A server bound beyond loopback with no registered name is not checked. **Upgrade note:** a deployment reached through a proxy under an unregistered name will get 403.
 
 - Authenticate the sender of a reply, not just its `From:` header: a reply is acted on only when the receiving server's topmost `Authentication-Results` header (default `mx.google.com`) reports `dmarc=pass` for the sender's own domain. Otherwise it is recorded as `reply-unauthenticated` and ignored. This fails closed: a mailbox whose server adds no such header needs `[email].require_authenticated_replies = false`; `[email].authentication_server` names a different trusted server.

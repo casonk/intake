@@ -5,7 +5,9 @@ Each message becomes one gitignored record in ``private/intake-email/`` with a
 following career's ``docs/intake-email-contract.md``. Verification codes that
 portals email before accepting a submission (Greenhouse's "security code") are
 written to ``private/verification-codes/`` instead, for career's filler, and are
-never printed.
+never printed. Job-alert digests from senders listed in ``[career.alerts]`` ("new jobs for you")
+become ``private/job-alerts/<id>.json`` with the posting links they carry, for career's
+``mail-leads``; they are labelled but stay in Inbox.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from email.policy import default as default_policy
 from email.utils import parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from intake.email_provider import load_shock_relay, select_mailbox
 from intake.email_text import html_to_text
@@ -100,6 +102,7 @@ LABEL_NAMES = {
     "offer": "Offer",
     "rejection": "Rejection",
     "code": "Security code",
+    "alert": "Job alerts",
 }
 
 
@@ -112,7 +115,10 @@ def file_career_mail(sr, conn, items: list[tuple[int, str]], prefix: str = "Care
     for uid, item in items:
         kind, _, done = item.partition(":")  # "request:done" once its action box is ticked
         label = f"{prefix}/{LABEL_NAMES.get(kind, kind.title())}"
-        if kind in _OPEN_KINDS and not done:
+        if kind == "alert":  # a digest: label it, leave it in Inbox and unread
+            conn.create(label)
+            conn.uid("copy", str(uid), label)
+        elif kind in _OPEN_KINDS and not done:
             conn.create(label)
             conn.uid("copy", str(uid), label)
             conn.uid("store", str(uid), "+FLAGS", r"(\Flagged)")
@@ -171,8 +177,8 @@ def _is_portal(sender: str) -> bool:
     return any(domain == p or domain.endswith("." + p) for p in PORTAL_SENDERS)
 
 
-def _employer_for_sender(sender: str, employers: dict[str, str], subject: str = "") -> str:
-    """The employer a message is from: an exact address key, a domain key, or a portal's subject line."""
+def _configured_employer(sender: str, employers: dict[str, str]) -> str:
+    """The employer a configured exact-address or domain key names for this sender; "" if none."""
     address = parseaddr(sender)[1].lower()
     domain = address.rpartition("@")[2]
     for key, organization in employers.items():
@@ -184,6 +190,13 @@ def _employer_for_sender(sender: str, employers: dict[str, str], subject: str = 
             continue
         if domain == suffix or domain.endswith("." + suffix):
             return str(organization)
+    return ""
+
+
+def _employer_for_sender(sender: str, employers: dict[str, str], subject: str = "") -> str:
+    """The employer a message is from: an exact address key, a domain key, or a portal's subject line."""
+    if configured := _configured_employer(sender, employers):
+        return configured
     if _is_portal(sender):
         found = _SUBJECT_EMPLOYER.search(subject)
         if found:
@@ -314,6 +327,115 @@ def save_action(root: Path, message: CareerMessage) -> Path | None:
     return path
 
 
+# A link to one posting: a job/requisition/posting segment followed by something with a digit in it.
+# Unsubscribe, profile, and "see all jobs" links do not match.
+_POSTING_PATH = re.compile(
+    r"/(?:jobs?|job-details|requisitions?|postings?|positions?|openings?|opportunit(?:y|ies))/[^?#]*\d",
+    re.I,
+)
+MAX_ALERT_LINKS = 40
+
+
+class _PostingLinks(HTMLParser):
+    """Posting links in a digest with a best-effort title: the link text, else the text just before it."""
+
+    def __init__(self, allowed_domain: str) -> None:
+        super().__init__()
+        self.allowed = allowed_domain
+        self.links: list[tuple[str, str]] = []
+        self._href = ""
+        self._label = ""
+        self._before = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            self._href = dict(attrs).get("href") or ""
+            self._label = ""
+
+    def handle_data(self, data: str) -> None:
+        text = " ".join(data.split())
+        if self._href:
+            self._label += data
+        elif text:
+            self._before = text
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or not self._href:
+            return
+        url = _clean_posting_url(self._href)
+        host = (urlsplit(url).hostname or "").lower()
+        if (
+            url
+            and (host == self.allowed or host.endswith("." + self.allowed))
+            and _POSTING_PATH.search(url)
+        ):
+            title = " ".join(self._label.split()) or self._before
+            self.links.append((title[:160], url))
+        self._href = ""
+
+
+def _clean_posting_url(href: str) -> str:
+    """The https link without utm_* tracking and without a fragment; "" for anything else."""
+    parts = urlsplit(href.strip())
+    if parts.scheme != "https" or not parts.hostname:
+        return ""
+    query = urlencode(
+        [(k, v) for k, v in parse_qsl(parts.query) if not k.lower().startswith("utm_")]
+    )
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
+
+
+def _registrable(sender: str) -> str:
+    """oracle.com for noreply@oracle.com or careers@mail.oracle.com: links on the employer's own domain."""
+    domain = parseaddr(sender)[1].lower().rpartition("@")[2]
+    return ".".join(domain.split(".")[-2:])
+
+
+def alert_links(sender: str, html: str) -> list[tuple[str, str]]:
+    """(title, url) for each distinct posting link in a job-alert digest, in order."""
+    parser = _PostingLinks(_registrable(sender))
+    parser.feed(html)
+    seen: dict[str, str] = {}
+    for title, url in parser.links:
+        seen.setdefault(url, title)
+    return [(title, url) for url, title in seen.items()][:MAX_ALERT_LINKS]
+
+
+def _alert_path(root: Path, message_id: str) -> Path:
+    token = hashlib.sha256(message_id.encode("utf-8")).hexdigest()[:20]
+    return root / "private" / "job-alerts" / f"{token}.json"
+
+
+def save_alert(
+    root: Path,
+    message_id: str,
+    organization: str,
+    subject: str,
+    sender: str,
+    received: date,
+    links: list[tuple[str, str]],
+) -> Path | None:
+    """Write one owner-only record per Message-ID for career's mail-leads; None if already saved."""
+    path = _alert_path(root, message_id)
+    record = {
+        "organization": organization,
+        "received": received.isoformat(),
+        "sender": parseaddr(sender)[1],
+        "message_id": message_id,
+        "subject": subject,
+        "links": [{"title": title, "url": url} for title, url in links],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return None
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(record, stream, indent=1)
+        stream.write("\n")
+    return path
+
+
 def fetch_actions(
     settings: dict, *, dry_run: bool = False, verbose: bool = True, refile: bool = False
 ) -> list[Path]:
@@ -326,7 +448,8 @@ def fetch_actions(
     career = settings.get("career", {})
     root_value = str(career.get("repo_root") or "").strip()
     employers = career.get("employers") or {}
-    if not root_value or not employers:
+    alerts = career.get("alerts") or {}
+    if not root_value or not (employers or alerts):
         return []
     root = Path(root_value).expanduser()
     if not (root / "applications").is_dir() or not (root / "private").is_dir():
@@ -346,7 +469,7 @@ def fetch_actions(
         if status != "OK":
             raise RuntimeError(f"Cannot select mailbox {mailbox!r}")
         uids: set[int] = set()
-        for domain in [*employers, *PORTAL_SENDERS]:
+        for domain in [*employers, *alerts, *PORTAL_SENDERS]:
             terms = sr.build_search_terms(
                 from_contains=domain, since_days=int(career.get("since_days", 30))
             )
@@ -362,7 +485,8 @@ def fetch_actions(
             sender = sr.decode_mime_header(email.get("From"))
             subject = sr.decode_mime_header(email.get("Subject"))
             organization = _employer_for_sender(sender, employers, subject)
-            if not organization:
+            alert_org = _configured_employer(sender, alerts)
+            if not organization and not alert_org:
                 continue
             plain, html = sr.extract_message_bodies(email)
             body = plain or html_to_text(html)
@@ -371,6 +495,27 @@ def fetch_actions(
                 stamp = parsedate_to_datetime(str(email.get("Date")))
             except (TypeError, ValueError):
                 stamp = datetime.now(UTC)
+            # A digest from an alert sender; mail from the same sender that answers an application
+            # (a confirmation, a request) is still an action, not an alert.
+            if alert_org and not (organization and classify(subject, body)):
+                links = alert_links(sender, html)
+                if not links:
+                    continue
+                path = _alert_path(root, message_id)
+                if refile and path.exists():
+                    filing.append((uid, "alert"))
+                if verbose:
+                    print(
+                        f"  Career job alert: {alert_org}: {subject} -> {len(links)} posting link(s)"
+                    )
+                if not dry_run and (
+                    created := save_alert(
+                        root, message_id, alert_org, subject, sender, stamp.date(), links
+                    )
+                ):
+                    saved.append(created)
+                    filing.append((uid, "alert"))
+                continue
             if code := verification_code(subject, body):
                 fresh = (
                     datetime.now(UTC) - stamp.astimezone(UTC)

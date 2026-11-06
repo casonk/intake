@@ -193,6 +193,8 @@ reports_dir = "reports"
 # [career.employers]
 # "example.com" = "Example Employer"
 # "example@myworkday.com" = "Example Employer"   # an exact portal address
+# [career.alerts]                       # employers' job-alert digests -> private/job-alerts/ for career mail-leads
+# "noreply@example.com" = "Example Employer"
 
 # ── Signal notifications (optional) ──────────────────────────────────────────
 # Sends a Signal message after a receipt is successfully processed.
