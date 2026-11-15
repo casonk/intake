@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 import contextlib
-import io
 import json
 import re
 from datetime import date, time
@@ -220,10 +219,6 @@ def purchaser_was_blacklisted(ai_dict: dict) -> bool:
 
 def _preview_image_b64(receipt_path: Path) -> str:
     """Render a supported receipt file to a base64-encoded PNG string."""
-    from intake.ocr import render_preview_image
+    from intake.ocr import render_preview_png
 
-    image = render_preview_image(receipt_path, resolution=150)
-
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
+    return base64.b64encode(render_preview_png(receipt_path, resolution=150)).decode()

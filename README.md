@@ -37,6 +37,17 @@ the top level of the TOML file: once you open a table like `[web]` or
 `[email]`, later bare keys belong to that table, not to global intake
 settings.
 
+## Parsing untrusted files in a sandbox (optional)
+
+Receipts arrive from email attachments and a shared folder, so the PDF, image and video parsers read files an
+attacker can shape. Set `INTAKE_EXTRACTOR=sandbox` and intake never opens such a file with a parser in the daemon's
+process: it sends the bytes to a small service (`python -m intake.extractor_service`, default
+`http://127.0.0.1:5455`, override with `INTAKE_EXTRACTOR_URL`) that has no network, no secrets and no access to the
+receipts folder, and gets text, a PNG preview, or a yes/no back. The default, `local`, parses in-process exactly as
+before. The sandbox fails closed: if it is unreachable the daemon skips the cycle and leaves files in the inbox, it
+never parses locally instead, and an unknown `INTAKE_EXTRACTOR` value is an error. The manual `intake merge`
+command still reads PDFs locally. See `docs/extractor-sandbox.md`.
+
 ## Usage
 
 **Backfill pre-existing receipts** already sorted into category folders:

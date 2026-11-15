@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from intake import sandbox
 from intake.media import is_image_receipt, is_pdf_receipt, is_video_receipt
 
 # Some PDF generators synthesize bold text by rendering each glyph twice at
@@ -42,7 +43,18 @@ def _undouble_glyph_runs(text: str) -> str:
 
 
 def extract_text(receipt_path: Path) -> str:
-    """Extract text from a supported receipt file."""
+    """Extract text from a supported receipt file.
+
+    With ``INTAKE_EXTRACTOR=sandbox`` the file is parsed by the extractor sandbox (``intake.sandbox``), never
+    in this process, and an unreachable sandbox is an error rather than a reason to parse locally.
+    """
+    if sandbox.enabled():
+        return sandbox.extract_text(Path(receipt_path))
+    return extract_text_local(receipt_path)
+
+
+def extract_text_local(receipt_path: Path) -> str:
+    """Extract text in this process. The sandbox's worker calls this; callers should use ``extract_text``."""
     if is_pdf_receipt(receipt_path):
         return _extract_pdf_text(receipt_path)
     if is_image_receipt(receipt_path):
@@ -52,8 +64,28 @@ def extract_text(receipt_path: Path) -> str:
     raise ValueError(f"unsupported receipt media type: {receipt_path}")
 
 
+def render_preview_png(receipt_path: Path, *, resolution: int = 150) -> bytes:
+    """Return a PNG preview of a supported receipt file as bytes.
+
+    In sandbox mode the PNG is rendered there and returned undecoded, so this process never parses the file or
+    the pixels (callers only base64 it for a vision model).
+    """
+    if sandbox.enabled():
+        return sandbox.preview_png(Path(receipt_path), resolution)
+    return render_preview_png_local(receipt_path, resolution=resolution)
+
+
+def render_preview_png_local(receipt_path: Path, *, resolution: int = 150) -> bytes:
+    import io
+
+    image = render_preview_image(receipt_path, resolution=resolution)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def render_preview_image(receipt_path: Path, *, resolution: int = 150):
-    """Return a PIL image preview for a supported receipt file."""
+    """Return a PIL image preview for a supported receipt file (in this process)."""
     if is_pdf_receipt(receipt_path):
         return _render_pdf_page(receipt_path, resolution=resolution)
     if is_image_receipt(receipt_path):
