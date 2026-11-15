@@ -1,5 +1,13 @@
 ## Unreleased
 
+- Add an optional extractor sandbox. With `INTAKE_EXTRACTOR=sandbox` the daemon sends receipt bytes to a service
+  (`python -m intake.extractor_service`) that parses them in a child process with a timeout and CPU limit, and gets
+  text, a PNG preview or a decode check back, so PDF, image and video parsers never run on files an attacker can
+  shape inside the daemon's process. It fails closed (an unreachable sandbox skips the cycle; nothing is parsed
+  locally instead), refuses oversize and unsupported files, never echoes document content in errors, and
+  reports an unreachable sandbox as unavailable, not as a corrupt receipt. The default is `local`, unchanged.
+  Preview images are now passed as PNG bytes (`ocr.render_preview_png`) so the host does not decode them.
+
 - Capture employers' job-alert digests: senders listed in `[career.alerts]` are saved as `private/job-alerts/<id>.json` in the career repo with the posting links on the employer's own domain, for career's `mail-leads`. With `[career].file_mail` the digest is labelled `Career/Job alerts` and stays in Inbox, unread. A message from an alert sender that answers an application is still a career action.
 
 - Refuse report requests (GET and HEAD) whose `Host` header is not a loopback name or this site's registered hostname (from the portfolio site store, or `PORTFOLIO_ALLOWED_HOSTS`). The report server had no host check, so a DNS-rebinding page, which sends its own hostname as `Host`, could read the generated reports (receipts, spending) as "same origin". The shared check lives in the vendored portfolio site seam (re-vendored here). A server bound beyond loopback with no registered name is not checked. **Upgrade note:** a deployment reached through a proxy under an unregistered name will get 403.

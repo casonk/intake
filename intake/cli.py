@@ -1646,10 +1646,21 @@ def _is_unreadable_receipt_image(path: Path) -> bool:
     images (e.g. incomplete Snowbridge uploads). img.load() forces a full pixel
     decode and raises for truncated files.
     """
+    from intake import sandbox
     from intake.media import is_image_receipt
 
     if not is_image_receipt(path):
         return False
+    if sandbox.enabled():
+        # Decoding an untrusted image is exactly what the sandbox is for: ask it, never decode here. An
+        # unreachable sandbox does not make a file corrupt, so it is not reported as such (the cycle guard
+        # in _process_inbox skips the whole cycle when the sandbox is down).
+        try:
+            return not sandbox.image_decodes(path)
+        except sandbox.SandboxUnavailable:
+            return False
+        except sandbox.SandboxError:
+            return True
     try:
         from PIL import Image
 
@@ -3418,6 +3429,17 @@ def _process_inbox(
     intake_dir = receipt_dir / "intake"
     pdfs = _intake_receipt_files(intake_dir) if intake_dir.exists() else []
     if not pdfs:
+        return 0, 0
+
+    from intake import sandbox
+
+    if sandbox.enabled() and not sandbox.healthy():
+        # Fail closed and transient: never parse locally instead, and leave every file where it is for the next cycle.
+        print(
+            f"  [inbox] the extractor sandbox at {sandbox.base_url()} is not answering; "
+            f"leaving {len(pdfs)} file(s) for the next cycle",
+            file=sys.stderr,
+        )
         return 0, 0
 
     corrupt = [p for p in pdfs if p.stat().st_size == 0 or _is_unreadable_receipt_image(p)]
