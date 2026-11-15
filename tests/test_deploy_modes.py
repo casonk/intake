@@ -359,3 +359,12 @@ def test_the_restore_trap_fires_for_failures_inside_functions():
     text = DEPLOY.read_text()
     assert "set -eEuo pipefail" in text
     assert "trap restore ERR" in text
+
+
+def test_every_deploy_script_is_executable():
+    # verify.sh was once created without its executable bit; `deploy.sh k3s up` then failed at the verify step
+    # with "Permission denied" (the restore trap kept the daemon safe, but the deployment could not finish).
+    scripts = sorted((REPO / "deploy").rglob("*.sh"))
+    assert scripts
+    not_executable = [str(p.relative_to(REPO)) for p in scripts if not os.access(p, os.X_OK)]
+    assert not_executable == []

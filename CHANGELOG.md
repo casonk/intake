@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Make `deploy/k3s/verify.sh` executable (it was committed without the bit, so `deploy/deploy.sh --mode k3s up` stopped at the verify step with "Permission denied"), and add a test that every deploy script is executable.
+
 - Add `deploy/deploy.sh [--mode dev|host|k3s] up|down|status|verify|mode`, with the mode from `--mode`, `INTAKE_DEPLOY_MODE`, or `config/deploy.local.env` (example: `config/deploy.example.env`, gitignored), defaulting to `dev`. It chooses where untrusted receipt files are parsed: a foreground sandbox service (`dev`), the daemon's own process (`host`), or a K3s pod with no network, no secrets and none of your files (`k3s`). Only `k3s` touches kubectl or podman. The daemon is switched to the sandbox only after the pod is verified and reachable through a loopback bridge, and any failure restores in-process parsing. `docs/deployment.md` explains each mode and how to switch.
 
 - Add an optional extractor sandbox. With `INTAKE_EXTRACTOR=sandbox` the daemon sends receipt bytes to a service
