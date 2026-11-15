@@ -35,6 +35,10 @@ def _decodes(path: Path) -> bool:
     from PIL import Image
 
     try:
+        if path.suffix.lower() in (".heic", ".heif"):
+            from intake.ocr import register_heif
+
+            register_heif()
         with Image.open(path) as image:
             image.load()
     except Exception:  # noqa: BLE001  (any decode failure means "not readable")
