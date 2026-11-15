@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Support iPhone HEIC/HEIF receipts (`.heic`, `.heif`). They were never in the supported list, so uploaded photos sat in the inbox forever. They are read with `pillow-heif` (now a dependency) in the extractor sandbox or in-process, with the phone's orientation applied. Where HEIC cannot be decoded (no `pillow-heif` and no sandbox) a HEIC file is unsupported, not corrupt: it is left alone and no corrupt-upload alert is sent. Unreadable or truncated HEIC files are reported corrupt like any other image.
+
 - Make `deploy/k3s/verify.sh` executable (it was committed without the bit, so `deploy/deploy.sh --mode k3s up` stopped at the verify step with "Permission denied"), and add a test that every deploy script is executable.
 
 - Add `deploy/deploy.sh [--mode dev|host|k3s] up|down|status|verify|mode`, with the mode from `--mode`, `INTAKE_DEPLOY_MODE`, or `config/deploy.local.env` (example: `config/deploy.example.env`, gitignored), defaulting to `dev`. It chooses where untrusted receipt files are parsed: a foreground sandbox service (`dev`), the daemon's own process (`host`), or a K3s pod with no network, no secrets and none of your files (`k3s`). Only `k3s` touches kubectl or podman. The daemon is switched to the sandbox only after the pod is verified and reachable through a loopback bridge, and any failure restores in-process parsing. `docs/deployment.md` explains each mode and how to switch.

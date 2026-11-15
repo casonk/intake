@@ -1647,9 +1647,12 @@ def _is_unreadable_receipt_image(path: Path) -> bool:
     decode and raises for truncated files.
     """
     from intake import sandbox
-    from intake.media import is_image_receipt
+    from intake.media import HEIC_RECEIPT_SUFFIXES, heic_decodable, is_image_receipt
 
     if not is_image_receipt(path):
+        return False
+    if path.suffix.lower() in HEIC_RECEIPT_SUFFIXES and not heic_decodable():
+        # Unsupported on this machine is not the same as corrupt: no alert, and the file stays where it is.
         return False
     if sandbox.enabled():
         # Decoding an untrusted image is exactly what the sandbox is for: ask it, never decode here. An
@@ -1664,6 +1667,10 @@ def _is_unreadable_receipt_image(path: Path) -> bool:
     try:
         from PIL import Image
 
+        if path.suffix.lower() in (".heic", ".heif"):
+            from intake.ocr import register_heif
+
+            register_heif()
         with Image.open(path) as img:
             img.load()
         return False
