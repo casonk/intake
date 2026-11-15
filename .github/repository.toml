@@ -4,6 +4,7 @@
 [repository]
 # One line shown on GitHub. Keep it free of private repository names and local paths.
 description = "Process receipt PDFs, images, and reference documents from an SMB share into SQLite tables and Markdown/HTML reports."
+topics = ["receipts", "ocr", "sqlite", "python", "document-processing", "sandbox", "k3s"]
 
 [main_branch]
 # Direct commits and pushes to main are refused unless this is true.
