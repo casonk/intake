@@ -37,6 +37,15 @@ the top level of the TOML file: once you open a table like `[web]` or
 `[email]`, later bare keys belong to that table, not to global intake
 settings.
 
+## Receipt file types
+
+PDFs, images (`.jpg`, `.jpeg`, `.png`, `.tif`, `.tiff`, `.bmp`, `.webp`, and iPhone `.heic` / `.heif`) and short
+videos (`.mov`, `.mp4`, `.m4v`). HEIC and HEIF are read with the `pillow-heif` package, which is a dependency, and
+orientation from the phone's metadata is applied. On a machine that cannot read HEIC (the package is not installed
+and the sandbox is off), a HEIC file is **unsupported, not corrupt**: it stays in the inbox, and no one is sent a
+corrupt-upload alert. With `INTAKE_EXTRACTOR=sandbox` the daemon needs no local decoder at all, because the sandbox
+image carries it.
+
 ## Parsing untrusted files in a sandbox (optional)
 
 Receipts arrive from email attachments and a shared folder, so the PDF, image and video parsers read files an

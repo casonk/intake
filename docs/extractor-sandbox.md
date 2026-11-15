@@ -35,7 +35,7 @@ Related settings: `INTAKE_EXTRACTOR_TIMEOUT` (seconds the daemon waits, default 
 | `GET /healthz` | `200 {"ok": true}` |
 | `POST /extract?suffix=.pdf` (body: the file) | `200 {"text": "..."}` |
 | `POST /preview?suffix=.png&resolution=150` | `200` PNG bytes |
-| `POST /decode?suffix=.jpg` (images only) | `200 {"decodes": true|false}` (any decoder failure is `false`) |
+| `POST /decode?suffix=.jpg` (images only, including `.heic` and `.heif`) | `200 {"decodes": true|false}` (any decoder failure is `false`) |
 
 Refusals are `{"error": ...}` with 400 (unsupported type or bad query), 411 (no `Content-Length`), 413 (too large),
 422 (the parser failed or timed out) or 503 (busy). Error text never contains document content.

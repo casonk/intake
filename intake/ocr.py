@@ -8,7 +8,12 @@ import tempfile
 from pathlib import Path
 
 from intake import sandbox
-from intake.media import is_image_receipt, is_pdf_receipt, is_video_receipt
+from intake.media import (
+    HEIC_RECEIPT_SUFFIXES,
+    is_image_receipt,
+    is_pdf_receipt,
+    is_video_receipt,
+)
 
 # Some PDF generators synthesize bold text by rendering each glyph twice at
 # an near-identical position (e.g. "Invoice" -> "IInnvvooiiccee"). pdfplumber's
@@ -122,9 +127,23 @@ def _render_pdf_page(pdf_path: Path, *, resolution: int):
         return pdf.pages[0].to_image(resolution=resolution).original
 
 
+def register_heif() -> None:
+    """Teach Pillow to open HEIC/HEIF (iPhone photos). Needs the optional ``pillow-heif`` package."""
+    try:
+        import pillow_heif
+    except ImportError as exc:
+        raise RuntimeError(
+            "HEIC/HEIF receipts need pillow-heif; install it, or set INTAKE_EXTRACTOR=sandbox"
+        ) from exc
+    pillow_heif.register_heif_opener()
+
+
 def _load_image(image_path: Path):
     """Load *image_path* as a normalized PIL image."""
     from PIL import Image, ImageOps
+
+    if image_path.suffix.lower() in HEIC_RECEIPT_SUFFIXES:
+        register_heif()
 
     with Image.open(image_path) as image:
         normalized = ImageOps.exif_transpose(image)
