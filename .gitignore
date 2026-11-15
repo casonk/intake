@@ -60,3 +60,6 @@ coverage.xml
 .coverage
 .coverage.*
 htmlcov/
+
+# Where intake parses untrusted files on this machine (deploy/deploy.sh)
+config/deploy.local.env
