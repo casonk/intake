@@ -168,3 +168,12 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 
 - Employer requests to complete a talent profile are actionable career correspondence, not evidence that any specific job application advanced. When one employer has multiple applications, preserve the request as a private shared action and list related application folders without changing statuses.
 - Some legitimate employer action buttons use an `http` tracking link on a subdomain of the sender's domain. Preserve that link in the private action record after checking the hostname; requiring `https` for every extracted link silently drops the next step.
+
+### 2026-11-15 — What does and does not belong in a pod
+
+- Before planning a mount, run `ls -Zd` on the folder. A folder already labelled with another container's private
+  SELinux categories cannot be shared with a pod without relabelling it, which breaks the first container; that is why
+  the report generator (which checks that receipt files exist to build links) stays on the host.
+- Move the risky step, not the service: only the untrusted-file parsing runs in a pod with no network, no secrets and
+  none of the host's files, and a bad document fails closed.
+- A job that holds a mailbox, an API key and another repository's code gains little from a pod; leave it on the host.
