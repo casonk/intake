@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intake-extractor
+  namespace: intake-extractor
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: intake-extractor}
+  template:
+    metadata:
+      labels: {app: intake-extractor}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 5   # a Python HTTP server as PID 1 ignores SIGTERM; do not wait out the default 30s
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001     # not the owner's uid: this pod mounts none of the owner's files
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: extractor
+          image: localhost:5000/intake-extractor:k3s
+          imagePullPolicy: Always
+          ports: [{name: http, containerPort: 5455}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            # PDF pages are rendered at 300 DPI before OCR; this is the ceiling a hostile file can reach.
+            limits: {memory: 2Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            # The only writable place, and the only volume: each request's document lives here for its duration.
+            - {name: scratch, mountPath: /tmp}
+      volumes:
+        - name: scratch
+          emptyDir: {sizeLimit: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intake-extractor
+  namespace: intake-extractor
+spec:
+  type: ClusterIP
+  clusterIP: 10.43.0.61   # fixed: the host-side forwarder names it
+  selector: {app: intake-extractor}
+  ports: [{name: http, port: 5455, targetPort: http}]

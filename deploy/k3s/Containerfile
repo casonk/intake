@@ -1,0 +1,16 @@
+# The extractor sandbox: the receipt parsers and nothing else. No daemon, no mail, no API keys, no database, no
+# access to the receipts folder. Everything it needs arrives in a request; everything it returns is text or PNG bytes.
+FROM docker.io/library/python:3.12-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY pyproject.toml README.md LICENSE ./
+COPY intake ./intake
+RUN pip install --no-cache-dir .
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+# Not root, and not the owner's uid: the pod mounts none of the owner's files.
+USER 10001:10001
+EXPOSE 5455
+ENTRYPOINT ["python3", "-m", "intake.extractor_service"]
+CMD ["--host", "0.0.0.0", "--port", "5455"]

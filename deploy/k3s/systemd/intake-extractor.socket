@@ -1,0 +1,8 @@
+[Unit]
+Description=The intake extractor sandbox on loopback, forwarded into K3s
+
+[Socket]
+ListenStream=127.0.0.1:5455
+
+[Install]
+WantedBy=sockets.target
