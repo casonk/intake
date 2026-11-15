@@ -46,7 +46,8 @@ process: it sends the bytes to a small service (`python -m intake.extractor_serv
 receipts folder, and gets text, a PNG preview, or a yes/no back. The default, `local`, parses in-process exactly as
 before. The sandbox fails closed: if it is unreachable the daemon skips the cycle and leaves files in the inbox, it
 never parses locally instead, and an unknown `INTAKE_EXTRACTOR` value is an error. The manual `intake merge`
-command still reads PDFs locally. See `docs/extractor-sandbox.md`.
+command still reads PDFs locally. See `docs/extractor-sandbox.md`, and `docs/deployment.md` to run the sandbox in a K3s pod with one setting
+(`deploy/deploy.sh`, `dev`, `host` or `k3s`; only `k3s` needs a cluster).
 
 ## Usage
 

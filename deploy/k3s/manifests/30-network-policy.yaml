@@ -1,0 +1,17 @@
+# Only the node may connect (the forwarder in front of the daemon), and the pod may connect to nothing: it has no
+# DNS, no internet and no route to the host or the cluster. A parser that is exploited has nowhere to send what it
+# read. Deny rules win in Cilium, so a later allow added by mistake cannot open a path.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: intake-extractor
+  namespace: intake-extractor
+spec:
+  endpointSelector:
+    matchLabels: {app: intake-extractor}
+  ingress:
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "5455", protocol: TCP}]
+  egressDeny:
+    - toEntities: [all]
