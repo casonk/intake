@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import re
 import sys
 from base64 import b64encode
@@ -375,12 +374,9 @@ def _translate_artifact_with_openai(
 
     import openai
 
-    from intake.ocr import render_preview_image
+    from intake.ocr import render_preview_png
 
-    image = render_preview_image(receipt_path, resolution=150)
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    image_b64 = b64encode(buf.getvalue()).decode()
+    image_b64 = b64encode(render_preview_png(receipt_path, resolution=150)).decode()
 
     content: list[dict] = [
         {
