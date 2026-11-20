@@ -83,7 +83,7 @@ the work. Your receipts, database and settings never move: only the daemon's env
 ## What stays on the host
 
 - **The daemon** and everything it integrates with: Gmail polling, the OpenAI calls, Signal notes, the career and
-  finance-repo integrations. These need your credentials and other repositories, so moving them would widen the
+  finance integrations. These need your credentials and other repositories, so moving them would widen the
   pod's reach instead of narrowing it.
 - **`intake merge`** reads PDFs with `pypdf` in its own process; it is a manual command and is not routed through the
   sandbox.

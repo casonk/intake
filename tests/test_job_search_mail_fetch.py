@@ -9,6 +9,7 @@ shock-relay are fakes and the career workspace is a temporary directory.
 
 from __future__ import annotations
 
+import inspect
 import json
 import stat
 from contextlib import contextmanager
@@ -20,6 +21,9 @@ from types import SimpleNamespace
 import pytest
 
 from intake import job_search_mail as jm
+
+# The default label prefix, read from the code so the tests do not restate it.
+LABEL = inspect.signature(jm.file_career_mail).parameters["prefix"].default
 
 EMPLOYERS = {"acme.com": "Acme"}
 
@@ -434,7 +438,7 @@ def test_with_file_mail_new_messages_are_filed_under_the_label_prefix(career):
 def test_the_default_label_prefix_is_career(career):
     state = career.setup({2: raw()})
     jm.fetch_actions(career.settings(file_mail=True), verbose=False)
-    assert state.sr.moved == [(2, "Career/Confirmation")]
+    assert state.sr.moved == [(2, f"{LABEL}/Confirmation")]
 
 
 def test_a_dry_run_never_files_even_with_file_mail(career):
@@ -450,7 +454,7 @@ def test_messages_already_saved_are_filed_again_only_with_refile(career):
     jm.fetch_actions(career.settings(file_mail=True), verbose=False)
     assert state.sr.moved == []
     jm.fetch_actions(career.settings(file_mail=True), verbose=False, refile=True)
-    assert state.sr.moved == [(2, "Career/Confirmation")]
+    assert state.sr.moved == [(2, f"{LABEL}/Confirmation")]
 
 
 def test_refile_treats_a_ticked_action_as_done_and_files_it_away(career):
@@ -461,7 +465,7 @@ def test_refile_treats_a_ticked_action_as_done_and_files_it_away(career):
     path = records(career.root)[0]
     path.write_text(path.read_text().replace("- [ ]", "- [x]"))
     jm.fetch_actions(career.settings(file_mail=True), verbose=False, refile=True)
-    assert state.sr.moved == [(1, "Career/Request")]  # done, so archived rather than kept starred
+    assert state.sr.moved == [(1, f"{LABEL}/Request")]  # done, so archived rather than kept starred
     assert state.conn.ops == []
 
 
@@ -469,13 +473,13 @@ def test_refile_of_a_code_files_it_even_though_nothing_new_was_written(career):
     state = career.setup({1: raw(**CODE_MAIL)})
     jm.fetch_actions(career.settings(), verbose=False)
     jm.fetch_actions(career.settings(file_mail=True), verbose=False, refile=True)
-    assert state.sr.moved == [(1, "Career/Security code")]
+    assert state.sr.moved == [(1, f"{LABEL}/Security code")]
 
 
 def test_the_filing_summary_is_printed_when_verbose(career, capsys):
     career.setup({2: raw()})
     jm.fetch_actions(career.settings(file_mail=True), verbose=True)
-    assert "Career mail filed: 1 message(s) labelled under Career/" in capsys.readouterr().out
+    assert f"Career mail filed: 1 message(s) labelled under {LABEL}/" in capsys.readouterr().out
 
 
 def test_unfetchable_or_empty_messages_are_skipped(career):

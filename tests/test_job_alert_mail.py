@@ -11,7 +11,7 @@ import json
 import stat
 
 from intake import job_search_mail as jm
-from tests.test_job_search_mail_fetch import career, raw  # noqa: F401  career is a fixture
+from tests.test_job_search_mail_fetch import LABEL, career, raw  # noqa: F401  career is a fixture
 
 HTML = """<table><style>a {color: #00688C;}</style><tr><td>Welcome to your jobs update.</td></tr>
 <tr><td class="reqList"><a href="https://careers.oracle.com/en/sites/jobsearch/job/340493/?utm_medium=career+site&utm_source=job+alert">Pre-Sales Engineer</a><br>
@@ -85,8 +85,8 @@ def test_a_digest_is_saved_owner_only_and_labelled_but_left_in_inbox(career):
 def test_filing_labels_the_digest_without_archiving_it(career):
     state = career.setup({7: digest()})
     jm.fetch_actions(settings(career, file_mail=True), verbose=False)
-    assert ("create", "Career/Job alerts") in state.conn.ops
-    assert ("copy", "7", "Career/Job alerts") in state.conn.ops
+    assert ("create", f"{LABEL}/Job alerts") in state.conn.ops
+    assert ("copy", "7", f"{LABEL}/Job alerts") in state.conn.ops
     assert state.sr.moved == [] and state.conn.expunged == 0
     assert not any(
         op[0] == "store" for op in state.conn.ops
