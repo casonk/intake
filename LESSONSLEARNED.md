@@ -177,3 +177,32 @@ Unlike `CHATHISTORY.md`, this file should keep only reusable lessons that should
 - Move the risky step, not the service: only the untrusted-file parsing runs in a pod with no network, no secrets and
   none of the host's files, and a bad document fails closed.
 - A job that holds a mailbox, an API key and another repository's code gains little from a pod; leave it on the host.
+
+### 2026-11-24 — Filing mail automatically, and the review UI built on it
+
+- Receipt discovery only ever looked at allow-listed senders and subject keywords, so the Inbox was by construction
+  the pile nothing had examined. A processed message leaves the Inbox, so "what is still in the Inbox" is the
+  unexamined residue; judge a filter by a read-only audit of that, not by the messages it already handled.
+- Before letting any rule or model move mail, dry-run it over the whole mailbox (`intake email triage --dry-run
+  --since-days 400`), not just the recent window. The recent 30 days looked right; the year showed a small local
+  model calling a banker's replies "promo" and a relocation thread "automated". A model may only review mail that is
+  itself automated (a `noreply`-style sender or a marketing subdomain), never a reply or forward, a role account
+  (`support@`, `claims@`) or a person, and may only ever *file* clear notices and marketing, never hide anything else.
+  Make such stages opt-in in code and enable them in local settings after the dry run is clean.
+- "Notes to self" must require every recipient to be one of your own addresses. Mail from your work address to other
+  people is a conversation, and filing it hides one side of the thread.
+- Keep keywords need plurals (`Tickets`, `receipts`) and must be split: money, security, deadlines and real
+  transactions keep a message even with bulk headers; words marketing reuses (`trip`, `ticket`, `important`, `code`)
+  do not. Role-like names (`support@`, `info@`, `hello@`) are not automated senders.
+- A user's "return to Inbox" must stick: it gives the message a new UID, so key the skip on the recorded
+  Message-ID (triage) and leave `triage-*` rows alone in the receipt loop, or the daemon silently undoes the undo.
+- Gmail over IMAP: change labels with `UID STORE +/-X-GM-LABELS` on the `[Gmail]/All Mail` UID (atomic, no
+  copy-then-delete); system labels are bare atoms (`\Inbox`), user labels quoted; verify the UID's `X-GM-MSGID`
+  before every change; index by `X-GM-MSGID` so a message with several labels is one row.
+- A page that shows private mail needs: escaped plain text only (never render mail), a strict CSP with
+  `default-src 'none'`, `no-store`, a CSRF token in a `SameSite=Strict` cookie *and* the form plus an `Origin` that
+  equals `Host`, and the existing Host-header guard. Behind the ingress Caddy keeps the original `Host`.
+- Two formatters in one pre-commit (`ruff-format` then `black`) can flip-flop on a long `with ... # noqa` line, so the
+  hook fails in CI though it passed locally. Keep such lines short, and run `pre-commit run --all-files` twice.
+- A `gh pr checks` loop that stops when nothing is `pending` can exit before the test jobs have registered; wait for
+  the test jobs by name and compare the PR head SHA with the commit you mean to merge.
