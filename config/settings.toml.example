@@ -155,6 +155,9 @@ reports_dir = "reports"
 # # Local searchable index of the mailbox for the review UI (stored under data/, gitignored).
 # # Build it with: intake mail sync   Search it with: intake mail search "hakuba"
 # path = "data/mailindex.db"
+# # Review-page buttons that change the mailbox (return to Inbox, file under, mark read/unread).
+# # Reversible Gmail label/flag changes only; set to false for a read-only review page.
+# actions = true
 #
 # [promos]
 # model = "llama3.2:3b-instruct-q8_0"

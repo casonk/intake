@@ -281,3 +281,121 @@ def test_without_an_index_the_mail_routes_do_not_exist(tmp_path):
         httpd.shutdown()
         thread.join(timeout=5)
         httpd.server_close()
+
+
+# -- mailbox actions (stage 3) -----------------------------------------------------------------
+
+
+class FakeActions:
+    def __init__(self):
+        self.calls: list[tuple] = []
+        self.error: str | None = None
+
+    def _go(self, *call, code):
+        if self.error:
+            from intake.mail_actions import MailActionError
+
+            raise MailActionError(self.error)
+        self.calls.append(call)
+        return code
+
+    def return_to_inbox(self, gm):
+        return self._go("inbox", gm, code="inbox")
+
+    def file_under(self, gm, queue):
+        return self._go("file", gm, queue, code="filed")
+
+    def set_read(self, gm, read):
+        return self._go("read" if read else "unread", gm, code="read" if read else "unread")
+
+
+@pytest.fixture()
+def action_server(tmp_path, db_path):
+    actions = FakeActions()
+    httpd = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        partial(
+            _ReportHandler, directory=str(tmp_path), mail_app=MailApp(db_path, actions=actions)
+        ),
+    )
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield httpd, actions
+    httpd.shutdown()
+    thread.join(timeout=5)
+    httpd.server_close()
+
+
+def test_action_buttons_only_exist_when_actions_are_configured(server, action_server):
+    plain, _ = server
+    httpd, _ = action_server
+    assert "File under" not in req(plain, "GET", "/mail/m/3")[1]
+    assert "Return to Inbox" not in req(plain, "GET", "/mail/m/2")[1]
+    _, inbox_msg, _ = req(httpd, "GET", "/mail/m/3")
+    assert "File under" in inbox_msg and "Return to Inbox" not in inbox_msg
+    assert inbox_msg.count("<option") == 4 and 'value="ci"' not in inbox_msg
+    _, filed_msg, _ = req(httpd, "GET", "/mail/m/2")
+    assert "Return to Inbox" in filed_msg and "File under" not in filed_msg
+
+
+@pytest.mark.parametrize(
+    ("action", "fields", "call", "flash"),
+    [
+        ("inbox", {}, ("inbox", "2"), "Returned to your Inbox."),
+        ("file", {"queue": "promos"}, ("file", "2", "promos"), "Filed."),
+        ("read", {}, ("read", "2"), "Marked as read."),
+        ("unread", {}, ("unread", "2"), "Marked as unread."),
+    ],
+)
+def test_actions_call_through_and_show_a_fixed_flash(action_server, action, fields, call, flash):
+    httpd, actions = action_server
+    cookie, token = token_and_cookie(httpd, "/mail/m/2")
+    status, _, headers = post(
+        httpd, f"/mail/m/2/{action}", {"csrf": token, **fields}, cookie=cookie
+    )
+    assert status == 303 and headers["location"].startswith("/mail/m/2?done=")
+    assert actions.calls == [call]
+    assert flash in req(httpd, "GET", headers["location"])[1]
+
+
+def test_action_routes_enforce_csrf_origin_and_content_type(action_server):
+    httpd, actions = action_server
+    cookie, token = token_and_cookie(httpd, "/mail/m/2")
+    for kwargs, expected in (
+        ({"cookie": None}, 403),
+        ({"origin": "http://evil.example"}, 403),
+        ({"origin": None}, 403),
+        ({"ctype": "text/plain"}, 415),
+    ):
+        args = {"cookie": cookie, **kwargs}
+        assert post(httpd, "/mail/m/2/inbox", {"csrf": token}, **args)[0] == expected
+    assert post(httpd, "/mail/m/2/inbox", {"csrf": "forged"}, cookie=cookie)[0] == 403
+    assert actions.calls == [], "no refused request may reach the mailbox"
+
+
+def test_a_refused_action_shows_an_escaped_error_and_changes_nothing(action_server):
+    httpd, actions = action_server
+    actions.error = "<script>alert(5)</script> The mailbox refused it."
+    cookie, token = token_and_cookie(httpd, "/mail/m/2")
+    status, body, _ = post(httpd, "/mail/m/2/inbox", {"csrf": token}, cookie=cookie)
+    assert status == 409 and "Nothing was changed" in body
+    assert "<script>alert(5)" not in body and "&lt;script&gt;alert(5)" in body
+
+
+def test_flash_text_cannot_be_injected_through_the_url(action_server):
+    httpd, _ = action_server
+    for done in ("<script>alert(6)</script>", "inbox<b>", "../../x", "x" * 500):
+        body = req(httpd, "GET", "/mail/m/2?done=" + urlencode({"": done})[1:])[1]
+        assert "alert(6)" not in body and "inbox<b>" not in body and "inbox&lt;b" not in body
+        for text in ("Returned to your Inbox", "Filed.", "Marked as"):
+            assert text not in body, "an unknown code must not produce any flash"
+
+
+def test_actions_are_404_when_not_configured(server):
+    httpd, _ = server
+    cookie, token = token_and_cookie(httpd, "/mail/m/3")
+    for action in ("inbox", "file", "read", "unread"):
+        assert (
+            post(httpd, f"/mail/m/3/{action}", {"csrf": token, "queue": "promos"}, cookie=cookie)[0]
+            == 404
+        )

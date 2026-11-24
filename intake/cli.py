@@ -1842,6 +1842,7 @@ def _cmd_serve(args: argparse.Namespace, settings: dict) -> None:
         host=_web_host(settings, getattr(args, "host", None)),
         port=_web_port(settings, getattr(args, "port", None)),
         mail_db=_mail_index_path(settings),
+        mail_actions=_mail_actions(settings),
     )
 
 
@@ -3276,6 +3277,16 @@ def _cmd_career(args: argparse.Namespace, settings: dict) -> None:
 def _mail_index_path(settings: dict) -> Path:
     cfg = settings.get("mail_index") if isinstance(settings.get("mail_index"), dict) else {}
     return _repo_relative_path(str(cfg.get("path") or "data/mailindex.db"))
+
+
+def _mail_actions(settings: dict):
+    """Mailbox actions for the review page; off with ``[mail_index] actions = false``."""
+    cfg = settings.get("mail_index") if isinstance(settings.get("mail_index"), dict) else {}
+    if not cfg.get("actions", True):
+        return None
+    from intake.mail_actions import MailActions  # noqa: PLC0415
+
+    return MailActions(settings, _mail_index_path(settings))
 
 
 def _cmd_mail(args: argparse.Namespace, settings: dict) -> None:

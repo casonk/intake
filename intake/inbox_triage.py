@@ -319,7 +319,11 @@ def run_triage(
     state_path: Path | None = None,
 ) -> TriageResult:
     """Triage Inbox mail not yet judged by any intake pass; returns what was decided."""
-    from intake.db import is_email_processed, record_email_receipt  # noqa: PLC0415
+    from intake.db import (  # noqa: PLC0415
+        is_email_message_id_processed,
+        is_email_processed,
+        record_email_receipt,
+    )
     from intake.email_filing import move_message_without_marking_read  # noqa: PLC0415
     from intake.email_provider import select_mailbox  # noqa: PLC0415
 
@@ -364,6 +368,11 @@ def run_triage(
             if status != "OK" or not payload:
                 continue
             msg = message_from_bytes(payload, policy=default_policy)
+            message_id = str(msg.get("Message-ID", "") or "").strip()
+            if message_id and is_email_message_id_processed(db_conn, message_id):
+                # Triage (or a receipt pass) already judged this message and it is back in the
+                # Inbox, e.g. because you returned it from the review page: that choice stands.
+                continue
             decision = classify_headers(
                 msg,
                 own_addresses=frozenset(own),

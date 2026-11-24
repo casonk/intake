@@ -308,7 +308,9 @@ def fetch_receipts(
                         tracking = _email_message_tracking_state(
                             db_conn, uid=uid, mailbox=mailbox, message_id=message_id
                         )
-                        if tracking["status"] == UNMATCHED_STATUS:
+                        if tracking["status"] == UNMATCHED_STATUS or str(
+                            tracking["status"]
+                        ).startswith("triage-"):
                             # Checked before and not a receipt: leave it in the
                             # inbox, and do not classify it (an LLM call) again.
                             filed_notice = _file_unmatched_notice(
