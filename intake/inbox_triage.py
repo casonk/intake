@@ -40,15 +40,23 @@ DEFAULT_LABELS = {
     "notice": "intake/notices",
 }
 
-# Anything matching stays in the Inbox, bulk headers or not: a ticket, an order, a code, a
-# billing or usage alert, something due.  Deliberately broad; the cost of a false "keep" is one
-# message left in the Inbox, the cost of a false "file" is a missed one.
-KEEP_SUBJECT_RE = re.compile(
-    r"\b(?:receipt|invoice|order(?:ed)?|payment|paid|statement|bill(?:ing)?|charge[ds]?|refund|"
-    r"ticket|itinerary|boarding|reservation|booking|confirm(?:ation|ed)?|trip|ride|"
-    r"verif(?:y|ication)|security|sign[- ]?in|log[- ]?in|password|passcode|one[- ]time|code|"
-    r"alert|action required|urgent|important|due|overdue|expir(?:e|es|ing|ed)|"
-    r"usage|quota|limit|minutes|suspend(?:ed)?|declined|failed|failure|delivered|shipped)\b",
+# Subjects that keep a message in the Inbox *even when it carries bulk headers*: money moving,
+# security, deadlines, and a real transaction (an order, a booking, a delivery).  A receipt or a
+# sign-in alert can carry a List-Unsubscribe header, and missing one is far worse than leaving
+# a promo behind.
+HARD_KEEP_SUBJECT_RE = re.compile(
+    r"\b(?:receipt|invoice|payment|paid|statement|bill(?:ing)?|charge[ds]?|refund|"
+    r"verif(?:y|ication)|security|sign[- ]?in|log[- ]?in|password|passcode|one[- ]time|"
+    r"fraud|declined|failed|failure|suspend(?:ed)?|action required|urgent|due|overdue|"
+    r"order(?:ed)?|confirm(?:ation|ed)?|booking|reservation|itinerary|boarding|"
+    r"delivered|shipped)\b",
+    re.IGNORECASE,
+)
+# Words that keep *non-bulk* mail (a trip, a ticket, an alert) but that marketing reuses
+# ("extending your trip", "no lift ticket", "important updates", "promo code"), so bulk headers
+# override them and the mail is filed as a promo.
+SOFT_KEEP_SUBJECT_RE = re.compile(
+    r"\b(?:ticket|trip|ride|code|alert|important|expir(?:e|es|ing|ed)|usage|quota|limit|minutes)\b",
     re.IGNORECASE,
 )
 # Informational mail whose subject trips the broad keep keywords above (usage, minutes, limit).
@@ -132,14 +140,14 @@ def classify_headers(
         return Decision("keep", "a note from yourself")
     if any(re.search(pattern, subject, re.IGNORECASE) for pattern in notice_subject_res):
         return Decision("notice", "informational subject", labels["notice"])
-    if KEEP_SUBJECT_RE.search(subject):
-        return Decision("keep", "subject looks transactional or like an alert")
-    if str(headers.get("Auto-Submitted", "no")).strip().lower() not in {"", "no"} and not is_bulk(
-        headers
-    ):
-        return Decision("notice", "auto-submitted mail", labels["notice"])
+    if HARD_KEEP_SUBJECT_RE.search(subject):
+        return Decision("keep", "subject is about money, security or a deadline")
     if is_bulk(headers):
         return Decision("promo", "bulk mail headers", labels["promo"])
+    if SOFT_KEEP_SUBJECT_RE.search(subject):
+        return Decision("keep", "subject looks transactional or like an alert")
+    if str(headers.get("Auto-Submitted", "no")).strip().lower() not in {"", "no"}:
+        return Decision("notice", "auto-submitted mail", labels["notice"])
     if AUTOMATED_SENDER_RE.search(local):
         return Decision("notice", "automated sender, no bulk headers", labels["notice"])
     return Decision("keep", "looks like a person")

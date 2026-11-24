@@ -252,3 +252,41 @@ def test_triage_prints_or_logs_each_decision_once(db, capsys, caplog):
     with caplog.at_level("INFO", logger="intake.triage"):
         run_triage(sr, config, {"email": {}}, db, verbose=False)
     assert len([r for r in caplog.records if "uid=2" in r.getMessage()]) == 1
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Konzer, interested in extending your Hakuba trip?",
+        "144 resorts, no lift ticket.",
+        "Important updates: your weekend promo code inside",
+        "Offer expires tonight - limit one per customer",
+    ],
+)
+def test_bulk_headers_override_soft_keywords_so_marketing_is_filed(subject):
+    decision = decide("campaign@shop.example", subject, List_Unsubscribe="<x>")
+    assert decision.kind == "promo" and decision.label
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Your order has shipped",
+        "Booking confirmation for your stay",
+        "Your itinerary for Tokyo",
+        "Receipt for your purchase",
+        "Payment failed - action required",
+        "Your verification code",
+    ],
+)
+def test_bulk_headers_never_override_real_transaction_or_security_subjects(subject):
+    decision = decide("campaign@shop.example", subject, List_Unsubscribe="<x>")
+    assert decision.kind == "keep", subject
+
+
+def test_soft_keywords_still_keep_non_bulk_mail():
+    assert decide("someone@example.org", "Your trip next week").kind == "keep"
+    assert (
+        decide("google-gemini-noreply@google.com", "Important updates in Gemini Apps").kind
+        == "keep"
+    )
