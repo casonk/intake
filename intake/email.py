@@ -603,7 +603,15 @@ def fetch_receipts(
         try:
             from intake.inbox_triage import run_triage  # noqa: PLC0415
 
-            triaged = run_triage(sr, config, settings, db_conn, dry_run=False, verbose=False)
+            triaged = run_triage(
+                sr,
+                config,
+                settings,
+                db_conn,
+                dry_run=False,
+                verbose=False,
+                state_path=_triage_state_path(settings),
+            )
             if verbose and triaged.moved:
                 print(f"  Inbox triage filed {triaged.moved}: {dict(triaged.by_kind)}")
         except Exception as exc:
@@ -821,6 +829,11 @@ _GITHUB_CI_RUN_RE = re.compile(
     r"\bworkflow run\b.*\b(?:failed|cancelled|canceled)\b",
     re.IGNORECASE,
 )
+
+
+def _triage_state_path(settings: dict) -> Path:
+    """Where the local model's keep-verdicts live: beside the database, under data/."""
+    return Path(settings.get("db_path") or "data/intake.db").parent / "triage-verdicts.json"
 
 
 def _file_unmatched_notice(
