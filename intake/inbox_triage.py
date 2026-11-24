@@ -27,9 +27,10 @@ import logging
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from email import message_from_bytes
 from email.policy import default as default_policy
-from email.utils import parseaddr
+from email.utils import parseaddr, parsedate_to_datetime
 
 log = logging.getLogger("intake.triage")
 
@@ -60,9 +61,7 @@ DEFAULT_SELF_SUBJECT_RE = (
     r"^\s*\[(?:intake|portfolio)\]|^\s*Magneto complete|^\s*Job guard|^\s*\[tradility\]"
 )
 
-HEADER_FIELDS = (
-    "FROM SUBJECT MESSAGE-ID LIST-UNSUBSCRIBE LIST-ID PRECEDENCE AUTO-SUBMITTED X-PORTFOLIO-SERVICE"
-)
+HEADER_FIELDS = "FROM SUBJECT DATE MESSAGE-ID LIST-UNSUBSCRIBE LIST-ID PRECEDENCE AUTO-SUBMITTED X-PORTFOLIO-SERVICE"
 
 # Kept messages are deliberately NOT recorded in email_receipts: the receipt loop treats any
 # recorded uid as already handled and would file a kept message that later becomes a receipt
@@ -99,8 +98,11 @@ def classify_headers(
     *,
     own_addresses: frozenset[str] = frozenset(),
     managed_senders: frozenset[str] = frozenset(),
+    skip_senders: frozenset[str] = frozenset(),
     labels: dict[str, str] | None = None,
     self_subject_re: str = DEFAULT_SELF_SUBJECT_RE,
+    managed_window_days: int = 7,
+    now: datetime | None = None,
 ) -> Decision:
     """Decide what to do with one message from its headers (``headers.get(name)``)."""
     labels = {**DEFAULT_LABELS, **(labels or {})}
@@ -108,8 +110,12 @@ def classify_headers(
     subject = str(headers.get("Subject", ""))
     local = sender.split("@", 1)[0]
 
-    if sender in managed_senders:
+    if sender in skip_senders:
+        return Decision("keep", "sender is on the skip list")
+    if sender in managed_senders and _within_days(headers, managed_window_days, now):
         return Decision("keep", "handled by the newsletter pipeline")
+    # Older than the newsletter job's look-back, it can never be digested or filed by it, so an
+    # aged-out issue falls through and is filed like any other bulk mail.
     if sender in own_addresses:
         generated = bool(headers.get("X-Portfolio-Service")) or bool(
             re.search(self_subject_re, subject, re.IGNORECASE)
@@ -128,6 +134,17 @@ def classify_headers(
     if AUTOMATED_SENDER_RE.search(local):
         return Decision("notice", "automated sender, no bulk headers", labels["notice"])
     return Decision("keep", "looks like a person")
+
+
+def _within_days(headers, days: int, now: datetime | None) -> bool:
+    """True when the Date header is within *days* (also when it cannot be read: be cautious)."""
+    try:
+        sent = parsedate_to_datetime(str(headers.get("Date", "")))
+    except (TypeError, ValueError):
+        return True
+    if sent.tzinfo is None:
+        sent = sent.replace(tzinfo=UTC)
+    return ((now or datetime.now(UTC)) - sent).days <= days
 
 
 def _managed_senders() -> frozenset[str]:
@@ -163,7 +180,8 @@ def run_triage(
     username = str(getattr(config.imap, "username", "") or "").lower()
     if username:
         own.add(username)
-    managed = _managed_senders() | {str(s).lower() for s in cfg.get("skip_senders", [])}
+    managed = _managed_senders()
+    always_skip = frozenset(str(s).lower() for s in cfg.get("skip_senders", []))
     self_re = str(cfg.get("self_subject_regex") or DEFAULT_SELF_SUBJECT_RE)
 
     result = TriageResult()
@@ -194,6 +212,7 @@ def run_triage(
                 msg,
                 own_addresses=frozenset(own),
                 managed_senders=managed,
+                skip_senders=always_skip,
                 labels=labels,
                 self_subject_re=self_re,
             )

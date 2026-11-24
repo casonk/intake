@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from email.message import Message
 from types import SimpleNamespace
 
@@ -87,12 +88,44 @@ def test_keeps_anything_that_could_need_a_human(sender, subject, extra):
     assert decision.kind == "keep" and decision.label is None
 
 
-def test_newsletter_pipeline_senders_are_left_alone():
-    decision = classify_headers(
-        hdr("Pulse <pulse@mail.tokenmetrics.com>", "Issue", List_Unsubscribe="<x>"),
-        managed_senders=frozenset({"pulse@mail.tokenmetrics.com"}),
+NOW = datetime(2026, 11, 24, tzinfo=UTC)
+PULSE = frozenset({"pulse@mail.tokenmetrics.com"})
+
+
+def test_newsletter_pipeline_senders_are_left_alone_while_in_its_window():
+    recent = hdr(
+        "Pulse <pulse@mail.tokenmetrics.com>",
+        "Issue",
+        List_Unsubscribe="<x>",
+        Date="Sun, 22 Nov 2026 10:00:00 +0000",
     )
-    assert decision.kind == "keep"
+    assert classify_headers(recent, managed_senders=PULSE, now=NOW).kind == "keep"
+
+
+def test_newsletter_issue_older_than_its_lookback_is_filed_like_bulk_mail():
+    # The newsletter job only looks back 7 days, so an older issue can never be digested.
+    old = hdr(
+        "Pulse <pulse@mail.tokenmetrics.com>",
+        "Issue",
+        List_Unsubscribe="<x>",
+        Date="Tue, 03 Nov 2026 10:00:00 +0000",
+    )
+    decision = classify_headers(old, managed_senders=PULSE, now=NOW)
+    assert decision.kind == "promo" and decision.label
+
+
+def test_unreadable_date_on_a_managed_sender_is_kept_to_be_safe():
+    odd = hdr("Pulse <pulse@mail.tokenmetrics.com>", "Issue", List_Unsubscribe="<x>", Date="??")
+    assert classify_headers(odd, managed_senders=PULSE, now=NOW).kind == "keep"
+
+
+def test_skip_senders_are_always_kept_regardless_of_age():
+    old = hdr(
+        "list@example.org", "Sale", List_Unsubscribe="<x>", Date="Tue, 03 Nov 2025 10:00:00 +0000"
+    )
+    assert (
+        classify_headers(old, skip_senders=frozenset({"list@example.org"}), now=NOW).kind == "keep"
+    )
 
 
 def test_custom_labels_override_defaults():
