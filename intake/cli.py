@@ -289,6 +289,22 @@ def _build_newsletter_manifest_text(*, python_executable: str, on_calendar: str)
     )
 
 
+def _build_promos_manifest_text(*, python_executable: str, on_calendar: str) -> str:
+    """Render the tracked weekly promotions digest service and timer."""
+    exec_start = _build_wait_exec_start(
+        python_executable=python_executable,
+        ready_message="intake promos timer: waiting for intake module path to become available",
+        command="promos digest --send",
+    )
+    return _render_clockwork_template(
+        "intake-promos.toml.template",
+        {
+            "__EXEC_START__": _toml_string(exec_start),
+            "__ON_CALENDAR__": _toml_string(on_calendar),
+        },
+    )
+
+
 def _build_web_manifest_text(*, python_executable: str) -> str:
     """Render the tracked clockwork manifest for intake-web.service."""
     exec_start = _build_wait_exec_start(
@@ -3246,6 +3262,46 @@ def _cmd_career(args: argparse.Namespace, settings: dict) -> None:
             print(path)
 
 
+def _cmd_promos(args: argparse.Namespace, settings: dict) -> None:
+    """Summarize the marketing mail triage filed, without changing the mailbox."""
+    if args.install_timer:
+        _install_promos_timer_units(on_calendar=args.on_calendar)
+        return
+
+    from intake.promo_digest import (  # noqa: PLC0415
+        extract_facts,
+        fetch_promos,
+        mark_digested,
+        pending,
+        render_digest,
+        send_digest,
+        summarize,
+        write_digest,
+    )
+
+    state_path = _REPO_ROOT / "data" / "promo-digest-state.json"
+    fetched = fetch_promos(settings, since_days=args.since_days, limit=args.limit)
+    todo = pending(fetched, state_path)
+    if not todo:
+        print("No new promotional email to summarize.")
+        return
+    model_ok = [not args.no_model]
+    summaries = {m.message_id: summarize(m, settings, model_ok=model_ok) for m in todo}
+    digest_date = date.today()
+    digest = render_digest(todo, summaries, digest_date)
+    output_dir = Path(args.output_dir or settings.get("reports_dir") or _DEFAULT_REPORTS_DIR)
+    output = write_digest(digest, output_dir / "promos", digest_date)
+    with_offer = sum(1 for m in todo if extract_facts(m.subject, m.body))
+    print(
+        f"Promotions digest written: {output} ({len(todo)} message(s), {with_offer} with a "
+        f"stated offer or deadline; {'local model' if model_ok[0] else 'extractive only'})"
+    )
+    if args.send:
+        send_digest(digest, settings, digest_date)
+        mark_digested(todo, state_path)
+        print("Promotions digest emailed.")
+
+
 def _cmd_newsletter(args: argparse.Namespace, settings: dict) -> None:
     """Generate a short digest from new subscribed newsletter issues."""
     if args.install_timer:
@@ -3659,6 +3715,17 @@ def _install_newsletter_timer_units(*, on_calendar: str) -> None:
     """Install newsletter digest units through the shared clockwork renderer."""
     _install_clockwork_manifest(
         _build_newsletter_manifest_text(
+            python_executable=sys.executable,
+            on_calendar=on_calendar,
+        ),
+        target="systemd-user",
+    )
+
+
+def _install_promos_timer_units(*, on_calendar: str) -> None:
+    """Install promotions digest units through the shared clockwork renderer."""
+    _install_clockwork_manifest(
+        _build_promos_manifest_text(
             python_executable=sys.executable,
             on_calendar=on_calendar,
         ),
@@ -4863,6 +4930,30 @@ def main() -> None:
         "--since-days", metavar="N", type=int, help="Override [email.triage] since_days"
     )
 
+    # promotions digest
+    p_promos = sub.add_parser(
+        "promos", help="Summarize the marketing mail triage filed (read-only, local model)"
+    )
+    p_promos_sub = p_promos.add_subparsers(dest="promos_command", required=True)
+    p_promos_digest = p_promos_sub.add_parser(
+        "digest", help="Write (and optionally email) a digest"
+    )
+    p_promos_digest.add_argument("--since-days", type=int, default=14, help="Look-back window")
+    p_promos_digest.add_argument("--limit", type=int, default=60, help="Most recent N messages")
+    p_promos_digest.add_argument("--output-dir", metavar="PATH", help="Report root")
+    p_promos_digest.add_argument("--send", action="store_true", help="Email to [gmail].recipient")
+    p_promos_digest.add_argument(
+        "--no-model", action="store_true", help="Skip the local model; use extracted facts only"
+    )
+    p_promos_digest.add_argument(
+        "--install-timer", action="store_true", help="Install the weekly email timer"
+    )
+    p_promos_digest.add_argument(
+        "--on-calendar",
+        default="Sun *-*-* 19:00:00",
+        help="systemd OnCalendar for --install-timer (default: Sundays at 19:00)",
+    )
+
     # career mail
     p_career = sub.add_parser("career", help="Capture employer follow-ups in the career repo")
     p_career_sub = p_career.add_subparsers(dest="career_command", required=True)
@@ -4892,6 +4983,8 @@ def main() -> None:
         _cmd_report(args, settings)
     elif args.command == "newsletter":
         _cmd_newsletter(args, settings)
+    elif args.command == "promos":
+        _cmd_promos(args, settings)
     elif args.command == "serve":
         _cmd_serve(args, settings)
     elif args.command == "backfill":

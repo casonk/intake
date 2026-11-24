@@ -513,6 +513,16 @@ Pulse recognition uses its authenticated sender and a substantive body rather
 than brittle newsletter section headings, which change between editions.
 To install the daily 8 p.m. user timer through clockwork, run `intake newsletter
 --install-timer`, then `systemctl --user enable --now intake-newsletter.timer`.
+
+### Promotions digest
+
+Marketing mail that inbox triage files under `intake/promos` can be summarized weekly by a
+separate job: `intake promos digest [--send]` writes `reports/promos/promos-YYYYMMDD.md` with, per
+sender, a one-line summary from a small local Ollama model plus the offer and deadline quoted from
+each mail (regexes, so it still works with no model). It is read-only: nothing is clicked,
+unsubscribed, moved or marked read, and each message is digested once. Install the weekly timer with
+`intake promos digest --install-timer`, then `systemctl --user enable --now intake-promos.timer`.
+
 The scheduled run searches a seven-day window and sends only when a new issue
 arrived; newsletters from all three sources are combined when pending.
 `[newsletter].model` can override the default `gpt-4o-mini` summary model.
