@@ -339,7 +339,11 @@ def set_summary(conn: sqlite3.Connection, gm_msgid: str, summary: str) -> None:
 
 
 def row_queue(row: sqlite3.Row) -> str:
-    return queue_of(json.loads(row["labels"] or "[]"), bool(row["in_inbox"]))
+    """The queue a row belongs to (a reviewed message still in the Inbox is ``reviewed``)."""
+    queue = queue_of(json.loads(row["labels"] or "[]"), bool(row["in_inbox"]))
+    if queue == "needs" and "reviewed_at" in row.keys() and row["reviewed_at"]:  # noqa: SIM118
+        return "reviewed"
+    return queue
 
 
 def fts_query(text: str) -> str:

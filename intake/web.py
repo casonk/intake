@@ -43,10 +43,12 @@ class _ReportHandler(SimpleHTTPRequestHandler):
         directory: str,
         index_name: str = "intake-report.html",
         enforce_host: bool = True,
+        mail_app=None,
         **kwargs,
     ):
         self._index_name = index_name
         self._enforce_host = enforce_host
+        self._mail_app = mail_app
         super().__init__(*args, directory=directory, **kwargs)
 
     def _host_refused(self) -> bool:
@@ -78,8 +80,46 @@ class _ReportHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _is_mail_path(self) -> bool:
+        return self._mail_app is not None and (
+            self.path == "/mail" or self.path.startswith(("/mail/", "/mail?"))
+        )
+
+    def _send_mail(self, response) -> None:
+        self.send_response(response.status)
+        self.send_header("Content-Type", response.content_type)
+        self.send_header("Content-Length", str(len(response.body)))
+        for name, value in response.headers.items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(response.body)
+
+    def do_POST(self) -> None:  # noqa: N802
+        """Only the mail review actions accept POST; everything else stays read-only."""
+        if self._host_refused():
+            return
+        if not self._is_mail_path():
+            self.send_error(405, "Method not allowed")
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > 16 * 1024:
+            self.send_error(413, "Request too large")
+            return
+        body = self.rfile.read(length) if length else b""
+        self._send_mail(
+            self._mail_app.post(
+                self.path, body, headers=self.headers, cookie_header=self.headers.get("Cookie", "")
+            )
+        )
+
     def do_GET(self) -> None:  # noqa: N802
         if self._host_refused():
+            return
+        if self._is_mail_path():
+            self._send_mail(self._mail_app.get(self.path))
             return
         if self.path.startswith("/_portfolio/"):
             self._send_portfolio()
@@ -111,17 +151,31 @@ class _ReportHandler(SimpleHTTPRequestHandler):
         return
 
 
-def serve_reports(output_dir: Path, *, host: str = "127.0.0.1", port: int = 5200) -> None:
-    """Serve *output_dir* over HTTP until interrupted."""
+def serve_reports(
+    output_dir: Path,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 5200,
+    mail_db: Path | None = None,
+) -> None:
+    """Serve *output_dir* over HTTP until interrupted (and the mail review pages, if indexed)."""
     output_dir.mkdir(parents=True, exist_ok=True)
     # A server bound beyond loopback cannot know the names it is reached by, so it is only
     # checked once the site has a registered hostname (or PORTFOLIO_ALLOWED_HOSTS lists some).
     site = _portfolio_site()
     enforce = _is_loopback_bind(host) or bool(site.allowed_hosts())
-    handler = partial(_ReportHandler, directory=str(output_dir), enforce_host=enforce)
+    mail_app = None
+    if mail_db is not None and Path(mail_db).exists():
+        from intake.review_web import MailApp  # noqa: PLC0415
+
+        mail_app = MailApp(mail_db)
+    handler = partial(
+        _ReportHandler, directory=str(output_dir), enforce_host=enforce, mail_app=mail_app
+    )
     httpd = ThreadingHTTPServer((host, port), handler)
     print(f"intake web : http://{host}:{port}/")
     print(f"report dir : {output_dir}")
+    print(f"mail review: {'/mail' if mail_app else 'off (run: intake mail sync)'}")
     if (output_dir / "intake-report.html").exists():
         print("landing    : /intake-report.html")
     else:
