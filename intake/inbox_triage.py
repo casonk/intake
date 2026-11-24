@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email import message_from_bytes
 from email.policy import default as default_policy
-from email.utils import parseaddr, parsedate_to_datetime
+from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from pathlib import Path
 
 log = logging.getLogger("intake.triage")
@@ -52,14 +52,14 @@ HARD_KEEP_SUBJECT_RE = re.compile(
     r"verif(?:y|ication)|security|sign[- ]?in|log[- ]?in|password|passcode|one[- ]time|"
     r"fraud|declined|failed|failure|suspend(?:ed)?|action required|urgent|due|overdue|"
     r"order(?:ed)?|confirm(?:ation|ed)?|booking|reservation|itinerary|boarding|"
-    r"delivered|shipped)\b",
+    r"delivered|shipped)(?:s|es)?\b",
     re.IGNORECASE,
 )
 # Words that keep *non-bulk* mail (a trip, a ticket, an alert) but that marketing reuses
 # ("extending your trip", "no lift ticket", "important updates", "promo code"), so bulk headers
 # override them and the mail is filed as a promo.
 SOFT_KEEP_SUBJECT_RE = re.compile(
-    r"\b(?:ticket|trip|ride|code|alert|important|expir(?:e|es|ing|ed)|usage|quota|limit|minutes)\b",
+    r"\b(?:ticket|trip|ride|code|alert|important|expir(?:e|es|ing|ed)|usage|quota|limit|minutes)(?:s|es)?\b",
     re.IGNORECASE,
 )
 # Informational mail whose subject trips the broad keep keywords above (usage, minutes, limit).
@@ -72,10 +72,13 @@ DEFAULT_NOTICE_SUBJECT_RES = (
 # comment on one of your pull requests, which needs you.  GitHub sends bulk-style headers, so
 # without this it would be filed as a promotion.
 DEFAULT_SKIP_SENDERS = frozenset({"notifications@github.com"})
+# Plainly automated senders.  Role accounts (support, team, info, hello, help) are deliberately
+# NOT here: they are answered by people, and genuine marketing from them already carries bulk
+# headers, which are handled separately.
 AUTOMATED_SENDER_RE = re.compile(
     r"(?:^|[-_.+])(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|donotreply)(?:$|[-_.+\d])|"
-    r"^(?:notifications?|notify|mailer|alerts?|updates?|news|newsletter|info|hello|support|"
-    r"team|bounce|auto)(?:$|[-_.+\d])",
+    r"^(?:notifications?|notify|mailer|alerts?|updates?|news|newsletter|bounce|auto)"
+    r"(?:$|[-_.+\d])",
     re.IGNORECASE,
 )
 DEFAULT_SELF_SUBJECT_RE = (
@@ -88,6 +91,71 @@ HEADER_FIELDS = "FROM SUBJECT DATE MESSAGE-ID LIST-UNSUBSCRIBE LIST-ID PRECEDENC
 # recorded uid as already handled and would file a kept message that later becomes a receipt
 # candidate.  This only quiets the repeat log lines for them within one daemon run.
 _KEPT_LOGGED: set[tuple[str, int]] = set()
+
+
+# --- who may be second-guessed by the local model -----------------------------------------
+# The model only ever gets to look at mail that is *itself* automated.  On a year of real mail an
+# earlier version called a banker's personal replies "promo", a relocation agent's emails
+# "automated" and a support thread a "notice"; a person's reply must never be filed by a model.
+_REPLY_SUBJECT_RE = re.compile(r"^\s*(?:re|aw|sv)\s*:", re.IGNORECASE)
+_FORWARD_SUBJECT_RE = re.compile(r"^\s*(?:fw|fwd|wg|tr)\s*:", re.IGNORECASE)
+_ROBOT_LOCAL_RE = re.compile(
+    r"(?:^|[-_.+])(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|donotreply|noreply)(?:$|[-_.+\d])|"
+    r"(?:^|[-_.+])reply\+|[-_.]reply$|^(?:notifications?|notify|mailer|bounces?|alerts?|"
+    r"newsletter|news|updates?|digest|automated?)(?:$|[-_.+\d])",
+    re.IGNORECASE,
+)
+# A marketing/notification subdomain (o.delta.com, email.example.com, news.example.com ...).
+_BULK_SUBDOMAIN_RE = re.compile(
+    r"^(?:o|e|em|email|emails|mail|mailer|news|newsletter|notify|notification|notifications|"
+    r"promo|promomail|communication|communications|campaign|campaigns|offer|offers|"
+    r"marketing|msemail|click|link|go|t|m|info)\.",
+    re.IGNORECASE,
+)
+# Role accounts are answered by people (support, claims, billing, service desks).
+_ROLE_LOCAL_RE = re.compile(
+    r"support|help|service|billing|claims?|accounts?|admin|legal|contact|sales|care|"
+    r"customer|office|team|hr|careers?|recruit",
+    re.IGNORECASE,
+)
+
+
+def is_reply(headers) -> bool:
+    """A reply: part of a conversation (Re:, In-Reply-To, References)."""
+    return bool(
+        headers.get("In-Reply-To")
+        or headers.get("References")
+        or _REPLY_SUBJECT_RE.match(str(headers.get("Subject", "")))
+    )
+
+
+def is_threaded(headers) -> bool:
+    """A reply or a forward: never auto-filed by a model."""
+    return is_reply(headers) or bool(_FORWARD_SUBJECT_RE.match(str(headers.get("Subject", ""))))
+
+
+def is_machine_sender(headers) -> bool:
+    """True only for senders that are plainly automated, never for a named person or a role."""
+    sender = parseaddr(str(headers.get("From", "")))[1].lower()
+    local, _, domain = sender.partition("@")
+    if not local or not domain or _ROLE_LOCAL_RE.search(local):
+        return False
+    return bool(_ROBOT_LOCAL_RE.search(local) or _BULK_SUBDOMAIN_RE.match(domain))
+
+
+def model_may_review(headers) -> bool:
+    """Whether the local model is allowed to look at this message at all."""
+    return not is_threaded(headers) and is_machine_sender(headers)
+
+
+def _only_to_yourself(headers, own_addresses: frozenset[str]) -> bool:
+    """A real note to self: every recipient (To and Cc) is one of your own addresses."""
+    recipients = {
+        addr.lower()
+        for _, addr in getaddresses([*headers.get_all("To", []), *headers.get_all("Cc", [])])
+        if addr
+    }
+    return bool(recipients) and recipients <= own_addresses
 
 
 REASON_PERSON = "looks like a person"
@@ -153,7 +221,7 @@ def classify_headers(
         )
         if generated:
             return Decision("notify", "portfolio-generated mail", labels["notify"])
-        if file_notes:
+        if file_notes and not is_reply(headers) and _only_to_yourself(headers, own_addresses):
             return Decision("note", "a note to yourself", labels["note"])
         return Decision("keep", REASON_SELF_NOTE)
     if any(re.search(pattern, subject, re.IGNORECASE) for pattern in notice_subject_res):
@@ -314,7 +382,7 @@ def run_triage(
                 and decision.reason in REFINABLE_REASONS
                 and llm_ok[0]
                 and key not in verdicts
-                and not (msg.get("In-Reply-To") or msg.get("References"))
+                and model_may_review(msg)
             ):
                 verdict = _ask_model(sr, conn, uid, settings, sender, subject)
                 if verdict is None:

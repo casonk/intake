@@ -294,10 +294,27 @@ def test_soft_keywords_still_keep_non_bulk_mail():
 
 
 def test_a_note_to_yourself_is_filed_unless_notes_are_turned_off():
-    assert decide("me@example.com", "AI APPS").kind == "note"
-    assert decide("me@example.com", "AI APPS").label == "intake/notes"
-    kept = classify_headers(hdr("me@example.com", "AI APPS"), own_addresses=OWN, file_notes=False)
+    note = decide("me@example.com", "AI APPS", To="me@example.com")
+    assert note.kind == "note" and note.label == "intake/notes"
+    kept = classify_headers(
+        hdr("me@example.com", "AI APPS", To="me@example.com"), own_addresses=OWN, file_notes=False
+    )
     assert kept.kind == "keep"
+
+
+def test_a_forward_to_yourself_is_a_note_but_a_reply_or_mail_to_others_is_not():
+    own = frozenset({"me@example.com", "work@example.org"})
+
+    def run(sender, subject, **extra):
+        return classify_headers(hdr(sender, subject, **extra), own_addresses=own).kind
+
+    assert run("work@example.org", "Fw: an article", To="me@example.com") == "note"
+    # addressed to someone else too: a real message in a conversation, not a note
+    assert run("work@example.org", "Plan", To="me@example.com, boss@corp.example") == "keep"
+    assert run("work@example.org", "Plan", To="me@example.com", Cc="boss@corp.example") == "keep"
+    assert run("work@example.org", "Re: Plan", To="me@example.com") == "keep"
+    assert run("work@example.org", "Plan", To="me@example.com", In_Reply_To="<a@b>") == "keep"
+    assert run("work@example.org", "Plan") == "keep", "no recipients: cannot prove it is a note"
 
 
 # -- second stage: local model on what the header rules could not settle -------------------
@@ -320,10 +337,10 @@ def _run_with_model(db, messages, verdict, **settings_extra):
 
 
 def test_model_may_file_a_clear_notice_or_marketing_message(db):
-    msgs = {1: _raw("someone@service.example", "Terms are changing")}
+    msgs = {1: _raw("noreply@service.example", "Important: terms are changing")}
     result, moved, _ = _run_with_model(db, msgs, _model("notice"))
     assert moved == [(1, "intake/notices")] and result.by_kind["notice"] == 1
-    msgs = {2: _raw("deals@airline.example", "You earned status")}
+    msgs = {2: _raw("Airline@o.airline.example", "You earned status")}
     result, moved, _ = _run_with_model(db, msgs, _model("marketing"))
     assert moved == [(2, "intake/promos")]
 
@@ -332,8 +349,8 @@ def test_model_may_file_a_clear_notice_or_marketing_message(db):
     "verdict",
     [_model("personal"), _model("transactional"), _model("other"), _model("notice", "low"), None],
 )
-def test_model_never_files_people_transactions_or_unsure_or_missing_answers(db, verdict):
-    msgs = {1: _raw("friend@example.org", "Japan 2027!")}
+def test_model_never_files_transactions_or_unsure_or_missing_answers(db, verdict):
+    msgs = {1: _raw("noreply@service.example", "Important changes to your account")}
     result, moved, _ = _run_with_model(db, msgs, verdict)
     assert moved == [] and result.by_kind["keep"] == 1
 
@@ -358,7 +375,10 @@ def test_model_is_off_by_default(db):
 def test_a_dead_model_is_asked_once_per_run_and_nothing_is_recorded(db, tmp_path):
     state = tmp_path / "verdicts.json"
     moved, read = [], []
-    msgs = {1: _raw("a@x.example", "Hello there"), 2: _raw("b@y.example", "Hello again")}
+    msgs = {
+        1: _raw("noreply@x.example", "Important hello there"),
+        2: _raw("noreply@y.example", "Important hello again"),
+    }
     sr, config, _ = _env(msgs, moved, read)
     sr.extract_message_bodies = lambda _m: ("some body text here", "")
     settings = {"email": {"triage": {"llm": True}}}
@@ -371,7 +391,7 @@ def test_a_dead_model_is_asked_once_per_run_and_nothing_is_recorded(db, tmp_path
 def test_kept_verdicts_are_remembered_so_the_model_is_asked_once_per_message(db, tmp_path):
     state = tmp_path / "verdicts.json"
     moved, read = [], []
-    msgs = {1: _raw("friend@example.org", "Japan 2027!")}
+    msgs = {1: _raw("noreply@service.example", "Important changes to your account")}
     sr, config, _ = _env(msgs, moved, read)
     sr.extract_message_bodies = lambda _m: ("some body text here", "")
     settings = {"email": {"triage": {"llm": True}}}
@@ -402,3 +422,82 @@ def test_run_triage_applies_the_default_skip_list(db):
     sr, config, _ = _env(msgs, moved, read)
     result = run_triage(sr, config, {"email": {}}, db, verbose=False)
     assert moved == [] and result.by_kind["keep"] == 1
+
+
+# -- regression: shapes a year-wide dry run showed the model would have misfiled ------------
+
+
+@pytest.mark.parametrize(
+    ("sender", "subject", "extra"),
+    [
+        # a banker's personal replies
+        ("Cindy.M.Sullivan@huntington.com", "RE: Follow up from Huntington, Cason Konzer.", {}),
+        ("cindy.m.sullivan@huntington.com", "Following up", {}),
+        # relocation agents and colleagues, threaded or not
+        ("hiromi.shibata@ysm-intl.co.jp", "RE: Mr Konzer : your upcoming shipment to Japan", {}),
+        ("kristine.walker@sirva.com", "return shipment", {"In_Reply_To": "<a@b>"}),
+        ("yankun.li3@cn.bosch.com", "RE: Bosch - STX assignee service", {}),
+        # role accounts answered by people
+        ("support@openai.com", "Your request", {}),
+        ("customerservice@email.progressive.com", "RE: Progressive Claims Service", {}),
+        ("claims@insurer.example", "Your claim", {}),
+        # a personal gmail address and a title/closing company
+        ("janhayssold@gmail.com", "Hello", {}),
+        ("lmallett@title-connect.com", "Closing documents", {}),
+        ("secure@authentisign.com", "Please sign", {}),
+        # an automated-looking sender that is replying inside a thread
+        ("noreply@service.example", "Re: your ticket", {}),
+        ("noreply@service.example", "Fw: forwarded", {}),
+        ("noreply@service.example", "Update", {"References": "<a@b>"}),
+    ],
+)
+def test_model_is_never_allowed_to_review_people_roles_or_threads(sender, subject, extra):
+    from intake.inbox_triage import model_may_review
+
+    assert not model_may_review(hdr(sender, subject, **extra)), sender
+
+
+@pytest.mark.parametrize(
+    "sender",
+    [
+        "DeltaAirLines@o.delta.com",
+        "google-gemini-noreply@google.com",
+        "google-api-dev-verification-reply+061750w7bqxmq1e@google.com",
+        "noreply@news.bloomberg.com",
+        "info@news.bydfi.com",
+        "notifications@service.example",
+    ],
+)
+def test_model_may_review_plainly_automated_senders(sender):
+    from intake.inbox_triage import model_may_review
+
+    assert model_may_review(hdr(sender, "Some automated update"))
+
+
+def test_a_misjudging_model_cannot_file_a_banker_reply_or_a_support_thread(db):
+    # Even a confident "marketing"/"notice" verdict is ignored for mail it may not review.
+    msgs = {
+        1: _raw("Cindy.M.Sullivan@huntington.com", "RE: Follow up from Huntington"),
+        2: _raw("support@openai.com", "Your request"),
+        3: _raw("hiromi.shibata@ysm-intl.co.jp", "RE: Mr Konzer : your upcoming shipment"),
+    }
+    result, moved, judge = _run_with_model(db, msgs, _model("marketing"))
+    assert moved == [] and judge.call_count == 0
+    assert result.by_kind["keep"] == 3
+
+
+@pytest.mark.parametrize(
+    "sender",
+    ["support@openai.com", "team@startup.example", "hello@person.example", "info@bank.example"],
+)
+def test_role_accounts_without_bulk_headers_are_kept_not_filed_as_automated(sender):
+    assert decide(sender, "Regarding your request").kind == "keep"
+
+
+@pytest.mark.parametrize(
+    "subject",
+    ["Your 2025-2026 Mount Bohemia Tickets", "Your receipts are ready", "Booking confirmations"],
+)
+def test_plural_transaction_words_keep_mail_too(subject):
+    # "Tickets" (a purchase) used to slip past a singular-only keyword and be filed as a notice.
+    assert decide("noreply@interactiveticketing.example", subject).kind == "keep"
