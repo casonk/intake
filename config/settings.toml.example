@@ -151,6 +151,11 @@ reports_dir = "reports"
 # # Weekly digest of the marketing mail triage filed (intake promos digest --send). Summaries
 # # come from a small LOCAL Ollama model; no mail text leaves the machine. Install the timer
 # # with: intake promos digest --install-timer
+# [mail_index]
+# # Local searchable index of the mailbox for the review UI (stored under data/, gitignored).
+# # Build it with: intake mail sync   Search it with: intake mail search "hakuba"
+# path = "data/mailindex.db"
+#
 # [promos]
 # model = "llama3.2:3b-instruct-q8_0"
 # timeout_seconds = 45
