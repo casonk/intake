@@ -10,6 +10,7 @@ Mark items `[x]` when complete and move them to Done.
 
 ## Pending
 
+- [ ] [codecov:2026-11-24] **Raise patch coverage on PR #43: 88.4615% patched, 21 changed lines have no test coverage.** Files: intake/email_finance.py (11 missing, 90%), intake/email.py (10 missing, 85.5%). Add tests for the uncovered lines. (codecov-pr:43, https://github.com/casonk/intake/pull/43#issuecomment-7126811880)
 - [x] [manual:2026-11-03] Verify the sender of a reply with DKIM/SPF (`Authentication-Results`), not only the `From` header, before acting on it. (done: `sender_is_authenticated`, intake#30)
 - [ ] [manual:2026-10-15] **Ask GitHub Support to purge pre-rewrite commits** — this
   repository's published history was rewritten (most recently on 2026-10-15,
