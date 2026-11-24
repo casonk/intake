@@ -1841,6 +1841,7 @@ def _cmd_serve(args: argparse.Namespace, settings: dict) -> None:
         output_dir,
         host=_web_host(settings, getattr(args, "host", None)),
         port=_web_port(settings, getattr(args, "port", None)),
+        mail_db=_mail_index_path(settings),
     )
 
 
