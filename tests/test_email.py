@@ -1986,6 +1986,46 @@ def test_uber_extractor_ignores_unrelated_senders_and_subjects():
     assert _extract_structured_finance_email("Lunch plans", "uber@uber.com", _UBER_FORWARD) is None
 
 
+_TICKET_BODY = """Dear Example Person,
+Your Order #3000012345
+Attached is the QR code for your purchased season pass. This QR code is required to
+issue your ticket, so please keep it in a safe place and do not lose it.
+Item
+Card Number
+Pick-up Code
+QR Code
+Pass at the Bus Terminal Regular Price Adult/Youth
+-
+FAKE0CODE
+Show
+"""
+
+
+def test_ticket_qr_delivery_is_filed_as_a_document_tied_to_its_order():
+    from intake.email import _extract_structured_finance_email
+
+    got = _extract_structured_finance_email(
+        "EXAMPLE VALLEY WEB SHOP QR code for Your Ordered Ticket",
+        "seasonpass@shop.example",
+        _TICKET_BODY,
+    )
+    assert got["document_kind"] == "documents/tickets"
+    assert got["merchant"] == "EXAMPLE VALLEY WEB SHOP"
+    assert "order #3000012345" in got["body_excerpt"]
+    assert "FAKE0CODE" not in got["body_excerpt"], "the pick-up code must not be stored"
+
+
+def test_ticket_extractor_needs_the_subject_an_order_number_and_a_qr_code():
+    from intake.email import _extract_structured_finance_email
+
+    subject = "EXAMPLE VALLEY WEB SHOP QR code for Your Ordered Ticket"
+    sender = "seasonpass@shop.example"
+    assert _extract_structured_finance_email("Order Confirmation", sender, _TICKET_BODY) is None
+    assert _extract_structured_finance_email(subject, sender, "No order here QR code") is None
+    no_qr = _TICKET_BODY.replace("QR code", "barcode").replace("QR Code", "Barcode")
+    assert _extract_structured_finance_email(subject, sender, no_qr) is None
+
+
 def _notice_sr(moved, read):
     return SimpleNamespace(
         mark_message_read=lambda _c, uid: read.append(uid),

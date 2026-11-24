@@ -73,7 +73,6 @@ def test_files_clearly_non_actionable_mail(sender, subject, extra, kind):
             "WEB SHOP QR code for Your Ordered Ticket",
             {"List_Unsubscribe": "<x>"},
         ),
-        ("noreply@github.com", "[GitHub] You have used 100% of the Actions minutes", {}),
         ("a@bank.com", "Your verification code", {"List_Unsubscribe": "<x>"}),
         ("noreply@x.com", "Security alert: new sign-in", {}),
         ("noreply@x.com", "Payment failed", {"Precedence": "bulk"}),
@@ -223,3 +222,33 @@ def test_run_triage_skips_messages_intake_already_judged(db):
     sr, config, _ = _env({1: _raw("a@promo.com", "Sale", List_Unsubscribe="<x>")}, moved, read)
     result = run_triage(sr, config, {"email": {}}, db, verbose=False)
     assert result.examined == 0 and moved == []
+
+
+def test_github_actions_minutes_notices_are_filed_not_kept():
+    # CI falls back to other runners, so these are informational despite "minutes"/"usage".
+    for pct in (90, 100):
+        decision = decide(
+            "noreply@github.com",
+            f"[GitHub] You have used {pct}% of the Actions minutes included for the account",
+        )
+        assert decision.kind == "notice" and decision.label
+
+
+def test_notice_subject_regexes_are_configurable_and_win_over_keep_keywords():
+    headers = hdr("a@b.com", "Your quarterly usage summary")
+    assert classify_headers(headers).kind == "keep"
+    custom = classify_headers(headers, notice_subject_res=(r"quarterly usage summary",))
+    assert custom.kind == "notice"
+
+
+def test_triage_prints_or_logs_each_decision_once(db, capsys, caplog):
+    sr, config, _ = _env({1: _raw("a@promo.com", "Sale", List_Unsubscribe="<x>")}, [], [])
+    with caplog.at_level("INFO", logger="intake.triage"):
+        run_triage(sr, config, {"email": {}}, db, verbose=True)
+    assert capsys.readouterr().out.count("uid=1") == 1
+    assert not [r for r in caplog.records if "uid=1" in r.getMessage()], "printed lines are teed"
+    caplog.clear()
+    sr, config, _ = _env({2: _raw("a@promo.com", "Sale2", List_Unsubscribe="<x>")}, [], [])
+    with caplog.at_level("INFO", logger="intake.triage"):
+        run_triage(sr, config, {"email": {}}, db, verbose=False)
+    assert len([r for r in caplog.records if "uid=2" in r.getMessage()]) == 1

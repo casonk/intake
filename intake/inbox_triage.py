@@ -51,6 +51,12 @@ KEEP_SUBJECT_RE = re.compile(
     r"usage|quota|limit|minutes|suspend(?:ed)?|declined|failed|failure|delivered|shipped)\b",
     re.IGNORECASE,
 )
+# Informational mail whose subject trips the broad keep keywords above (usage, minutes, limit).
+# Matched first, so it is filed as a notice.  Extend with [email.triage] notice_subject_regexes.
+DEFAULT_NOTICE_SUBJECT_RES = (
+    # GitHub Actions quota notices: CI falls back to the cloud and local runners by itself.
+    r"\bused \d+% of the Actions minutes\b",
+)
 AUTOMATED_SENDER_RE = re.compile(
     r"(?:^|[-_.+])(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|donotreply)(?:$|[-_.+\d])|"
     r"^(?:notifications?|notify|mailer|alerts?|updates?|news|newsletter|info|hello|support|"
@@ -103,6 +109,7 @@ def classify_headers(
     self_subject_re: str = DEFAULT_SELF_SUBJECT_RE,
     managed_window_days: int = 7,
     now: datetime | None = None,
+    notice_subject_res: tuple[str, ...] = DEFAULT_NOTICE_SUBJECT_RES,
 ) -> Decision:
     """Decide what to do with one message from its headers (``headers.get(name)``)."""
     labels = {**DEFAULT_LABELS, **(labels or {})}
@@ -123,6 +130,8 @@ def classify_headers(
         if generated:
             return Decision("notify", "portfolio-generated mail", labels["notify"])
         return Decision("keep", "a note from yourself")
+    if any(re.search(pattern, subject, re.IGNORECASE) for pattern in notice_subject_res):
+        return Decision("notice", "informational subject", labels["notice"])
     if KEEP_SUBJECT_RE.search(subject):
         return Decision("keep", "subject looks transactional or like an alert")
     if str(headers.get("Auto-Submitted", "no")).strip().lower() not in {"", "no"} and not is_bulk(
@@ -183,6 +192,7 @@ def run_triage(
     managed = _managed_senders()
     always_skip = frozenset(str(s).lower() for s in cfg.get("skip_senders", []))
     self_re = str(cfg.get("self_subject_regex") or DEFAULT_SELF_SUBJECT_RE)
+    notice_res = (*DEFAULT_NOTICE_SUBJECT_RES, *map(str, cfg.get("notice_subject_regexes", [])))
 
     result = TriageResult()
     mailbox = config.imap.mailboxes[0] if config.imap.mailboxes else "INBOX"
@@ -215,6 +225,7 @@ def run_triage(
                 skip_senders=always_skip,
                 labels=labels,
                 self_subject_re=self_re,
+                notice_subject_res=notice_res,
             )
             sender = parseaddr(str(msg.get("From", "")))[1]
             subject = sr.decode_mime_header(msg.get("Subject"))
@@ -225,19 +236,17 @@ def run_triage(
                 if (mailbox, uid) in _KEPT_LOGGED and not dry_run:
                     continue
                 _KEPT_LOGGED.add((mailbox, uid))
-            log.info(
-                "triage uid=%s kind=%s reason=%s label=%s dry_run=%s sender=%s subject=%r",
-                uid,
-                decision.kind,
-                decision.reason,
-                decision.label,
-                dry_run,
-                sender,
-                subject,
+            target = f" -> {decision.label}" if decision.label else ""
+            line = (
+                f"triage {decision.kind:<6}{target}: uid={uid} sender={sender} "
+                f"subject={subject[:70]!r} ({decision.reason})"
             )
+            # Printed lines are mirrored into the file log by the stdout tee, so only log
+            # directly when nothing is printed; otherwise every decision appears twice.
             if verbose:
-                target = f" -> {decision.label}" if decision.label else ""
-                print(f"  triage {decision.kind:<6}{target}: {sender}: {subject[:70]}")
+                print(f"  {line}")
+            else:
+                log.info(line)
             if dry_run or decision.kind == "keep":
                 continue
             if decision.label:

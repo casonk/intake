@@ -826,6 +826,7 @@ def _extract_structured_finance_email(subject: str, sender: str, plain_text: str
         or _extract_wise_payment_email(subject, sender, plain_text)
         or _extract_booking_receipt_email(subject, sender, plain_text)
         or _extract_uber_ride_receipt_email(subject, sender, plain_text)
+        or _extract_ticket_delivery_email(subject, plain_text)
         or _extract_xanterra_reservation_email(subject, sender, plain_text)
         or _extract_credit_reporting_email(subject, sender, plain_text)
     )
@@ -1075,6 +1076,35 @@ def _extract_booking_receipt_email(subject: str, sender: str, plain_text: str) -
         "card_last4": None,
         "category": "travel/lodging",
         "processed_by": "email-booking-receipt",
+    }
+
+
+_TICKET_SUBJECT_RE = re.compile(
+    r"^\s*(?P<shop>.+?)\s+QR code for your (?:ordered )?(?:ticket|pass|season pass)s?\b", re.I
+)
+_TICKET_ORDER_RE = re.compile(r"\bYour Order\s*#\s*(?P<order>[A-Z0-9-]{4,})", re.I)
+
+
+def _extract_ticket_delivery_email(subject: str, plain_text: str) -> dict | None:
+    """File a ticket/pass QR-code delivery as a document tied to its order.
+
+    These mails follow an order confirmation, which is the receipt, and carry no price, so
+    they must not become spend.  The order number is kept so the two can be matched; the
+    pick-up code and QR image stay out of the stored excerpt (the archived .eml keeps them).
+    """
+    shop = _TICKET_SUBJECT_RE.match(subject)
+    order = _TICKET_ORDER_RE.search(plain_text)
+    if not shop or not order or not re.search(r"\bQR code\b", plain_text, re.I):
+        return None
+    return {
+        "merchant": shop.group("shop").strip(),
+        "document_kind": "documents/tickets",
+        "title": subject.strip(),
+        "body_excerpt": (
+            f"Ticket QR code delivered for order #{order.group('order')}; "
+            "the order confirmation is the receipt."
+        ),
+        "processed_by": "email-ticket-delivery",
     }
 
 
