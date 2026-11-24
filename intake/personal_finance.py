@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from intake.certification import receipt_certifications_to_dicts
 from intake.parse import Receipt, receipt_items_to_dicts
 from intake.staff import receipt_staff_to_dicts
+
+log = logging.getLogger("intake.finance")
+_LOG_TAIL_CHARS = 8000
 
 _INTAKE_REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -132,6 +137,10 @@ def trigger_personal_finance(settings: dict, receipts: list[dict], *, trigger: s
         }
     )
 
+    started = time.monotonic()
+    log.info(
+        "finance trigger start trigger=%s receipts=%d json=%s", trigger, len(receipts), json_path
+    )
     try:
         result = subprocess.run(
             cmd,
@@ -143,13 +152,29 @@ def trigger_personal_finance(settings: dict, receipts: list[dict], *, trigger: s
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
+        log.error("finance trigger timed out after %ss json=%s", timeout, json_path)
         raise RuntimeError(f"finance trigger timed out after {timeout}s") from exc
 
+    elapsed = time.monotonic() - started
     if result.returncode != 0:
+        # Keep the whole tail, not just the last line: the useful part of a downstream
+        # crash is the traceback, and the receipts JSON path is what to re-run it with.
+        log.error(
+            "finance trigger failed exit=%d after %.1fs json=%s\n--- stdout ---\n%s\n--- stderr ---\n%s",
+            result.returncode,
+            elapsed,
+            json_path,
+            (result.stdout or "")[-_LOG_TAIL_CHARS:].rstrip(),
+            (result.stderr or "")[-_LOG_TAIL_CHARS:].rstrip(),
+        )
         detail = (result.stderr or result.stdout or "").strip()
         if detail:
             detail = detail.splitlines()[-1]
         suffix = f": {detail}" if detail else ""
-        raise RuntimeError(f"finance trigger failed with exit code {result.returncode}{suffix}")
+        raise RuntimeError(
+            f"finance trigger failed with exit code {result.returncode}{suffix} "
+            f"(receipts not delivered; re-run with {json_path})"
+        )
+    log.info("finance trigger ok exit=0 after %.1fs json=%s", elapsed, json_path)
 
     return json_path

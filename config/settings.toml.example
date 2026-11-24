@@ -2,6 +2,13 @@ receipt_dir = "/mnt/snowbridge/receipts"
 db_path = "data/intake.db"
 reports_dir = "reports"
 
+# Rotating, timestamped copy of everything intake prints (daemon polls, per-message verdicts,
+# filing, finance-trigger failures with the downstream traceback). Lives under the gitignored
+# data/. Set log_dir = "" to turn it off.
+# log_dir = "data/logs"
+# log_max_bytes = 5242880   # rotate at 5 MiB
+# log_backups = 5           # keep intake.log.1 .. intake.log.5
+
 # Keep intake-wide settings at the top level of this file.
 # Do not create a separate config/auto-pass.ini.
 # Do not place openai_* / auto_pass_profile / fuzzy_threshold after a table
