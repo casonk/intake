@@ -78,9 +78,10 @@ def fetch_recent_issues(settings: dict, *, since_days: int = 7) -> list[Newslett
                 message_id = str(msg.get("Message-ID") or f"{mailbox}:{uid}")
                 plain, html = sr.extract_message_bodies(msg)
                 body = html_to_text(html) if html else (plain or "")
-                if sender == _PULSE_SENDER and not (
-                    "Lead Change" in body or "The Week's Biggest Story" in body
-                ):
+                # Pulse changes its section headings regularly. The exact
+                # sender plus a substantive body is a more stable signal than
+                # requiring either of two historical headings.
+                if sender == _PULSE_SENDER and not _is_pulse_issue(body):
                     continue
                 if sender == _BLOOMBERG_SENDER and len(_clean_lines(body)) < 5:
                     continue
@@ -163,6 +164,13 @@ def _clean_lines(body: str) -> list[str]:
 def _is_hump_days_issue(body: str) -> bool:
     """Recognize the newsletter's weekly brief and market report editions."""
     return bool({"The Weekly Brief", "Market Report"} & set(_clean_lines(body)))
+
+
+def _is_pulse_issue(body: str) -> bool:
+    """Recognize substantive Pulse mail without depending on section names."""
+    return (
+        "Lead Change" in body or "The Week's Biggest Story" in body or len(_clean_lines(body)) >= 5
+    )
 
 
 def _following_line(lines: list[str], heading: str) -> str | None:

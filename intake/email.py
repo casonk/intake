@@ -62,6 +62,14 @@ _DEFAULT_RECEIPT_SENDER_HINTS = (
     "noreply@gotinder.com",
     "hello@binance.us",
     "post.binance.us",
+    "capitalone@notification.capitalone.com",
+    "service@smbctb.co.jp",
+    "noreply@booking.com",
+    "noreply-payments@booking.com",
+    "property.booking.com",
+    "customerservice@tello.com",
+    "noreply@info.wise.com",
+    "no-reply@ssa.gov",
     "donotreply@mail.schwab.com",
     "email.huntington.com",
     "customerservice@e.progressive.com",
@@ -107,6 +115,7 @@ class FetchResult:
         self.reply_applied = 0
         self.reply_unmatched = 0
         self.errors = 0
+        self.codecov_filed = 0
         self.saved_files: list[Path] = []
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -115,6 +124,7 @@ class FetchResult:
             f"attachments={self.attachments_saved}, html={self.html_processed}, "
             f"reply_processed={self.reply_processed}, reply_applied={self.reply_applied}, "
             f"reply_unmatched={self.reply_unmatched}, "
+            f"codecov_filed={self.codecov_filed}, "
             f"errors={self.errors})"
         )
 
@@ -175,6 +185,11 @@ def fetch_receipts(
                 "payment confirmation",
                 "statement",
                 "monthly interest",
+                # Uber trip/Eats receipts have no "receipt" in the subject; matching the
+                # subject also finds copies forwarded from another address ("Fwd: ...").
+                "trip with uber",
+                "uber eats order",
+                "your uber receipt",
             ]
         )
     )
@@ -291,8 +306,22 @@ def fetch_receipts(
                         if tracking["status"] == UNMATCHED_STATUS:
                             # Checked before and not a receipt: leave it in the
                             # inbox, and do not classify it (an LLM call) again.
+                            filed_notice = _file_unmatched_notice(
+                                sr,
+                                conn,
+                                uid,
+                                sender,
+                                email_cfg,
+                                source_mailbox=mailbox,
+                                dry_run=dry_run,
+                            )
+                            to_expunge = to_expunge or filed_notice
                             if verbose:
-                                print(f"    skip (no receipt content, checked before): {subject!r}")
+                                suffix = "; filed to notices" if filed_notice else ""
+                                print(
+                                    f"    skip (no receipt content, checked before{suffix}): "
+                                    f"{subject!r}"
+                                )
                             result.skipped += 1
                             continue
                         if not dry_run:
@@ -392,6 +421,7 @@ def fetch_receipts(
                         if structured_email is not None or (
                             not pdf_attachments
                             and not legal_payment_discussion
+                            and _allows_generic_receipt_fallback(subject, sender)
                             and _looks_like_receipt(plain)
                         ):
                             _upsert_html_receipt(
@@ -438,6 +468,15 @@ def fetch_receipts(
                                 received_at=date_str,
                                 attachment_count=0,
                                 status=UNMATCHED_STATUS,
+                            )
+                            to_expunge = to_expunge or _file_unmatched_notice(
+                                sr,
+                                conn,
+                                uid,
+                                sender,
+                                email_cfg,
+                                source_mailbox=mailbox,
+                                dry_run=dry_run,
                             )
                             if verbose:
                                 print(f"    skip (no receipt content matched): {subject!r}")
@@ -540,6 +579,20 @@ def fetch_receipts(
             result.errors += 1
             if verbose:
                 print(f"  WARNING career mail processing degraded: {exc}")
+
+    try:
+        result.codecov_filed = _file_codecov_notifications(
+            sr,
+            config,
+            settings,
+            since_days=since_days,
+            limit=limit,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+    except Exception as exc:
+        if verbose:
+            print(f"  WARNING Codecov mail filing degraded: {exc}")
 
     return result
 
@@ -706,6 +759,150 @@ def _configured_receipt_sender_hints(email_cfg: dict) -> list[str]:
     """Return sender fragments that should be searched as receipt candidates."""
     configured = [str(value).strip() for value in email_cfg.get("receipt_senders", [])]
     return list(dict.fromkeys([*configured, *_DEFAULT_RECEIPT_SENDER_HINTS]))
+
+
+def _allows_generic_receipt_fallback(subject: str, sender: str) -> bool:
+    """Limit AI receipt parsing for broad financial sender allowlists.
+
+    Provider sender hints intentionally discover statements, security notices,
+    and promotions as well as receipts.  Those messages must not become spend
+    merely because their body contains a dollar amount and the word ``total``.
+    """
+    sender_lower = sender.lower()
+    broad_finance_sender = any(
+        hint in sender_lower
+        for hint in (
+            "americanexpress.com",
+            "mail.schwab.com",
+            "smbctb.co.jp",
+            "nelnet.studentaid.gov",
+            "capitalone.com",
+            "wise.com",
+            "paypal.com",
+            "progressive.com",
+            "fanduel.com",
+            "binance.us",
+            "booking.com",
+            "ssa.gov",
+            "tello.com",
+        )
+    )
+    if not broad_finance_sender:
+        return True
+    return bool(
+        re.search(
+            r"\b(?:receipt|invoice|payment (?:received|processed|posted|confirmation)|"
+            r"purchase (?:complete|completed|confirmation)|order confirmation|"
+            r"transaction confirmation)\b",
+            subject,
+            re.IGNORECASE,
+        )
+    )
+
+
+_GITHUB_CI_RUN_RE = re.compile(
+    r"\b(?:PR )?run (?:failed|cancelled|canceled|succeeded|attempt)\b|"
+    r"\bworkflow run\b.*\b(?:failed|cancelled|canceled)\b",
+    re.IGNORECASE,
+)
+
+
+def _file_unmatched_notice(
+    sr,
+    conn,
+    uid: int,
+    sender: str,
+    email_cfg: dict,
+    *,
+    source_mailbox: str,
+    dry_run: bool,
+) -> bool:
+    """File a no-receipt message from a known provider out of the Inbox.
+
+    Security alerts, promotions, statements and rate notices from allow-listed
+    provider senders are not receipts, so they would otherwise be re-checked and
+    left in the Inbox forever.  They move to ``notice_label`` *unread*; mail from
+    unknown senders is never touched.  Returns True when a message was moved.
+    """
+    label = str(email_cfg.get("notice_label", "intake/notices") or "").strip()
+    if dry_run or not label:
+        return False
+    sender_lower = sender.lower()
+    if not any(
+        hint.lower() in sender_lower for hint in _configured_receipt_sender_hints(email_cfg)
+    ):
+        return False
+    return _move_message_without_marking_read(
+        sr, conn, uid, source_mailbox=source_mailbox, processed_label=label
+    )
+
+
+def _file_codecov_notifications(
+    sr,
+    config,
+    settings: dict,
+    *,
+    since_days: int,
+    limit: int,
+    dry_run: bool,
+    verbose: bool,
+) -> int:
+    """File Codecov bot comments and GitHub Actions run mail under Gmail labels.
+
+    Codecov comments are noise and are filed read.  CI run mail (failed,
+    cancelled, succeeded) is filed *unread* so a red build still stands out.
+    """
+    email_cfg = settings.get("email", {})
+    codecov_label = str(email_cfg.get("codecov_label", "GitHub/Codecov") or "").strip()
+    ci_label = str(email_cfg.get("ci_label", "GitHub/CI") or "").strip()
+    if not codecov_label and not ci_label:
+        return 0
+    mailbox = config.imap.mailboxes[0] if config.imap.mailboxes else "INBOX"
+    filed = 0
+    with sr.open_imap_connection(config) as conn:
+        status, _ = select_mailbox(conn, mailbox, readonly=dry_run)
+        if status != "OK":
+            return 0
+        terms = sr.build_search_terms(
+            from_contains="notifications@github.com", since_days=since_days
+        )
+        status, data = conn.uid("search", config.imap.search_charset, *terms)
+        if status != "OK":
+            return 0
+        uids = sr.parse_int_uid_list(data)[-limit:]
+        needs_expunge = False
+        for uid in uids:
+            status, fetched = conn.uid(
+                "fetch", str(uid), "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])"
+            )
+            payload = sr.extract_fetch_payload(fetched)
+            if status != "OK" or not payload:
+                continue
+            msg = message_from_bytes(payload, policy=default_policy)
+            sender = sr.decode_mime_header(msg.get("From"))
+            subject = sr.decode_mime_header(msg.get("Subject"))
+            if "codecov[bot]" in sender.casefold():
+                label, mark_read, kind = codecov_label, True, "Codecov"
+            elif _GITHUB_CI_RUN_RE.search(subject):
+                label, mark_read, kind = ci_label, False, "CI"
+            else:
+                continue
+            if not label:
+                continue
+            filed += 1
+            if not dry_run:
+                mover = (
+                    _file_message_to_processed_label
+                    if mark_read
+                    else _move_message_without_marking_read
+                )
+                needs_expunge |= mover(sr, conn, uid, source_mailbox=mailbox, processed_label=label)
+            if verbose:
+                action = "would file" if dry_run else "filed"
+                print(f"  {kind} {action} → {label}: {subject}")
+        if needs_expunge:
+            conn.expunge()
+    return filed
 
 
 def _configured_reply_mailboxes(email_cfg: dict):

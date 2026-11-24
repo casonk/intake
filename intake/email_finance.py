@@ -206,6 +206,10 @@ def _is_known_non_receipt_notice(subject: str, sender: str, plain_text: str) -> 
     sender_lower = str(sender or "").lower()
     if "you paid" not in combined.lower() and _PAYPAL_UPCOMING_PURCHASE_RE.search(combined):
         return True
+    if _CAPITAL_ONE_SENDER_HINT in sender_lower and re.search(
+        r"\b(?:cash back|bonus|offer|welcome to capital one)\b", subject, re.I
+    ):
+        return True
     if (
         _CAPITAL_ONE_SENDER_HINT in sender_lower
         or _DISCOVER_SENDER_HINT in sender_lower
@@ -217,6 +221,31 @@ def _is_known_non_receipt_notice(subject: str, sender: str, plain_text: str) -> 
     if _VENMO_SENDER_HINT in sender_lower and re.search(
         r"transaction\s+history", combined, re.IGNORECASE
     ):
+        return True
+    address = parseaddr(sender)[1].lower()
+    subject_lower = subject.lower()
+    if address == "noreply@wise.com" and "target has been reached" in subject_lower:
+        return True
+    if address == "noreply@info.wise.com" and "interest rate" in subject_lower:
+        return True
+    if address == "customerservice@tello.com" and "plan will renew" in subject_lower:
+        return True
+    if address == "info@smbctb.co.jp" and re.search(
+        r"\b(?:campaign|black friday|housing loan option)\b", subject_lower
+    ):
+        return True
+    if (
+        _PROGRESSIVE_SENDER_HINT in address
+        and re.search(r"\b(?:we miss you|never too late)\b", subject_lower)
+        and not re.search(r"\b(?:lapsed|expires|renew)\b", plain_text, re.I)
+    ):
+        return True
+    if "americanexpress.com" in address and re.search(
+        r"\b(?:enroll|offer|offers|rewards checking|additional card|cash bonus)\b",
+        subject_lower,
+    ):
+        return True
+    if _NELNET_SENDER_HINT in address and "text alerts" in subject_lower:
         return True
     return bool(
         _BINANCE_SENDER_HINT in sender_lower and re.search(r"\bstaking\b", combined, re.IGNORECASE)
@@ -783,6 +812,7 @@ def _extract_structured_finance_email(subject: str, sender: str, plain_text: str
     """Return structured fields for known finance/payment notification emails."""
     return (
         _extract_kalshi_liquidation_email(subject, sender, plain_text)
+        or _extract_recent_account_activity_email(subject, sender, plain_text)
         or _extract_finance_notice_email(subject, sender, plain_text)
         or _extract_schwab_trade_notice_email(subject, sender, plain_text)
         or _extract_tinder_renewal_email(subject, sender, plain_text)
@@ -794,9 +824,300 @@ def _extract_structured_finance_email(subject: str, sender: str, plain_text: str
         or _extract_irs_payment_email(subject, sender, plain_text)
         or _extract_nelnet_billing_email(subject, sender, plain_text)
         or _extract_wise_payment_email(subject, sender, plain_text)
+        or _extract_booking_receipt_email(subject, sender, plain_text)
+        or _extract_uber_ride_receipt_email(subject, sender, plain_text)
         or _extract_xanterra_reservation_email(subject, sender, plain_text)
         or _extract_credit_reporting_email(subject, sender, plain_text)
     )
+
+
+def _extract_recent_account_activity_email(
+    subject: str, sender: str, plain_text: str
+) -> dict | None:
+    """Route provider activity that is neither a generic receipt nor advertising."""
+    address = parseaddr(sender)[1].lower()
+    subject_lower = subject.lower()
+    compact = re.sub(r"\s+", " ", plain_text).strip()
+
+    if (
+        "cash payment" in subject_lower
+        and re.search(r"\bconfirmed receipt of your payment\b", plain_text, re.I)
+        and re.search(r"\b(?:law office|attorney|lawyer)\b|弁護士", plain_text, re.I)
+    ):
+        return {
+            "merchant": parseaddr(sender)[0] or address,
+            "document_kind": "letters/legal",
+            "title": subject,
+            "body_excerpt": compact[:500],
+            "processed_by": "email-legal-payment-correspondence",
+        }
+
+    if address == "support@s.usa.experian.com" and "monthly account statement" in subject_lower:
+        return {
+            "merchant": "experian",
+            "document_kind": "documents/financial",
+            "title": subject,
+            "body_excerpt": "A monthly Experian account statement is available online.",
+            "processed_by": "email-experian-statement",
+        }
+
+    if address == "service@smbctb.co.jp" and subject.strip() == (
+        "SMBC Trust Bank Notification of Card Transaction"
+    ):
+        amount = re.search(
+            r"Transaction Amount:\s*([A-Z]{3})\s*([\d,]+(?:\.\d+)?)",
+            plain_text,
+            re.I,
+        )
+        if not amount or not re.search(r"Transaction Type:\s*Shopping\b", plain_text, re.I):
+            return None
+        return {
+            "merchant": "smbc trust bank card transaction",
+            "total": float(amount.group(2).replace(",", "")),
+            "currency": amount.group(1).upper(),
+            "receipt_date": None,
+            "purchaser": None,
+            "card_last4": None,
+            "category": "finance",
+            "processed_by": "email-smbc-card-transaction",
+        }
+
+    if address == "do-not-reply@post.binance.us" and subject_lower == (
+        "binance.us | your usd deposit is available to use"
+    ):
+        deposited = re.search(r"\bYou deposited ([\d,]+(?:\.\d+)?) ([A-Z]{3})\b", plain_text, re.I)
+        if not deposited:
+            return None
+        return {
+            "merchant": "binance.us",
+            "document_kind": "documents/investments",
+            "title": subject,
+            "subject": "Cash deposit available",
+            "body_excerpt": (
+                f"Deposit of {deposited.group(1)} {deposited.group(2).upper()} is available; "
+                "the notice says a withdrawal hold applies."
+            ),
+            "processed_by": "email-binance-deposit",
+        }
+
+    if address == "noreply@wise.com" and subject_lower.startswith("money received from "):
+        return {
+            "merchant": "wise",
+            "document_kind": "documents/income",
+            "title": subject,
+            "body_excerpt": compact[:500],
+            "processed_by": "email-wise-money-received",
+        }
+
+    if address == "donotreply@mail.schwab.com":
+        if "econfirms" in subject_lower:
+            return {
+                "merchant": "charles schwab",
+                "document_kind": "documents/investments",
+                "title": subject,
+                "body_excerpt": "Electronic confirmation is available in the Schwab account.",
+                "processed_by": "email-schwab-econfirm",
+            }
+        if subject_lower.startswith("loan initiated:") and re.search(
+            r"\bmargin loan\b", plain_text, re.I
+        ):
+            amount = re.search(r"\bAMOUNT\s*\$([\d,]+(?:\.\d{2})?)", plain_text, re.I)
+            excerpt = "A margin loan was initiated."
+            if amount:
+                excerpt = f"A margin loan of ${amount.group(1)} was initiated."
+            return {
+                "merchant": "charles schwab",
+                "document_kind": "documents/investments",
+                "title": subject,
+                "body_excerpt": excerpt,
+                "processed_by": "email-schwab-margin-loan",
+            }
+        if re.match(r"^(?:in progress|confirmed):", subject_lower) and re.search(
+            r"\bfunds? transfer\b|\bfunds were transferred\b|\btransfer(?:red)? cash\b",
+            compact,
+            re.I,
+        ):
+            status = "completed" if subject_lower.startswith("confirmed:") else "pending"
+            return {
+                "merchant": "charles schwab",
+                "document_kind": "documents/investments",
+                "title": subject,
+                "body_excerpt": f"Schwab funds transfer status: {status}.",
+                "processed_by": "email-schwab-transfer",
+            }
+        if "tender offer" in subject_lower:
+            return {
+                "merchant": "charles schwab",
+                "document_kind": "documents/investments",
+                "title": subject,
+                "body_excerpt": compact[:500],
+                "processed_by": "email-schwab-tender-offer",
+            }
+        if "third-party access preferences" in subject_lower:
+            return {
+                "merchant": "charles schwab",
+                "document_kind": "documents/financial",
+                "title": subject,
+                "body_excerpt": "Third-party financial data access preferences were updated.",
+                "processed_by": "email-schwab-security-notice",
+            }
+
+    if address == "no-reply@ssa.gov" and "social security statement" in subject_lower:
+        return {
+            "merchant": "social security administration",
+            "document_kind": "documents/financial",
+            "title": subject,
+            "body_excerpt": "A new Social Security Statement is available online.",
+            "processed_by": "email-social-security-statement",
+        }
+
+    if address == "capitalone@notification.capitalone.com" and (
+        "transaction was declined" in subject_lower
+    ):
+        detail = re.search(
+            r"Your \$([\d,]+(?:\.\d{2})?) transaction was declined at ([^.\n]+)",
+            plain_text,
+            re.I,
+        )
+        excerpt = (
+            f"Declined transaction: ${detail.group(1)} at {detail.group(2).strip()}."
+            if detail
+            else "A card transaction was declined."
+        )
+        return {
+            "merchant": "capital one",
+            "document_kind": "documents/financial",
+            "title": subject,
+            "body_excerpt": excerpt,
+            "processed_by": "email-card-declined",
+        }
+
+    if address == "americanexpress@welcome.americanexpress.com":
+        if "weekly account snapshot" in subject_lower:
+            return {
+                "merchant": "american express",
+                "document_kind": "documents/financial",
+                "title": subject,
+                "body_excerpt": "Weekly account snapshot; balances are not spending transactions.",
+                "processed_by": "email-account-snapshot",
+            }
+        if "terms of service" in subject_lower:
+            return {
+                "merchant": "american express",
+                "document_kind": "documents/financial",
+                "title": subject,
+                "body_excerpt": "American Express website Terms of Service were updated.",
+                "processed_by": "email-terms-update",
+            }
+
+    if address == "customerservice@e.progressive.com" and re.search(
+        r"\b(?:policy lapsed|coverage resumes|opportunity to renew)\b",
+        f"{subject}\n{plain_text}",
+        re.I,
+    ):
+        return {
+            "merchant": "progressive",
+            "document_kind": "documents/financial",
+            "title": subject,
+            "body_excerpt": "Policy renewal/lapse status notice; no completed payment is reported.",
+            "processed_by": "email-progressive-policy-status",
+        }
+
+    if address.endswith("@property.booking.com") and "message from" in subject_lower:
+        return {
+            "merchant": "booking.com",
+            "document_kind": "documents/travel",
+            "title": subject,
+            "body_excerpt": compact[:500],
+            "processed_by": "email-booking-correspondence",
+        }
+    if address == "noreply@booking.com" and "booking is confirmed" in subject_lower:
+        return {
+            "merchant": "booking.com",
+            "document_kind": "documents/travel",
+            "title": subject,
+            "body_excerpt": "Booking confirmation and stay details.",
+            "processed_by": "email-booking-confirmation",
+        }
+
+    return None
+
+
+def _extract_booking_receipt_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Extract Booking.com's paid receipt without confusing the year for its total."""
+    address = parseaddr(sender)[1].lower()
+    if address != "noreply-payments@booking.com" or subject.strip().lower() != (
+        "this is your receipt"
+    ):
+        return None
+    merchant = _extract_labeled_block_value(plain_text, ("property name",))
+    amount = re.search(
+        r"Amount paid on\s+([^\n]+)\s*\n\s*([¥$€£])\s*([\d,]+(?:\.\d{2})?)",
+        plain_text,
+        re.I,
+    )
+    if not merchant or not amount:
+        return None
+    currency = {"¥": "JPY", "$": "USD", "€": "EUR", "£": "GBP"}[amount.group(2)]
+    receipt_date = None
+    with suppress(ValueError):
+        receipt_date = datetime.strptime(amount.group(1).strip(), "%b %d, %Y").date()
+    purchaser = None
+    name = _extract_labeled_block_value(plain_text, ("name",))
+    if name:
+        purchaser = normalize_purchaser(name)
+    return {
+        "merchant": merchant,
+        "total": float(amount.group(3).replace(",", "")),
+        "currency": currency,
+        "receipt_date": receipt_date,
+        "purchaser": purchaser,
+        "card_last4": None,
+        "category": "travel/lodging",
+        "processed_by": "email-booking-receipt",
+    }
+
+
+_UBER_ORIGIN_RE = re.compile(r"^\s*From:.*@uber\.com", re.I | re.M)
+_UBER_TOTAL_RE = re.compile(r"^\s*Total\s+([¥$€£])\s*([\d,]+(?:\.\d{1,2})?)\s*$", re.M)
+_UBER_DATE_RE = re.compile(r"^\s*([A-Z][a-z]{2} \d{1,2}, \d{4})\s*$", re.M)
+_UBER_CARD_RE = re.compile(r"[•*]{2,}\s*(\d{4})")
+
+
+def _extract_uber_ride_receipt_email(subject: str, sender: str, plain_text: str) -> dict | None:
+    """Extract an Uber trip receipt, direct or forwarded from another mailbox.
+
+    A forward arrives from the user's own address with the original below a
+    ``From: ...@uber.com`` header, and carries the forward's date, so the trip
+    date is read from the receipt itself.  The amount keeps its own currency.
+    """
+    if "trip with uber" not in subject.lower():
+        return None
+    if not (
+        parseaddr(sender)[1].lower().endswith("@uber.com") or _UBER_ORIGIN_RE.search(plain_text)
+    ):
+        return None
+    origin = _UBER_ORIGIN_RE.search(plain_text)
+    body = plain_text[origin.start() :] if origin else plain_text
+    total = _UBER_TOTAL_RE.search(body)
+    if not total:
+        return None
+    receipt_date = None
+    date_match = _UBER_DATE_RE.search(body)
+    if date_match:
+        with suppress(ValueError):
+            receipt_date = datetime.strptime(date_match.group(1), "%b %d, %Y").date()
+    card = _UBER_CARD_RE.search(body)
+    return {
+        "merchant": "Uber",
+        "total": float(total.group(2).replace(",", "")),
+        "currency": {"¥": "JPY", "$": "USD", "€": "EUR", "£": "GBP"}[total.group(1)],
+        "receipt_date": receipt_date,
+        "purchaser": None,
+        "card_last4": card.group(1) if card else None,
+        "category": "travel/transit",
+        "processed_by": "email-uber-receipt",
+    }
 
 
 def _extract_kalshi_liquidation_email(subject: str, sender: str, plain_text: str) -> dict | None:
@@ -938,12 +1259,14 @@ def _extract_finance_notice_email(subject: str, sender: str, plain_text: str) ->
             ("american express", "americanexpress.com"),
             ("revolut", "revolut.com"),
             ("huntington bank", "email.huntington.com"),
+            ("charles schwab", "mail.schwab.com"),
         ):
             if hint in sender_lower:
                 merchant = provider
                 break
     elif _PROGRESSIVE_SENDER_HINT in sender_lower and re.search(
-        r"\b(?:reminder to pay|ready to renew|policy renewal reminder|policy documents)\b",
+        r"\b(?:reminder to pay|ready to renew|policy renewal reminder|policy documents|"
+        r"policy expires|policy lapsed)\b",
         subject_lower,
     ):
         merchant = "progressive"
