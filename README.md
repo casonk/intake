@@ -526,6 +526,11 @@ Buttons: **Mark reviewed** (local only), **Return to Inbox**, **File under** a q
 false` makes the page read-only); nothing is deleted, trashed, sent or unsubscribed, and a change
 is only applied after the message's identity is re-checked on the server.
 
+Once the index exists the daemon keeps it current (new mail, label moves, read state) and adds
+one-line summaries with the local model, Inbox first. **From your phone:** the page is served by the
+same server as the reports, so it is already behind the private ingress registered for it (client
+certificate plus the PIN gate); no separate registration is needed.
+
 The page shows private mail, so: mail text is escaped and shown as plain text (never rendered),
 every response sets a strict Content-Security-Policy and `no-store`, every action needs a CSRF
 token plus a same-origin request, and the server's Host-header guard applies.

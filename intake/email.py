@@ -620,6 +620,12 @@ def fetch_receipts(
             if verbose:
                 print(f"  WARNING inbox triage degraded: {exc}")
 
+    try:
+        _refresh_mail_index(sr, config, settings, verbose=verbose, dry_run=dry_run)
+    except Exception as exc:
+        if verbose:
+            print(f"  WARNING mail index refresh degraded: {exc}")
+
     return result
 
 
@@ -831,6 +837,48 @@ _GITHUB_CI_RUN_RE = re.compile(
     r"\bworkflow run\b.*\b(?:failed|cancelled|canceled)\b",
     re.IGNORECASE,
 )
+
+
+def _refresh_mail_index(sr, config, settings: dict, *, verbose: bool, dry_run: bool) -> None:
+    """Keep the review page's index current: new mail, label moves, read state, summaries.
+
+    Runs only once an index exists (``intake mail sync`` is the opt-in) and
+    ``[mail_index] auto_sync`` is not false.  Read-only on the mailbox; bounded per poll.
+    """
+    cfg = settings.get("mail_index") if isinstance(settings.get("mail_index"), dict) else {}
+    # The daemon's cwd is not the repo, so default beside the (already absolute) database.
+    path = Path(
+        str(
+            cfg.get("path")
+            or Path(settings.get("db_path") or "data/intake.db").parent / "mailindex.db"
+        )
+    )
+    if dry_run or not cfg.get("auto_sync", True) or not path.exists():
+        return
+    from intake import mail_summary, mailindex  # noqa: PLC0415
+
+    conn = mailindex.connect(path)
+    try:
+        result = mailindex.sync(
+            sr,
+            config,
+            conn,
+            since_days=int(cfg.get("since_days", 365)),
+            limit=int(cfg.get("sync_limit", 200)),
+            time_budget_s=float(cfg.get("sync_time_budget_seconds", 60)),
+        )
+        summarized = 0
+        if cfg.get("summaries", True):
+            summarized = mail_summary.summarize_pending(
+                conn, settings, limit=int(cfg.get("summaries_per_poll", 5))
+            )
+        if verbose and (result.new or result.refreshed or result.gone or summarized):
+            print(
+                f"  Mail index: {result.new} new, {result.refreshed} updated, "
+                f"{result.gone} gone, {summarized} summarized"
+            )
+    finally:
+        conn.close()
 
 
 def _triage_state_path(settings: dict) -> Path:

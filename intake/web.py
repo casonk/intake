@@ -119,7 +119,12 @@ class _ReportHandler(SimpleHTTPRequestHandler):
         if self._host_refused():
             return
         if self._is_mail_path():
-            self._send_mail(self._mail_app.get(self.path))
+            self._send_mail(
+                self._mail_app.get(
+                    self.path,
+                    secure=self.headers.get("X-Forwarded-Proto", "").lower() == "https",
+                )
+            )
             return
         if self.path.startswith("/_portfolio/"):
             self._send_portfolio()

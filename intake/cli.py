@@ -95,6 +95,10 @@ def _normalise_settings_paths(settings: dict) -> None:
             if pf_cfg.get(key):
                 pf_cfg[key] = str(_repo_relative_path(pf_cfg[key]))
 
+    mail_cfg = settings.get("mail_index")
+    if isinstance(mail_cfg, dict) and mail_cfg.get("path"):
+        mail_cfg["path"] = str(_repo_relative_path(mail_cfg["path"]))
+
     career_cfg = settings.get("career")
     if isinstance(career_cfg, dict) and career_cfg.get("repo_root"):
         career_cfg["repo_root"] = str(_repo_relative_path(career_cfg["repo_root"]))

@@ -399,3 +399,27 @@ def test_actions_are_404_when_not_configured(server):
             post(httpd, f"/mail/m/3/{action}", {"csrf": token, "queue": "promos"}, cookie=cookie)[0]
             == 404
         )
+
+
+# -- summaries and TLS cookie (stage 4) ------------------------------------------------------
+
+
+def test_summary_is_shown_escaped_and_labelled_auto_generated(server, db_path):
+    httpd, _ = server
+    conn = mi.connect(db_path)
+    mi.set_summary(conn, "3", "Family trip planning <b>doc</b>")
+    conn.commit()
+    conn.close()
+    body = req(httpd, "GET", "/mail/m/3")[1]
+    assert "auto-generated, local model" in body
+    assert (
+        "Family trip planning &lt;b&gt;doc&lt;/b&gt;" in body and "planning <b>doc</b>" not in body
+    )
+
+
+def test_csrf_cookie_is_secure_only_behind_the_tls_ingress(server):
+    httpd, _ = server
+    plain = req(httpd, "GET", "/mail")[2]["set-cookie"]
+    behind_tls = req(httpd, "GET", "/mail", headers={"X-Forwarded-Proto": "https"})[2]["set-cookie"]
+    assert "Secure" not in plain and "Secure" in behind_tls
+    assert "HttpOnly" in behind_tls and "SameSite=Strict" in behind_tls
