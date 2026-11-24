@@ -3226,7 +3226,10 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
 
 def _cmd_email_triage(args: argparse.Namespace, settings: dict, conn) -> None:
     """Preview or run header-only triage of Inbox mail that receipt discovery never examines."""
-    from intake.email import _load_shock_relay  # noqa: PLC0415
+    from intake.email import (
+        _load_shock_relay,  # noqa: PLC0415
+        _triage_state_path,  # noqa: PLC0415
+    )
     from intake.inbox_triage import run_triage  # noqa: PLC0415
 
     path = settings.get("email", {}).get("shock_relay_config", "")
@@ -3237,7 +3240,14 @@ def _cmd_email_triage(args: argparse.Namespace, settings: dict, conn) -> None:
     sr.validate_imap(config)
     dry = bool(args.dry_run)
     result = run_triage(
-        sr, config, settings, conn, dry_run=dry, verbose=True, since_days=args.since_days
+        sr,
+        config,
+        settings,
+        conn,
+        dry_run=dry,
+        verbose=True,
+        since_days=args.since_days,
+        state_path=_triage_state_path(settings),
     )
     verb = "would file" if dry else "filed"
     moved = sum(n for kind, n in result.by_kind.items() if kind != "keep")

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from email.message import Message
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -79,7 +81,6 @@ def test_files_clearly_non_actionable_mail(sender, subject, extra, kind):
         # people and notes to self stay
         ("ckonzer@umich.edu", "Japan 2027!", {}),
         ("cason.konzer@bosch.com", "routing", {}),
-        ("me@example.com", "AI APPS", {}),
     ],
 )
 def test_keeps_anything_that_could_need_a_human(sender, subject, extra):
@@ -290,3 +291,114 @@ def test_soft_keywords_still_keep_non_bulk_mail():
         decide("google-gemini-noreply@google.com", "Important updates in Gemini Apps").kind
         == "keep"
     )
+
+
+def test_a_note_to_yourself_is_filed_unless_notes_are_turned_off():
+    assert decide("me@example.com", "AI APPS").kind == "note"
+    assert decide("me@example.com", "AI APPS").label == "intake/notes"
+    kept = classify_headers(hdr("me@example.com", "AI APPS"), own_addresses=OWN, file_notes=False)
+    assert kept.kind == "keep"
+
+
+# -- second stage: local model on what the header rules could not settle -------------------
+
+
+def _model(kind: str, confidence: str = "high", summary: str = "A summary."):
+    from intake.triage_llm import Verdict
+
+    return Verdict(kind, confidence == "high", summary)
+
+
+def _run_with_model(db, messages, verdict, **settings_extra):
+    moved, read = [], []
+    sr, config, conn = _env(messages, moved, read)
+    sr.extract_message_bodies = lambda _m: ("Body text of the message that is long enough.", "")
+    settings = {"email": {"triage": {"llm": True, **settings_extra}}}
+    with patch("intake.triage_llm.judge", return_value=verdict) as judge:
+        result = run_triage(sr, config, settings, db, verbose=False)
+    return result, moved, judge
+
+
+def test_model_may_file_a_clear_notice_or_marketing_message(db):
+    msgs = {1: _raw("someone@service.example", "Terms are changing")}
+    result, moved, _ = _run_with_model(db, msgs, _model("notice"))
+    assert moved == [(1, "intake/notices")] and result.by_kind["notice"] == 1
+    msgs = {2: _raw("deals@airline.example", "You earned status")}
+    result, moved, _ = _run_with_model(db, msgs, _model("marketing"))
+    assert moved == [(2, "intake/promos")]
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [_model("personal"), _model("transactional"), _model("other"), _model("notice", "low"), None],
+)
+def test_model_never_files_people_transactions_or_unsure_or_missing_answers(db, verdict):
+    msgs = {1: _raw("friend@example.org", "Japan 2027!")}
+    result, moved, _ = _run_with_model(db, msgs, verdict)
+    assert moved == [] and result.by_kind["keep"] == 1
+
+
+def test_model_is_not_asked_about_threads_or_money_or_security_subjects(db):
+    threaded = {1: _raw("friend@example.org", "Re: plans", In_Reply_To="<a@b>")}
+    _, moved, judge = _run_with_model(db, threaded, _model("marketing"))
+    assert moved == [] and judge.call_count == 0
+    hard = {2: _raw("billing@service.example", "Payment failed")}
+    _, moved, judge = _run_with_model(db, hard, _model("marketing"))
+    assert moved == [] and judge.call_count == 0
+
+
+def test_model_is_off_by_default(db):
+    moved, read = [], []
+    sr, config, _ = _env({1: _raw("friend@example.org", "Japan 2027!")}, moved, read)
+    with patch("intake.triage_llm.judge") as judge:
+        run_triage(sr, config, {"email": {}}, db, verbose=False)
+    assert judge.call_count == 0
+
+
+def test_a_dead_model_is_asked_once_per_run_and_nothing_is_recorded(db, tmp_path):
+    state = tmp_path / "verdicts.json"
+    moved, read = [], []
+    msgs = {1: _raw("a@x.example", "Hello there"), 2: _raw("b@y.example", "Hello again")}
+    sr, config, _ = _env(msgs, moved, read)
+    sr.extract_message_bodies = lambda _m: ("some body text here", "")
+    settings = {"email": {"triage": {"llm": True}}}
+    with patch("intake.triage_llm.judge", return_value=None) as judge:
+        run_triage(sr, config, settings, db, verbose=False, state_path=state)
+    assert judge.call_count == 1, "an unreachable model is tried once, not per message"
+    assert not state.exists(), "no verdict is stored, so the next poll asks again"
+
+
+def test_kept_verdicts_are_remembered_so_the_model_is_asked_once_per_message(db, tmp_path):
+    state = tmp_path / "verdicts.json"
+    moved, read = [], []
+    msgs = {1: _raw("friend@example.org", "Japan 2027!")}
+    sr, config, _ = _env(msgs, moved, read)
+    sr.extract_message_bodies = lambda _m: ("some body text here", "")
+    settings = {"email": {"triage": {"llm": True}}}
+    with patch("intake.triage_llm.judge", return_value=_model("personal")) as judge:
+        run_triage(sr, config, settings, db, verbose=False, state_path=state)
+        run_triage(sr, config, settings, db, verbose=False, state_path=state)
+    assert judge.call_count == 1
+    assert json.loads(state.read_text())["INBOX:1"]["kind"] == "personal"
+
+
+def test_github_notification_mail_is_never_filed_as_a_promo_even_with_bulk_headers():
+    # GitHub sends List-Unsubscribe; a PR comment needs you and must stay in the Inbox.
+    from intake.inbox_triage import DEFAULT_SKIP_SENDERS
+
+    headers = hdr(
+        "Reviewer <notifications@github.com>",
+        "Re: [casonk/auto-pass] fix: installer verifies the PIN gate (PR #12)",
+        List_Unsubscribe="<x>",
+    )
+    assert classify_headers(headers, skip_senders=DEFAULT_SKIP_SENDERS).kind == "keep"
+
+
+def test_run_triage_applies_the_default_skip_list(db):
+    moved, read = [], []
+    msgs = {
+        1: _raw("notifications@github.com", "Re: [a/b] a change (PR #1)", List_Unsubscribe="<x>")
+    }
+    sr, config, _ = _env(msgs, moved, read)
+    result = run_triage(sr, config, {"email": {}}, db, verbose=False)
+    assert moved == [] and result.by_kind["keep"] == 1

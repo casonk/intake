@@ -137,9 +137,14 @@ reports_dir = "reports"
 # limit = 200
 # # own_addresses = ["you@example.com"]            # your mailbox address is always included
 # # skip_senders = ["list@example.org"]            # never triaged
+# # file_notes = true                            # mail from your own addresses -> intake/notes
+# # llm = false                                    # local-model second opinion (needs Ollama)
+# # llm_model = "llama3.2:3b-instruct-q8_0"
+# # llm_timeout_seconds = 60
 # # self_subject_regex = "^\\s*\\[(?:intake|portfolio)\\]|^\\s*Magneto complete|^\\s*Job guard"
 # # [email.triage.labels]
 # # promo = "intake/promos"
+# # note = "intake/notes"
 # # notice = "intake/notices"
 # # notify = "intake/notify"
 #

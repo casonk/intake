@@ -23,6 +23,7 @@ preview with ``intake email triage --dry-run``.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections import Counter
@@ -31,6 +32,7 @@ from datetime import UTC, datetime
 from email import message_from_bytes
 from email.policy import default as default_policy
 from email.utils import parseaddr, parsedate_to_datetime
+from pathlib import Path
 
 log = logging.getLogger("intake.triage")
 
@@ -38,6 +40,7 @@ DEFAULT_LABELS = {
     "notify": "intake/notify",
     "promo": "intake/promos",
     "notice": "intake/notices",
+    "note": "intake/notes",
 }
 
 # Subjects that keep a message in the Inbox *even when it carries bulk headers*: money moving,
@@ -65,6 +68,10 @@ DEFAULT_NOTICE_SUBJECT_RES = (
     # GitHub Actions quota notices: CI falls back to the cloud and local runners by itself.
     r"\bused \d+% of the Actions minutes\b",
 )
+# Never triaged: GitHub's own mail is handled by the GitHub passes (Codecov, CI runs) or is a
+# comment on one of your pull requests, which needs you.  GitHub sends bulk-style headers, so
+# without this it would be filed as a promotion.
+DEFAULT_SKIP_SENDERS = frozenset({"notifications@github.com"})
 AUTOMATED_SENDER_RE = re.compile(
     r"(?:^|[-_.+])(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|donotreply)(?:$|[-_.+\d])|"
     r"^(?:notifications?|notify|mailer|alerts?|updates?|news|newsletter|info|hello|support|"
@@ -81,6 +88,14 @@ HEADER_FIELDS = "FROM SUBJECT DATE MESSAGE-ID LIST-UNSUBSCRIBE LIST-ID PRECEDENC
 # recorded uid as already handled and would file a kept message that later becomes a receipt
 # candidate.  This only quiets the repeat log lines for them within one daemon run.
 _KEPT_LOGGED: set[tuple[str, int]] = set()
+
+
+REASON_PERSON = "looks like a person"
+REASON_SOFT_SUBJECT = "subject looks transactional or like an alert"
+REASON_SELF_NOTE = "a note from yourself"
+# Keeps the header rules could not settle either way.  The local model may take a second look at
+# these, and only these; a security/money subject or a managed sender is never second-guessed.
+REFINABLE_REASONS = frozenset({REASON_PERSON, REASON_SOFT_SUBJECT})
 
 
 @dataclass(frozen=True)
@@ -118,6 +133,7 @@ def classify_headers(
     managed_window_days: int = 7,
     now: datetime | None = None,
     notice_subject_res: tuple[str, ...] = DEFAULT_NOTICE_SUBJECT_RES,
+    file_notes: bool = True,
 ) -> Decision:
     """Decide what to do with one message from its headers (``headers.get(name)``)."""
     labels = {**DEFAULT_LABELS, **(labels or {})}
@@ -137,7 +153,9 @@ def classify_headers(
         )
         if generated:
             return Decision("notify", "portfolio-generated mail", labels["notify"])
-        return Decision("keep", "a note from yourself")
+        if file_notes:
+            return Decision("note", "a note to yourself", labels["note"])
+        return Decision("keep", REASON_SELF_NOTE)
     if any(re.search(pattern, subject, re.IGNORECASE) for pattern in notice_subject_res):
         return Decision("notice", "informational subject", labels["notice"])
     if HARD_KEEP_SUBJECT_RE.search(subject):
@@ -145,12 +163,12 @@ def classify_headers(
     if is_bulk(headers):
         return Decision("promo", "bulk mail headers", labels["promo"])
     if SOFT_KEEP_SUBJECT_RE.search(subject):
-        return Decision("keep", "subject looks transactional or like an alert")
+        return Decision("keep", REASON_SOFT_SUBJECT)
     if str(headers.get("Auto-Submitted", "no")).strip().lower() not in {"", "no"}:
         return Decision("notice", "auto-submitted mail", labels["notice"])
     if AUTOMATED_SENDER_RE.search(local):
         return Decision("notice", "automated sender, no bulk headers", labels["notice"])
-    return Decision("keep", "looks like a person")
+    return Decision("keep", REASON_PERSON)
 
 
 def _within_days(headers, days: int, now: datetime | None) -> bool:
@@ -173,6 +191,53 @@ def _managed_senders() -> frozenset[str]:
         return frozenset()
 
 
+def _load_verdicts(path: Path | None) -> dict:
+    """Messages the model already judged to stay put, so it is asked once per message."""
+    if path is None:
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_verdicts(path: Path | None, verdicts: dict) -> None:
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dict(list(verdicts.items())[-1000:])), encoding="utf-8")
+    except OSError as exc:
+        log.warning("could not save triage verdicts: %s", exc)
+
+
+def _ask_model(sr, conn, uid: int, settings: dict, sender: str, subject: str):
+    """Fetch the message body (read-only) and get the local model's classification."""
+    from intake.email_text import html_to_text  # noqa: PLC0415
+    from intake.promo_digest import clean_body  # noqa: PLC0415
+    from intake.triage_llm import judge  # noqa: PLC0415
+
+    status, fetched = conn.uid("fetch", str(uid), "(BODY.PEEK[])")
+    payload = sr.extract_fetch_payload(fetched)
+    if status != "OK" or not payload:
+        return None
+    msg = message_from_bytes(payload, policy=default_policy)
+    plain, html = sr.extract_message_bodies(msg)
+    body = "\n".join(clean_body(plain or (html_to_text(html) if html else "")))
+    return judge(settings, sender=sender, subject=subject, body=body)
+
+
+def _apply_verdict(decision: Decision, verdict, labels: dict[str, str]) -> Decision:
+    """The model may only file clear automated mail; anything else stays in the Inbox."""
+    if verdict.confident and verdict.kind == "marketing":
+        return Decision("promo", f"local model: {verdict.summary}", labels["promo"])
+    if verdict.confident and verdict.kind == "notice":
+        return Decision("notice", f"local model: {verdict.summary}", labels["notice"])
+    suffix = f"; model: {verdict.kind}{'' if verdict.confident else ' (unsure)'}"
+    return Decision("keep", decision.reason + suffix)
+
+
 def run_triage(
     sr,
     config,
@@ -183,6 +248,7 @@ def run_triage(
     verbose: bool = True,
     since_days: int | None = None,
     limit: int | None = None,
+    state_path: Path | None = None,
 ) -> TriageResult:
     """Triage Inbox mail not yet judged by any intake pass; returns what was decided."""
     from intake.db import is_email_processed, record_email_receipt  # noqa: PLC0415
@@ -198,9 +264,13 @@ def run_triage(
     if username:
         own.add(username)
     managed = _managed_senders()
-    always_skip = frozenset(str(s).lower() for s in cfg.get("skip_senders", []))
+    always_skip = DEFAULT_SKIP_SENDERS | {str(s).lower() for s in cfg.get("skip_senders", [])}
     self_re = str(cfg.get("self_subject_regex") or DEFAULT_SELF_SUBJECT_RE)
     notice_res = (*DEFAULT_NOTICE_SUBJECT_RES, *map(str, cfg.get("notice_subject_regexes", [])))
+    file_notes = bool(cfg.get("file_notes", True))
+    llm_ok = [bool(cfg.get("llm", False))]
+    verdicts = _load_verdicts(state_path)
+    verdicts_dirty = False
 
     result = TriageResult()
     mailbox = config.imap.mailboxes[0] if config.imap.mailboxes else "INBOX"
@@ -234,9 +304,25 @@ def run_triage(
                 labels=labels,
                 self_subject_re=self_re,
                 notice_subject_res=notice_res,
+                file_notes=file_notes,
             )
             sender = parseaddr(str(msg.get("From", "")))[1]
             subject = sr.decode_mime_header(msg.get("Subject"))
+            key = f"{mailbox}:{uid}"
+            if (
+                decision.kind == "keep"
+                and decision.reason in REFINABLE_REASONS
+                and llm_ok[0]
+                and key not in verdicts
+                and not (msg.get("In-Reply-To") or msg.get("References"))
+            ):
+                verdict = _ask_model(sr, conn, uid, settings, sender, subject)
+                if verdict is None:
+                    llm_ok[0] = False  # model down or unclear: ask again next poll, once
+                else:
+                    verdicts[key] = {"kind": verdict.kind, "confident": verdict.confident}
+                    verdicts_dirty = True
+                    decision = _apply_verdict(decision, verdict, labels)
             result.examined += 1
             result.by_kind[decision.kind] += 1
             result.decisions.append((uid, sender, subject, decision))
@@ -276,4 +362,6 @@ def run_triage(
             )
         if needs_expunge:
             conn.expunge()
+    if verdicts_dirty and not dry_run:
+        _save_verdicts(state_path, verdicts)
     return result
