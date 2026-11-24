@@ -3272,6 +3272,64 @@ def _cmd_career(args: argparse.Namespace, settings: dict) -> None:
             print(path)
 
 
+def _mail_index_path(settings: dict) -> Path:
+    cfg = settings.get("mail_index") if isinstance(settings.get("mail_index"), dict) else {}
+    return _repo_relative_path(str(cfg.get("path") or "data/mailindex.db"))
+
+
+def _cmd_mail(args: argparse.Namespace, settings: dict) -> None:
+    """Build and query the local, searchable mail index used by the review UI."""
+    from intake import mailindex  # noqa: PLC0415
+
+    conn = mailindex.connect(_mail_index_path(settings))
+    try:
+        if args.mail_command == "sync":
+            from intake.email import _load_shock_relay  # noqa: PLC0415
+
+            path = settings.get("email", {}).get("shock_relay_config", "")
+            if not path:
+                raise SystemExit("Set [email] shock_relay_config in config/settings.toml")
+            sr = _load_shock_relay(path)
+            config = sr.load_config(path)
+            sr.validate_imap(config)
+            result = mailindex.sync(
+                sr,
+                config,
+                conn,
+                since_days=args.since_days,
+                limit=args.limit,
+                time_budget_s=args.time_budget,
+            )
+            print(
+                f"Mail index: {result.seen} message(s) in window, {result.new} new, "
+                f"{result.refreshed} refreshed, {result.gone} gone, "
+                f"{result.skipped_large} large (headers only)"
+                + (
+                    "; stopped early (time budget), run again to continue"
+                    if result.stopped_early
+                    else ""
+                )
+            )
+        elif args.mail_command == "search":
+            rows = mailindex.list_messages(
+                conn, query=args.query, queue=args.queue, limit=args.limit
+            )
+            for row in rows:
+                print(
+                    f"{(row['sent_at'] or '')[:10]}  {mailindex.row_queue(row):<9} "
+                    f"{row['sender'][:34]:<34} {row['subject'][:70]}"
+                )
+            print(f"\n{len(rows)} result(s)")
+        elif args.mail_command == "stats":
+            for queue, n in mailindex.queue_counts(conn).items():
+                print(
+                    f"{mailindex.QUEUE_TITLES[queue]:<28} {n['total']:>6}  ({n['unread']} unread)"
+                )
+            print(f"\nlast sync: {mailindex.get_meta(conn, 'last_sync') or 'never'}")
+    finally:
+        conn.close()
+
+
 def _cmd_promos(args: argparse.Namespace, settings: dict) -> None:
     """Summarize the marketing mail triage filed, without changing the mailbox."""
     if args.install_timer:
@@ -4940,6 +4998,23 @@ def main() -> None:
         "--since-days", metavar="N", type=int, help="Override [email.triage] since_days"
     )
 
+    # local mail index (review UI)
+    p_mail = sub.add_parser("mail", help="Local searchable index of the mailbox (review UI)")
+    p_mail_sub = p_mail.add_subparsers(dest="mail_command", required=True)
+    p_mail_sync = p_mail_sub.add_parser(
+        "sync", help="Index new mail and refresh labels/read state (read-only on the mailbox)"
+    )
+    p_mail_sync.add_argument("--since-days", type=int, default=365, help="Look-back window")
+    p_mail_sync.add_argument("--limit", type=int, default=500, help="Max new messages per run")
+    p_mail_sync.add_argument(
+        "--time-budget", type=float, default=None, metavar="SECONDS", help="Stop gracefully after"
+    )
+    p_mail_search = p_mail_sub.add_parser("search", help="Full-text search the index")
+    p_mail_search.add_argument("query")
+    p_mail_search.add_argument("--queue", help="needs, promos, notices, receipts, archive, ...")
+    p_mail_search.add_argument("--limit", type=int, default=25)
+    p_mail_sub.add_parser("stats", help="Message counts per review queue")
+
     # promotions digest
     p_promos = sub.add_parser(
         "promos", help="Summarize the marketing mail triage filed (read-only, local model)"
@@ -4995,6 +5070,8 @@ def main() -> None:
         _cmd_newsletter(args, settings)
     elif args.command == "promos":
         _cmd_promos(args, settings)
+    elif args.command == "mail":
+        _cmd_mail(args, settings)
     elif args.command == "serve":
         _cmd_serve(args, settings)
     elif args.command == "backfill":
