@@ -1,5 +1,20 @@
 ## Unreleased
 
+- Route recent Schwab, Binance, SMBC, Social Security, card-decline, Amex,
+  Progressive, and Booking.com mail deterministically instead of leaving it
+  unmatched or allowing promotional amounts to become receipts.
+- File Codecov bot comments under a dedicated Gmail label and recognize newer
+  Token Metrics Pulse layouts without relying on legacy section headings.
+- File no-receipt mail from known provider senders (security alerts, promos,
+  statements, rate notices) to `email.notice_label` (default `intake/notices`),
+  unread, instead of leaving it in the Inbox and re-checking it every poll.
+- File GitHub Actions run mail (`Run failed: CI …`) to `email.ci_label` (default
+  `GitHub/CI`), unread so red builds still stand out.
+- Discover Uber trip and Uber Eats receipts, including copies forwarded from another
+  address, by subject; their subjects never contain "receipt".
+- Parse Uber ride receipts deterministically (merchant, total in its own currency such
+  as JPY, trip date rather than the forward's date, card last four) as `travel/transit`.
+
 - Support iPhone HEIC/HEIF receipts (`.heic`, `.heif`). They were never in the supported list, so uploaded photos sat in the inbox forever. They are read with `pillow-heif` (now a dependency) in the extractor sandbox or in-process, with the phone's orientation applied. Where HEIC cannot be decoded (no `pillow-heif` and no sandbox) a HEIC file is unsupported, not corrupt: it is left alone and no corrupt-upload alert is sent. Unreadable or truncated HEIC files are reported corrupt like any other image.
 
 - Make `deploy/k3s/verify.sh` executable (it was committed without the bit, so `deploy/deploy.sh --mode k3s up` stopped at the verify step with "Permission denied"), and add a test that every deploy script is executable.

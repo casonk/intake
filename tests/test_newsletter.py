@@ -9,6 +9,7 @@ from intake.newsletter import (
     _clean_lines,
     _fallback_highlights,
     _is_hump_days_issue,
+    _is_pulse_issue,
     file_sent_issues,
     pending_issues,
     render_digest,
@@ -107,6 +108,20 @@ def test_hump_days_market_report_is_included_and_uses_its_lead():
     summary = _fallback_highlights([issue])
     assert "**Hump Days:** The AI Trade Is Cracking Under the Weight of Its Own Debt" in summary
     assert "eight-day semiconductor selloff" in summary
+
+
+def test_pulse_issue_accepts_new_layout_without_legacy_headings():
+    body = "\n".join(
+        [
+            "Bitcoin holds after a broad selloff",
+            "Traders reduced leverage overnight.",
+            "ETF flows remained mixed.",
+            "Source: example.com",
+            "What markets are watching next",
+        ]
+    )
+    assert _is_pulse_issue(body)
+    assert not _is_pulse_issue("Advertisement\nSubscribe now")
 
 
 def test_same_day_supplement_does_not_overwrite_earlier_digest(tmp_path):

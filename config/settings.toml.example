@@ -111,6 +111,14 @@ reports_dir = "reports"
 #
 # # Gmail label to move processed emails into (created automatically if absent)
 # processed_label = "intake/processed"
+# codecov_label = "GitHub/Codecov"
+#
+# # Known-provider mail with no receipt content (security alerts, promos, statements) moves here,
+# # unread, instead of staying in the Inbox. Set to "" to leave it in place.
+# notice_label = "intake/notices"
+#
+# # GitHub Actions run mail (failed/cancelled/succeeded) is filed here, unread.
+# ci_label = "GitHub/CI"
 #
 # # Gmail label used for intake-generated notification emails.
 # notification_label = "intake/notify"

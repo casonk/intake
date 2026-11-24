@@ -95,6 +95,9 @@ Schwab trade confirmation notices are stored under
 symbols, separate from spending receipts. Their full confirmations are linked
 online and require a Schwab login; intake archives the email without signing
 in or inventing trade quantities, prices, or amounts.
+Schwab eConfirms, transfers, tender offers, and margin-loan notices follow the
+same non-spend investment-document path. Account-access changes are retained as
+financial notices rather than receipts.
 
 Email ingestion also handles issuer, money-movement, and reservation payment
 notifications for supported providers. Capital One, Discover, Venmo, Wise, IRS,
@@ -104,6 +107,12 @@ posted/due/booking date, purchaser, and card/account hints extracted from the
 email body. Credit-reporting alerts are stored as non-spend finance records.
 Scheduled/upcoming notices are filed as ignored email records and are not added
 to receipt spending.
+SMBC card-use alerts and Booking.com paid receipts use their labelled amounts
+and currencies; Binance deposits, declined-card alerts, Social Security
+statement notices, Booking.com confirmations/correspondence, and provider terms
+updates are retained as non-spend documents. Broad financial-provider mail is
+not sent through generic AI receipt extraction unless its subject expresses
+receipt or completed-payment intent.
 
 Discovery also includes payment confirmations, statement notices, monthly
 interest, Revolut account messages, Tinder renewals, and Binance.US purchase
@@ -133,6 +142,10 @@ so skipped candidates and dry runs do not mark messages read.
 
 TODO: keep expanding regression coverage for live payment-confirmation variants
 from Capital One, Discover, and Progressive as new provider templates arrive.
+
+Codecov bot comments from GitHub are archived from Inbox under
+`[email].codecov_label` (default `GitHub/Codecov`). Other GitHub notifications
+are left untouched for their owning workflow.
 
 Every receipt now attempts an itemized breakdown. `intake` first parses line
 items from stored OCR text and, when an OpenAI key is configured, will retry
@@ -496,6 +509,8 @@ Bloomberg, and Hump Days newsletters without marking them read, and writes a sho
 source attributed digest under `reports/newsletters/`. `intake newsletter --send`
 emails new highlights to `[gmail].recipient` once per source email, then marks
 the summarized messages read and files them under `[email].processed_label`.
+Pulse recognition uses its authenticated sender and a substantive body rather
+than brittle newsletter section headings, which change between editions.
 To install the daily 8 p.m. user timer through clockwork, run `intake newsletter
 --install-timer`, then `systemctl --user enable --now intake-newsletter.timer`.
 The scheduled run searches a seven-day window and sends only when a new issue

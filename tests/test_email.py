@@ -21,6 +21,7 @@ from intake.db import (
 )
 from intake.email import (
     FetchResult,
+    _allows_generic_receipt_fallback,
     _apply_reply_to_receipt,
     _configured_receipt_sender_hints,
     _email_was_handled,
@@ -35,6 +36,7 @@ from intake.email import (
     _extract_venmo_payment_email,
     _extract_wise_payment_email,
     _extract_xanterra_reservation_email,
+    _file_codecov_notifications,
     _file_message_to_processed_label,
     _has_google_apple_relay_authentication,
     _is_intake_generated_message,
@@ -930,6 +932,14 @@ def test_configured_receipt_sender_hints_include_paypal_default():
         "noreply@gotinder.com",
         "hello@binance.us",
         "post.binance.us",
+        "capitalone@notification.capitalone.com",
+        "service@smbctb.co.jp",
+        "noreply@booking.com",
+        "noreply-payments@booking.com",
+        "property.booking.com",
+        "customerservice@tello.com",
+        "noreply@info.wise.com",
+        "no-reply@ssa.gov",
         "donotreply@mail.schwab.com",
         "email.huntington.com",
         "customerservice@e.progressive.com",
@@ -1837,6 +1847,177 @@ def test_fetch_receipts_classifies_an_unmatched_candidate_only_once(db, tmp_path
     assert not is_email_processed(db, uid=42001, mailbox="INBOX")
 
 
+def test_github_ci_run_subjects_are_recognised():
+    from intake.email import _GITHUB_CI_RUN_RE as rx
+
+    assert rx.search("[casonk/clockwork] Run failed: CI - feat/x (7b95fd9)")
+    assert rx.search("[casonk/tradility] PR run failed: CI - feat: y (5b6b95f)")
+    assert not rx.search("[casonk/intake] Pull request merged: fix: z (#42)")
+
+
+def test_file_codecov_notifications_files_ci_unread_and_codecov_read():
+    from intake.email import _file_codecov_notifications
+
+    headers = {
+        1: b'From: "codecov[bot]" <notifications@github.com>\r\nSubject: Re: [a/b] x (PR #1)\r\n\r\n',
+        2: b"From: Me <notifications@github.com>\r\nSubject: [a/b] Run failed: CI - x (abc)\r\n\r\n",
+        3: b"From: Me <notifications@github.com>\r\nSubject: [a/b] Pull request merged\r\n\r\n",
+    }
+    moved, read = [], []
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [b"3"])
+
+        def uid(self, command, *args):
+            if command == "search":
+                return ("OK", [b"1 2 3"])
+            return ("OK", [headers[int(args[0])]])
+
+        def expunge(self):
+            return ("OK", [])
+
+    sr = SimpleNamespace(
+        open_imap_connection=lambda _c: _Conn(),
+        build_search_terms=lambda **kw: ["ALL"],
+        parse_int_uid_list=lambda data: [1, 2, 3],
+        extract_fetch_payload=lambda fetched: fetched[0],
+        decode_mime_header=lambda v: str(v or ""),
+        mark_message_read=lambda _c, uid: read.append(uid),
+        move_message=lambda _c, uid, label: moved.append((uid, label)),
+    )
+    config = SimpleNamespace(imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None))
+    n = _file_codecov_notifications(
+        sr, config, {"email": {}}, since_days=7, limit=50, dry_run=False, verbose=False
+    )
+    assert n == 2
+    assert moved == [(1, "GitHub/Codecov"), (2, "GitHub/CI")]
+    assert read == [1]
+
+
+def test_fetch_receipts_searches_uber_trip_subjects_for_forwarded_copies(db, tmp_path):
+    captured: dict = {}
+
+    def fake_search(_conn, _config, subjects, **_kw):
+        captured["subjects"] = subjects
+        return []
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [b"0"])
+
+        def expunge(self):
+            return ("OK", [])
+
+    sr = SimpleNamespace(
+        load_config=lambda _p: SimpleNamespace(
+            imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None)
+        ),
+        validate_imap=lambda _c: None,
+        open_imap_connection=lambda _c: _Conn(),
+    )
+    settings = {"receipt_dir": str(tmp_path / "r"), "email": {"shock_relay_config": "/x.yaml"}}
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", side_effect=fake_search),
+        patch("intake.email._process_reply_messages"),
+    ):
+        fetch_receipts(settings, db, dry_run=True, verbose=False)
+    assert {"trip with uber", "uber eats order"} <= set(captured["subjects"])
+
+
+_UBER_FORWARD = """Best regards,
+
+Cason Konzer
+Bosch Corporation | Yokohama-shi | JAPAN
+
+________________________________
+From: Uber Receipts <noreply@uber.com>
+Sent: Sunday, November 22, 2026 11:39 AM
+Subject: [Personal] Your Sunday morning trip with Uber
+
+Nov 22, 2026
+11:26 AM
+Thanks for tipping, cason
+Total \u00a51,100
+
+Meter Fare \u00a51,000
+Tip \u00a5100
+
+Payments
+Apple Pay American Express \u2022\u2022\u2022\u20224673 \u00a51,000
+11/22/26 11:39 AM
+"""
+
+
+def test_uber_forwarded_ride_receipt_is_extracted_in_yen_with_trip_date():
+    from intake.email import _extract_structured_finance_email
+
+    got = _extract_structured_finance_email(
+        "Fw: [Personal] Your Sunday morning trip with Uber",
+        '"Konzer Cason" <person@work.example>',
+        _UBER_FORWARD,
+    )
+    assert got["merchant"] == "Uber"
+    assert got["total"] == 1100.0 and got["currency"] == "JPY"
+    assert got["receipt_date"].isoformat() == "2026-11-22"
+    assert got["card_last4"] == "4673"
+    assert got["category"] == "travel/transit"
+
+
+def test_uber_extractor_ignores_unrelated_senders_and_subjects():
+    from intake.email import _extract_structured_finance_email
+
+    subj = "Fw: Your Sunday morning trip with Uber"
+    no_uber = _UBER_FORWARD.replace("@uber.com", "@example.com")
+    assert _extract_structured_finance_email(subj, "a@work.example", no_uber) is None
+    assert _extract_structured_finance_email("Lunch plans", "uber@uber.com", _UBER_FORWARD) is None
+
+
+def _notice_sr(moved, read):
+    return SimpleNamespace(
+        mark_message_read=lambda _c, uid: read.append(uid),
+        move_message=lambda _c, uid, label: moved.append((uid, label)),
+    )
+
+
+def test_unmatched_notice_from_known_provider_moves_unread():
+    from intake.email import _file_unmatched_notice
+
+    moved, read = [], []
+    sender = '"Wise" <noreply@wise.com>'
+    assert _file_unmatched_notice(
+        _notice_sr(moved, read), None, 7, sender, {}, source_mailbox="INBOX", dry_run=False
+    )
+    assert moved == [(7, "intake/notices")] and read == []
+
+
+def test_unmatched_notice_leaves_unknown_sender_dry_run_and_disabled():
+    from intake.email import _file_unmatched_notice
+
+    moved, read = [], []
+    sr = _notice_sr(moved, read)
+    kw = {"source_mailbox": "INBOX"}
+    assert not _file_unmatched_notice(sr, None, 1, "Pat <pat@example.com>", {}, dry_run=False, **kw)
+    assert not _file_unmatched_notice(sr, None, 2, "noreply@wise.com", {}, dry_run=True, **kw)
+    assert not _file_unmatched_notice(
+        sr, None, 3, "noreply@wise.com", {"notice_label": ""}, dry_run=False, **kw
+    )
+    assert moved == []
+
+
 def test_upsert_html_receipt_writes_snowbridge_email_artifact(db, tmp_path, monkeypatch):
     import intake.classify as classify_mod
 
@@ -2165,7 +2346,48 @@ def test_fetch_result_defaults():
     assert r.reply_applied == 0
     assert r.reply_unmatched == 0
     assert r.errors == 0
+    assert r.codecov_filed == 0
     assert r.saved_files == []
+
+
+def test_codecov_bot_mail_is_archived_under_dedicated_label():
+    message = EmailMessage()
+    message["From"] = '"codecov[bot]" <notifications@github.com>'
+    message["Subject"] = "Re: [example/repo] improve coverage (PR #42)"
+    payload = message.as_bytes()
+    moved = []
+
+    class Connection(_NoopImapConnection):
+        def uid(self, command, *args):
+            if command == "search":
+                return "OK", [b"77"]
+            assert command == "fetch"
+            return "OK", [b"payload"]
+
+        def expunge(self):
+            moved.append("expunge")
+
+    sr = SimpleNamespace(
+        open_imap_connection=lambda _cfg: Connection(),
+        build_search_terms=lambda **_kw: ("ALL",),
+        parse_int_uid_list=lambda _data: [77],
+        extract_fetch_payload=lambda _data: payload,
+        decode_mime_header=lambda value: str(value or ""),
+        mark_message_read=lambda _conn, uid: moved.append(("read", uid)),
+        move_message=lambda _conn, uid, label: moved.append(("move", uid, label)),
+    )
+    config = SimpleNamespace(imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None))
+    filed = _file_codecov_notifications(
+        sr,
+        config,
+        {"email": {"codecov_label": "GitHub/Codecov"}},
+        since_days=14,
+        limit=100,
+        dry_run=False,
+        verbose=False,
+    )
+    assert filed == 1
+    assert moved == [("read", 77), ("move", 77, "GitHub/Codecov"), "expunge"]
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
@@ -2640,6 +2862,145 @@ def test_smbc_award_parser_rejects_other_messages(subject, sender, body):
     from intake.email import _extract_structured_finance_email
 
     assert _extract_structured_finance_email(subject, sender, body) is None
+
+
+def test_smbc_card_transaction_uses_labeled_jpy_amount():
+    from intake.email import _extract_structured_finance_email
+
+    parsed = _extract_structured_finance_email(
+        "SMBC Trust Bank Notification of Card Transaction",
+        "service@smbctb.co.jp",
+        "Transaction Date: 19:50 JST on 11/20, approx.\n"
+        "Transaction Type: Shopping\nTransaction Amount: JPY604\n",
+    )
+    assert parsed["merchant"] == "smbc trust bank card transaction"
+    assert parsed["total"] == 604
+    assert parsed["currency"] == "JPY"
+    assert parsed["processed_by"] == "email-smbc-card-transaction"
+
+
+def test_booking_receipt_uses_amount_paid_instead_of_year():
+    from intake.email import _extract_structured_finance_email
+
+    parsed = _extract_structured_finance_email(
+        "This is your receipt",
+        '"Booking.com" <noreply-payments@booking.com>',
+        "Name\nAlex Sample\nDate\nNov 14, 2026\nBooking details\n"
+        "Property name\nMoment Chalet Hakuba\nAmount paid on Nov 14, 2026\n¥15,400\n",
+    )
+    assert parsed["merchant"] == "Moment Chalet Hakuba"
+    assert parsed["total"] == 15400
+    assert parsed["currency"] == "JPY"
+    assert parsed["receipt_date"] == date(2026, 11, 14)
+    assert parsed["purchaser"] == "alex sample"
+    assert parsed["category"] == "travel/lodging"
+
+
+@pytest.mark.parametrize(
+    ("subject", "sender", "body", "kind"),
+    [
+        (
+            "Binance.US | Your USD deposit is available to use",
+            "do-not-reply@post.binance.us",
+            "You deposited 69.69 USD to your Binance.US account and the funds are available to use.",
+            "documents/investments",
+        ),
+        (
+            "LOAN INITIATED: In your margin account ending 123",
+            "donotreply@mail.schwab.com",
+            "A recent transaction has initiated a margin loan. AMOUNT $4,747.71",
+            "documents/investments",
+        ),
+        (
+            "CONFIRMED: We've completed your funds transfer",
+            "donotreply@mail.schwab.com",
+            "Your funds were transferred to your Schwab Crypto account.",
+            "documents/investments",
+        ),
+        (
+            "Your New Social Security Statement is now available",
+            "no-reply@ssa.gov",
+            "Your Social Security Statement is available online.",
+            "documents/financial",
+        ),
+        (
+            "Your transaction was declined",
+            "capitalone@notification.capitalone.com",
+            "Your $20.00 transaction was declined at EXAMPLE SHOP.",
+            "documents/financial",
+        ),
+        (
+            "Here's your weekly account snapshot",
+            "AmericanExpress@welcome.americanexpress.com",
+            "Total balance $155.48",
+            "documents/financial",
+        ),
+        (
+            "You have a message from Example Hotel",
+            "123@property.booking.com",
+            "Your hotel sent a pre-arrival message.",
+            "documents/travel",
+        ),
+        (
+            "Your monthly account statement is here, Cason",
+            "Experian <support@s.usa.experian.com>",
+            "Your monthly statement is ready to view.",
+            "documents/financial",
+        ),
+        (
+            "RE: Cason - cash payment",
+            "Attorney Example <counsel@example.com>",
+            "We have confirmed receipt of your payment. A receipt will be mailed. "
+            "Attorney at Example Law Office.",
+            "letters/legal",
+        ),
+    ],
+)
+def test_recent_account_activity_routes_without_spend(subject, sender, body, kind):
+    from intake.email import _extract_structured_finance_email
+
+    parsed = _extract_structured_finance_email(subject, sender, body)
+    assert parsed["document_kind"] == kind
+
+
+@pytest.mark.parametrize(
+    ("subject", "sender"),
+    [
+        ("Your USD to EUR target has been reached", "noreply@wise.com"),
+        ("Your plan will renew", "customerservice@tello.com"),
+        ("For Your Black Friday Shopping, Choose GLOBAL PASS.", "info@smbctb.co.jp"),
+        ("Enroll in American Express CreditSecure", "americanexpress@member.americanexpress.com"),
+        ("Sign up for text alerts today", "nelnetnoreply@nelnet.studentaid.gov"),
+        ("Welcome to Capital One: Earn 15% cash back", "capitalone@notification.capitalone.com"),
+        ("Hey Cason, we miss you.", "customerservice@e.progressive.com"),
+    ],
+)
+def test_recent_promotions_and_future_notices_are_terminal_nonreceipts(subject, sender):
+    assert _is_known_non_receipt_notice(subject, sender, "Offer total: $500")
+
+
+def test_broad_finance_senders_need_receipt_intent_for_ai_fallback():
+    assert not _allows_generic_receipt_fallback(
+        "Here's your weekly account snapshot", "AmericanExpress@welcome.americanexpress.com"
+    )
+    assert not _allows_generic_receipt_fallback(
+        "Schwab eConfirms account ending in 123", "donotreply@mail.schwab.com"
+    )
+    assert _allows_generic_receipt_fallback(
+        "Payment confirmation", "AmericanExpress@welcome.americanexpress.com"
+    )
+
+
+def test_wise_money_received_is_income_document():
+    from intake.email import _extract_structured_finance_email
+
+    parsed = _extract_structured_finance_email(
+        "Money received from Example Sender",
+        "Wise <noreply@wise.com>",
+        "You received 123.45 USD from Example Sender into your Wise account.",
+    )
+    assert parsed["document_kind"] == "documents/income"
+    assert parsed["processed_by"] == "email-wise-money-received"
 
 
 def test_wise_transfer_setup_is_pending_nonspend_document(db, tmp_path):
