@@ -107,6 +107,7 @@ class MailApp:
         self.db_path = Path(db_path)
         self.csrf_token = secrets.token_urlsafe(32)
         self.actions = actions  # mailbox-changing actions; None = read-only (+ local review flag)
+        self._secure = False
 
     # -- plumbing ------------------------------------------------------------------------
 
@@ -129,8 +130,11 @@ class MailApp:
         )
 
     def _cookie(self) -> dict[str, str]:
+        # Behind the TLS ingress (Caddy sets X-Forwarded-Proto) the cookie is also Secure.
+        secure = "; Secure" if self._secure else ""
         return {
-            "Set-Cookie": f"{CSRF_COOKIE}={self.csrf_token}; Path=/mail; HttpOnly; SameSite=Strict"
+            "Set-Cookie": f"{CSRF_COOKIE}={self.csrf_token}; Path=/mail; HttpOnly; "
+            f"SameSite=Strict{secure}"
         }
 
     def _page(
@@ -208,7 +212,8 @@ class MailApp:
 
     # -- routes --------------------------------------------------------------------------
 
-    def get(self, raw_path: str) -> Response:
+    def get(self, raw_path: str, *, secure: bool = False) -> Response:
+        self._secure = secure
         parts = urlsplit(raw_path)
         path, query = parts.path.rstrip("/") or "/mail", parse_qs(parts.query)
         raw_page = (query.get("page") or ["1"])[0]
@@ -340,7 +345,8 @@ class MailApp:
             f"{' · unread' if row['unread'] else ''}{' · reviewed' if reviewed else ''}</div>"
             f'<div><span class="chip q">{esc(mailindex.QUEUE_TITLES[queue])}</span>{labels}</div></div>'
             + (
-                f'<div class="card"><b>Summary</b><div>{esc(row["summary"])}</div></div>'
+                f'<div class="card"><b>Summary</b> <span class="muted">(auto-generated, local model)</span>'
+                f"<div>{esc(row['summary'])}</div></div>"
                 if row["summary"]
                 else ""
             )
