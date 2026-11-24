@@ -135,8 +135,9 @@ def _ollama_summary(msg: PromoMessage, settings: dict) -> str | None:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    timeout = int(cfg.get("timeout_seconds", 45))
     try:
-        with urlopen(request, timeout=int(cfg.get("timeout_seconds", 45))) as response:  # noqa: S310
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310
             answer = str(json.loads(response.read().decode()).get("response", "")).strip()
     except (HTTPError, URLError, TimeoutError, OSError, ValueError):
         return None
