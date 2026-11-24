@@ -29,6 +29,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
 from intake import mailindex
+from intake.mail_actions import MailActionError
 
 PAGE_SIZE = 40
 MAX_FORM_BYTES = 16 * 1024
@@ -38,6 +39,13 @@ CSP = (
     "img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 )
 _MSGID_RE = r"[0-9]{1,24}"
+# Messages shown after an action, chosen by a fixed code (arbitrary text is never reflected).
+FLASH = {
+    "inbox": "Returned to your Inbox.",
+    "filed": "Filed. Use “Return to Inbox” to undo.",
+    "read": "Marked as read.",
+    "unread": "Marked as unread.",
+}
 
 
 @dataclass
@@ -217,7 +225,9 @@ class MailApp:
             if path == "/mail/search":
                 return self._search(conn, (query.get("q") or [""])[0][:200], page)
             if path.startswith("/mail/m/"):
-                return self._message(conn, path.removeprefix("/mail/m/"))
+                return self._message(
+                    conn, path.removeprefix("/mail/m/"), (query.get("done") or [""])[0]
+                )
             return self._not_found(conn)
         finally:
             conn.close()
@@ -276,7 +286,7 @@ class MailApp:
         )
         return self._respond(200, self._page("Search", inner, conn, q=text), headers=self._cookie())
 
-    def _message(self, conn: sqlite3.Connection, msgid: str) -> Response:
+    def _message(self, conn: sqlite3.Connection, msgid: str, flash_code: str = "") -> Response:
         row = mailindex.get_message(conn, msgid) if re.fullmatch(_MSGID_RE, msgid) else None
         if row is None or row["gone"]:
             return self._not_found(conn)
@@ -288,14 +298,40 @@ class MailApp:
         )
         link = gmail_url(row["thread_id"])
         reviewed = row["reviewed_at"] is not None
-        review_form = (
-            f'<form method="post" action="/mail/m/{esc(msgid)}/review">'
-            f'<input type="hidden" name="csrf" value="{esc(self.csrf_token)}">'
-            f'<input type="hidden" name="reviewed" value="{0 if reviewed else 1}">'
-            f'<button class="primary">{"Mark as not reviewed" if reviewed else "Mark reviewed"}</button></form>'
+
+        def form(action: str, label: str, extra: str = "", *, primary: bool = False) -> str:
+            return (
+                f'<form method="post" action="/mail/m/{esc(msgid)}/{action}">'
+                f'<input type="hidden" name="csrf" value="{esc(self.csrf_token)}">{extra}'
+                f"<button{' class=primary' if primary else ''}>{esc(label)}</button></form>"
+            )
+
+        review_form = form(
+            "review",
+            "Mark as not reviewed" if reviewed else "Mark reviewed",
+            f'<input type="hidden" name="reviewed" value="{0 if reviewed else 1}">',
+            primary=True,
         )
+        action_forms = ""
+        if self.actions is not None:
+            if row["in_inbox"]:
+                options = "".join(
+                    f'<option value="{q}">{esc(mailindex.QUEUE_TITLES[q])}</option>'
+                    for q in ("promos", "notices", "notes", "notify")
+                )
+                action_forms += form(
+                    "file", "File under", f'<select name="queue">{options}</select> '
+                )
+            else:
+                action_forms += form("inbox", "Return to Inbox")
+            action_forms += form(
+                "unread" if not row["unread"] else "read",
+                "Mark unread" if not row["unread"] else "Mark read",
+            )
+        flash = FLASH.get((flash_code or "").strip())
+        flash_html = f'<div class="card">{esc(flash)}</div>' if flash else ""
         inner = (
-            f'<p><a href="/mail/q/{queue}">&larr; {esc(mailindex.QUEUE_TITLES[queue])}</a></p>'
+            f'{flash_html}<p><a href="/mail/q/{queue}">&larr; {esc(mailindex.QUEUE_TITLES[queue])}</a></p>'
             f'<div class="card"><h1>{esc(row["subject"] or "(no subject)")}</h1>'
             f"<div><b>{esc(row['sender_name'] or row['sender'])}</b> "
             f'<span class="muted">&lt;{esc(row["sender"])}&gt;</span></div>'
@@ -308,7 +344,7 @@ class MailApp:
                 if row["summary"]
                 else ""
             )
-            + f'<div class="actions">{review_form}'
+            + f'<div class="actions">{review_form}{action_forms}'
             + (
                 f'<a class="btn" href="{esc(link)}" target="_blank" rel="noopener noreferrer">Open in Gmail</a>'
                 if link
@@ -341,7 +377,7 @@ class MailApp:
                 )
             form = {k: v[0] for k, v in parse_qs(body.decode("utf-8", "replace")).items()}
             path = urlsplit(raw_path).path.rstrip("/")
-            match = re.fullmatch(rf"/mail/m/({_MSGID_RE})/(review)", path)
+            match = re.fullmatch(rf"/mail/m/({_MSGID_RE})/(review|inbox|file|read|unread)", path)
             if not match:
                 return self._not_found(conn)
             msgid, action = match.groups()
@@ -350,11 +386,34 @@ class MailApp:
             if action == "review":
                 mailindex.mark_reviewed(conn, msgid, form.get("reviewed") == "1")
                 conn.commit()
-            return Response(
-                303, b"", headers={"Location": f"/mail/m/{msgid}", "Cache-Control": "no-store"}
-            )
+                return self._see_other(msgid, "")
+            if self.actions is None:
+                return self._not_found(conn)
+            try:
+                if action == "inbox":
+                    code = self.actions.return_to_inbox(msgid)
+                elif action == "file":
+                    code = self.actions.file_under(msgid, form.get("queue", ""))
+                else:
+                    code = self.actions.set_read(msgid, action == "read")
+            except MailActionError as exc:
+                return self._respond(
+                    409,
+                    self._page(
+                        "Not done",
+                        f'<div class="card"><b>Nothing was changed.</b><div>{esc(exc)}</div>'
+                        f'<p><a href="/mail/m/{esc(msgid)}">&larr; Back to the message</a></p></div>',
+                        conn,
+                    ),
+                )
+            return self._see_other(msgid, code)
         finally:
             conn.close()
+
+    @staticmethod
+    def _see_other(msgid: str, code: str) -> Response:
+        where = f"/mail/m/{msgid}" + (f"?done={code}" if code in FLASH else "")
+        return Response(303, b"", headers={"Location": where, "Cache-Control": "no-store"})
 
     def _check_post(self, headers, cookie_header: str, body: bytes) -> tuple[int, str] | None:
         if len(body) > MAX_FORM_BYTES:

@@ -331,6 +331,34 @@ def mark_reviewed(conn: sqlite3.Connection, gm_msgid: str, reviewed: bool = True
     return cur.rowcount > 0
 
 
+def apply_local(
+    conn: sqlite3.Connection,
+    gm_msgid: str,
+    *,
+    add: list[str] | None = None,
+    remove: list[str] | None = None,
+    unread: bool | None = None,
+) -> bool:
+    """Mirror a label/read change into the index right away (the next sync reconciles it)."""
+    row = get_message(conn, gm_msgid)
+    if row is None:
+        return False
+    drop = {x.lower() for x in remove or []}
+    labels = [x for x in json.loads(row["labels"] or "[]") if x.lower() not in drop]
+    labels += [x for x in add or [] if x.lower() not in {y.lower() for y in labels}]
+    conn.execute(
+        "UPDATE messages SET labels=?, in_inbox=?, unread=?, updated_at=? WHERE gm_msgid=?",
+        (
+            json.dumps(labels),
+            int("\\inbox" in {x.lower() for x in labels}),
+            row["unread"] if unread is None else int(unread),
+            _now(),
+            gm_msgid,
+        ),
+    )
+    return True
+
+
 def set_summary(conn: sqlite3.Connection, gm_msgid: str, summary: str) -> None:
     conn.execute("UPDATE messages SET summary=? WHERE gm_msgid=?", (summary[:300], gm_msgid))
 

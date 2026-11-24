@@ -501,3 +501,18 @@ def test_role_accounts_without_bulk_headers_are_kept_not_filed_as_automated(send
 def test_plural_transaction_words_keep_mail_too(subject):
     # "Tickets" (a purchase) used to slip past a singular-only keyword and be filed as a notice.
     assert decide("noreply@interactiveticketing.example", subject).kind == "keep"
+
+
+def test_a_message_returned_to_the_inbox_is_not_filed_again(db):
+    # The review page's "Return to Inbox" gives the message a new UID, but triage already
+    # recorded its Message-ID when it first filed it; that user choice must stand.
+    from intake.db import record_email_receipt
+
+    record_email_receipt(
+        db, 1, "INBOX", "<Sale@x>", "Sale", "a@promo.example", "", 0, status="triage-promo"
+    )
+    moved, read = [], []
+    msgs = {77: _raw("a@promo.example", "Sale", List_Unsubscribe="<x>")}  # new UID, same Message-ID
+    sr, config, _ = _env(msgs, moved, read)
+    result = run_triage(sr, config, {"email": {}}, db, verbose=False)
+    assert moved == [] and result.by_kind["promo"] == 0

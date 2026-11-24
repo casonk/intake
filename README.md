@@ -514,6 +514,22 @@ than brittle newsletter section headings, which change between editions.
 To install the daily 8 p.m. user timer through clockwork, run `intake newsletter
 --install-timer`, then `systemctl --user enable --now intake-newsletter.timer`.
 
+### Email review page
+
+`intake serve` also serves a private review page at `/mail` over a local, searchable index of the
+mailbox (`data/mailindex.db`, gitignored; build and refresh it with `intake mail sync`, search it
+from the shell with `intake mail search "hakuba"`). **Needs you** comes first (what is still in the
+Inbox and not yet reviewed), then everything triage filed (Promotions, Notices, Notes, Portfolio
+notifications, CI, Processed), plus full-text search and a message view with an *Open in Gmail* link.
+Buttons: **Mark reviewed** (local only), **Return to Inbox**, **File under** a queue, and
+**Mark read/unread**. Each is a reversible Gmail label or flag change (`[mail_index] actions =
+false` makes the page read-only); nothing is deleted, trashed, sent or unsubscribed, and a change
+is only applied after the message's identity is re-checked on the server.
+
+The page shows private mail, so: mail text is escaped and shown as plain text (never rendered),
+every response sets a strict Content-Security-Policy and `no-store`, every action needs a CSRF
+token plus a same-origin request, and the server's Host-header guard applies.
+
 ### Promotions digest
 
 Marketing mail that inbox triage files under `intake/promos` can be summarized weekly by a

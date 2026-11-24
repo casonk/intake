@@ -157,6 +157,7 @@ def serve_reports(
     host: str = "127.0.0.1",
     port: int = 5200,
     mail_db: Path | None = None,
+    mail_actions=None,
 ) -> None:
     """Serve *output_dir* over HTTP until interrupted (and the mail review pages, if indexed)."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -168,14 +169,17 @@ def serve_reports(
     if mail_db is not None and Path(mail_db).exists():
         from intake.review_web import MailApp  # noqa: PLC0415
 
-        mail_app = MailApp(mail_db)
+        mail_app = MailApp(mail_db, actions=mail_actions)
     handler = partial(
         _ReportHandler, directory=str(output_dir), enforce_host=enforce, mail_app=mail_app
     )
     httpd = ThreadingHTTPServer((host, port), handler)
     print(f"intake web : http://{host}:{port}/")
     print(f"report dir : {output_dir}")
-    print(f"mail review: {'/mail' if mail_app else 'off (run: intake mail sync)'}")
+    if mail_app:
+        print(f"mail review: /mail ({'with' if mail_actions else 'without'} mailbox actions)")
+    else:
+        print("mail review: off (run: intake mail sync)")
     if (output_dir / "intake-report.html").exists():
         print("landing    : /intake-report.html")
     else:

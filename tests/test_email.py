@@ -3102,3 +3102,67 @@ def test_wise_setup_parser_requires_pending_status(subject, sender, body):
     from intake.email import _extract_structured_finance_email
 
     assert _extract_structured_finance_email(subject, sender, body) is None
+
+
+def test_receipt_loop_leaves_a_triage_recorded_message_where_it_is(db, tmp_path):
+    """A promo the user returned to the Inbox must not be swept into the processed label."""
+    from intake.db import record_email_receipt
+
+    record_email_receipt(
+        db,
+        9,
+        "INBOX",
+        "<promo@x>",
+        "Your order sale",
+        "a@shop.example",
+        "",
+        0,
+        status="triage-promo",
+    )
+    message = EmailMessage()
+    message["Message-ID"] = "<promo@x>"
+    message["Subject"] = "Your order sale"
+    message["From"] = "Shop <a@shop.example>"
+    message["Date"] = "Fri, 01 May 2026 09:32:35 +0000"
+    message.set_content("Big sale")
+    payload = message.as_bytes()
+    moved: list = []
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [b"1"])
+
+        def uid(self, command, uid, *args):
+            return ("OK", [b"payload"])
+
+        def expunge(self):
+            return ("OK", [b"0"])
+
+    sr = SimpleNamespace(
+        load_config=lambda _p: SimpleNamespace(
+            imap=SimpleNamespace(mailboxes=["INBOX"], search_charset=None)
+        ),
+        validate_imap=lambda _c: None,
+        open_imap_connection=lambda _c: _Conn(),
+        extract_fetch_payload=lambda _d: payload,
+        decode_mime_header=lambda v: str(v or ""),
+        extract_message_bodies=lambda _m: ("Big sale", ""),
+        extract_attachments=lambda _p: [],
+        mark_message_read=lambda _c, uid: moved.append(("read", uid)),
+        move_message=lambda _c, uid, label: moved.append((uid, label)),
+    )
+    settings = {"receipt_dir": str(tmp_path / "r"), "email": {"shock_relay_config": "/x.yaml"}}
+    with (
+        patch("intake.email._load_shock_relay", return_value=sr),
+        patch("intake.email._search_receipt_uids", return_value=[500]),
+        patch("intake.email._process_reply_messages"),
+    ):
+        result = fetch_receipts(settings, db, dry_run=False, verbose=False)
+    assert moved == [], "triage-recorded mail is left in place, not filed as 'already processed'"
+    assert result.skipped == 1
