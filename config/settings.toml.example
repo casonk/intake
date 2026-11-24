@@ -143,6 +143,14 @@ reports_dir = "reports"
 # # notice = "intake/notices"
 # # notify = "intake/notify"
 #
+# # Weekly digest of the marketing mail triage filed (intake promos digest --send). Summaries
+# # come from a small LOCAL Ollama model; no mail text leaves the machine. Install the timer
+# # with: intake promos digest --install-timer
+# [promos]
+# model = "llama3.2:3b-instruct-q8_0"
+# timeout_seconds = 45
+# skip_senders = []
+#
 # # Gmail label used for intake-generated notification emails.
 # notification_label = "intake/notify"
 #
