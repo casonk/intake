@@ -30,3 +30,5 @@ Mark items `[x]` when complete and move them to Done.
 - [x] [manual:2026-06-15] Move large inline report templates out of `intake/report.py` into tracked template files, preserving the static HTML/Markdown output contract and focused report regression tests.
 - [x] [manual:2026-06-15] Split low-level email body text, IMAP provider, and filing/save helpers out of `intake/email.py` while preserving compatibility wrappers for existing tests and patch points.
 - [x] [manual:2026-06-15] Finish splitting `intake/email.py` by moving structured finance parsing and notification/reply handling into smaller modules while keeping Gmail ingestion behavior and existing regression coverage stable.
+- [x] [manual:2026-11-24] Email review UI at `/mail` (local FTS index, queues, search, message view, reversible actions, daemon refresh, local summaries) and header-only inbox triage with a guarded local-model second stage; see CHANGELOG.
+- [ ] [manual:2026-11-24] Review UI follow-ups: bulk select/act, a "filed today" feed, per-sender rules the page can add, a one-sweep tool for old automated mail.
