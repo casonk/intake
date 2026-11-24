@@ -127,6 +127,22 @@ reports_dir = "reports"
 # # GitHub Actions run mail (failed/cancelled/succeeded) is filed here, unread.
 # ci_label = "GitHub/CI"
 #
+# # Header-only triage of Inbox mail that receipt discovery never examines (promos, no-reply
+# # notices, portfolio-generated mail). Anything transactional, an alert, or from a person
+# # stays in the Inbox. Moves keep the mail unread and are plain label moves. Preview first:
+# #   intake email triage --dry-run
+# [email.triage]
+# enabled = false
+# since_days = 30
+# limit = 200
+# # own_addresses = ["you@example.com"]            # your mailbox address is always included
+# # skip_senders = ["list@example.org"]            # never triaged
+# # self_subject_regex = "^\\s*\\[(?:intake|portfolio)\\]|^\\s*Magneto complete|^\\s*Job guard"
+# # [email.triage.labels]
+# # promo = "intake/promos"
+# # notice = "intake/notices"
+# # notify = "intake/notify"
+#
 # # Gmail label used for intake-generated notification emails.
 # notification_label = "intake/notify"
 #

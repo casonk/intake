@@ -190,6 +190,11 @@ def fetch_receipts(
                 "trip with uber",
                 "uber eats order",
                 "your uber receipt",
+                # Ticket purchases (e.g. a ski-resort web shop QR code) rarely say "receipt".
+                "ordered ticket",
+                "e-ticket",
+                "booking confirmation",
+                "itinerary",
             ]
         )
     )
@@ -593,6 +598,17 @@ def fetch_receipts(
     except Exception as exc:
         if verbose:
             print(f"  WARNING Codecov mail filing degraded: {exc}")
+
+    if (email_cfg.get("triage") or {}).get("enabled") and not dry_run:
+        try:
+            from intake.inbox_triage import run_triage  # noqa: PLC0415
+
+            triaged = run_triage(sr, config, settings, db_conn, dry_run=False, verbose=False)
+            if verbose and triaged.moved:
+                print(f"  Inbox triage filed {triaged.moved}: {dict(triaged.by_kind)}")
+        except Exception as exc:
+            if verbose:
+                print(f"  WARNING inbox triage degraded: {exc}")
 
     return result
 

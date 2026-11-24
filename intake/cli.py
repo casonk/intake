@@ -3202,7 +3202,34 @@ def _cmd_email(args: argparse.Namespace, settings: dict) -> None:
     elif args.email_command == "prune-nonreceipts":
         _cmd_email_prune_nonreceipts(args, settings, conn)
 
+    elif args.email_command == "triage":
+        _cmd_email_triage(args, settings, conn)
+
     conn.close()
+
+
+def _cmd_email_triage(args: argparse.Namespace, settings: dict, conn) -> None:
+    """Preview or run header-only triage of Inbox mail that receipt discovery never examines."""
+    from intake.email import _load_shock_relay  # noqa: PLC0415
+    from intake.inbox_triage import run_triage  # noqa: PLC0415
+
+    path = settings.get("email", {}).get("shock_relay_config", "")
+    if not path:
+        raise SystemExit("Set [email] shock_relay_config in config/settings.toml")
+    sr = _load_shock_relay(path)
+    config = sr.load_config(path)
+    sr.validate_imap(config)
+    dry = bool(args.dry_run)
+    result = run_triage(
+        sr, config, settings, conn, dry_run=dry, verbose=True, since_days=args.since_days
+    )
+    verb = "would file" if dry else "filed"
+    moved = sum(n for kind, n in result.by_kind.items() if kind != "keep")
+    print(
+        f"\nTriage {'(dry run) ' if dry else ''}examined {result.examined}: "
+        f"{moved if dry else result.moved} {verb}, {result.by_kind.get('keep', 0)} kept "
+        f"in the Inbox. {dict(result.by_kind)}"
+    )
 
 
 def _cmd_career(args: argparse.Namespace, settings: dict) -> None:
@@ -4825,6 +4852,16 @@ def main() -> None:
     p_em_prune.add_argument("--db", metavar="PATH", help="SQLite database path")
     p_em_prune.add_argument("--receipt-dir", metavar="PATH", help="Root receipt directory")
     p_em_prune.add_argument("--dry-run", action="store_true", help="Show changes without writing")
+
+    p_em_triage = p_em_sub.add_parser(
+        "triage",
+        help="File bulk/automated Inbox mail intake never examines (headers only; reversible)",
+    )
+    p_em_triage.add_argument("--db", metavar="PATH", help="SQLite database path")
+    p_em_triage.add_argument("--dry-run", action="store_true", help="Show decisions, move nothing")
+    p_em_triage.add_argument(
+        "--since-days", metavar="N", type=int, help="Override [email.triage] since_days"
+    )
 
     # career mail
     p_career = sub.add_parser("career", help="Capture employer follow-ups in the career repo")
