@@ -170,3 +170,45 @@ def test_trigger_personal_finance_raises_for_failed_command(monkeypatch, tmp_pat
 
     with pytest.raises(RuntimeError, match="finance trigger failed"):
         trigger_personal_finance(settings, receipts, trigger="process")
+
+
+def test_failed_trigger_logs_the_full_traceback_and_names_the_rerun_json(
+    monkeypatch, tmp_path, caplog
+):
+    repo_root = tmp_path / "finance-repo"
+    repo_root.mkdir()
+    traceback = (
+        "Traceback (most recent call last):\n"
+        '  File "intake_receipts.py", line 174, in fetch_frankfurter_rate\n'
+        "AttributeError: 'list' object has no attribute 'get'"
+    )
+
+    class Result:
+        returncode = 1
+        stdout = "step 6 ok"
+        stderr = traceback
+
+    monkeypatch.setattr("intake.personal_finance.subprocess.run", lambda *a, **k: Result())
+    settings = {
+        "personal_finance": {"repo_root": str(repo_root), "event_dir": str(tmp_path / "events")}
+    }
+    receipts = [
+        build_receipt_event(
+            _receipt(),
+            category="grocery/supermarket",
+            receipt_dir="grocery/supermarket/20260318_1834.pdf",
+            filename="20260318_1834.pdf",
+            processed_by="tesseract",
+            tier="ok",
+        )
+    ]
+
+    with (
+        caplog.at_level("INFO", logger="intake.finance"),
+        pytest.raises(RuntimeError, match=r"receipts not delivered; re-run with .*\.json"),
+    ):
+        trigger_personal_finance(settings, receipts, trigger="process")
+
+    failed = [r.getMessage() for r in caplog.records if "finance trigger failed" in r.getMessage()]
+    assert failed and "fetch_frankfurter_rate" in failed[0] and "step 6 ok" in failed[0]
+    assert any("finance trigger start" in r.getMessage() for r in caplog.records)

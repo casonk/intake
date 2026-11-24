@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Keep a rotating, timestamped `data/logs/intake.log` of everything intake prints (`log_dir`, `log_max_bytes`, `log_backups`), and log each finance trigger's start, result and, on failure, the full downstream stdout/stderr plus the receipts JSON to re-run. A failed trigger's error now says the receipts were not delivered and names that JSON; before, only the last stderr line survived and the traceback was in another repo's log.
 - Route recent Schwab, Binance, SMBC, Social Security, card-decline, Amex,
   Progressive, and Booking.com mail deterministically instead of leaving it
   unmatched or allowing promotional amounts to become receipts.

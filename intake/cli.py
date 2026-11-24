@@ -4841,6 +4841,10 @@ def main() -> None:
     args = parser.parse_args()
     settings = _load_settings()
 
+    from intake.logsetup import setup_file_logging  # noqa: PLC0415
+
+    setup_file_logging(settings, base_dir=_REPO_ROOT)
+
     from intake.purchaser import register_purchaser_aliases  # noqa: PLC0415
 
     register_purchaser_aliases(settings.get("purchaser_aliases", {}))
