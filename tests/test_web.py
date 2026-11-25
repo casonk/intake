@@ -196,3 +196,34 @@ def test_serve_reports_enforces_on_loopback_and_on_wider_binds_only_with_known_n
     monkeypatch.setenv("PORTFOLIO_ALLOWED_HOSTS", "lan.example.test")
     web.serve_reports(tmp_path, host="0.0.0.0", port=1)  # noqa: S104
     assert _CapturingServer.handler.keywords["enforce_host"] is True
+
+
+def test_packaged_render_scripts_are_served_from_a_fixed_whitelist(tmp_path):
+    import http.client
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from intake.web import _ReportHandler
+
+    httpd = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        lambda *a, **k: _ReportHandler(*a, directory=str(tmp_path), enforce_host=False, **k),
+    )
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        for path, ok in (
+            ("/_vendor/marked.min.js", True),
+            ("/_vendor/purify.min.js", True),
+            ("/_vendor/render-md.js", True),
+            ("/_vendor/../web.py", False),
+            ("/_vendor/other.js", False),
+        ):
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=10)
+            conn.request("GET", path)
+            resp = conn.getresponse()
+            resp.read()
+            assert (resp.status == 200) is ok, path
+            conn.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

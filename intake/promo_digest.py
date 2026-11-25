@@ -276,6 +276,11 @@ def _inline_html(text: str) -> str:
     return _ITALIC_RE.sub(r"<em>\1</em>", out)
 
 
+def _script_safe(text: str) -> str:
+    """JSON for an inert script block; ``<`` is escaped so nothing can close or reopen it."""
+    return json.dumps(text).replace("<", "\\u003c")
+
+
 def render_html(digest: str) -> str:
     """Render the digest's Markdown subset (headings, bullets, paragraphs) as a themed page.
 
@@ -310,14 +315,20 @@ def render_html(digest: str) -> str:
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         '<meta name=viewport content="width=device-width,initial-scale=1">'
         '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
-        "style-src 'self' 'unsafe-inline'\">"
+        "style-src 'self' 'unsafe-inline'; script-src 'self'\">"
         f"<title>{escape(title)}</title>"
         '<link rel=stylesheet href="/_portfolio/theme.css">'
         "<style>main{max-width:60rem;margin:0 auto;padding:1rem}li{margin:.5rem 0}"
         "h2{margin-top:1.5rem}</style></head><body><main>"
         '<p><a href="/intake-report.html">← Intake</a> · <a href="/mail">Mail</a></p>'
-        + "\n".join(body)
-        + "</main></body></html>\n"
+        '<div id="md-out">' + "\n".join(body) + "</div>"
+        # The Markdown source rides along as inert text; marked + DOMPurify (same vendored
+        # pair career uses) re-render it in the browser, and the block above is the fallback.
+        + f'<script type="application/json" id="md-source">{_script_safe(digest)}</script>'
+        '<script src="/_vendor/marked.min.js"></script>'
+        '<script src="/_vendor/purify.min.js"></script>'
+        '<script src="/_vendor/render-md.js"></script>'
+        "</main></body></html>\n"
     )
 
 

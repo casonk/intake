@@ -1,5 +1,7 @@
 ## Unreleased
 
+- The digest page re-renders its Markdown in the browser with the same vendored `marked` + DOMPurify pair the career UI uses (copied to `intake/static/vendor`, served from a fixed `/_vendor/` whitelist, no CDN); the server-rendered HTML stays as the no-script fallback.
+
 - The promotions digest also renders as a themed HTML page (`promos-latest.html`, served with the reports, escaped, no scripts) beside the Markdown; `intake promos digest --no-html` keeps Markdown only. The emailed copy stays plain text.
 
 - Keep the review page current without a manual step: once an index exists (`intake mail sync` is the opt-in) the daemon refreshes it each poll (new mail, label moves from triage, read state; bounded to `sync_limit` messages and `sync_time_budget_seconds`, read-only on the mailbox) and writes a one-sentence summary for a few messages per poll (`summaries_per_poll`) with the **local** Ollama model; the Inbox is summarized first, sent mail and CI/coverage mail never. Summaries only describe a message (they never classify or move anything), are searchable, and are labelled auto-generated on the page. `[mail_index] auto_sync = false` / `summaries = false` turn either off. The CSRF cookie is also `Secure` when the request came through the TLS ingress (`X-Forwarded-Proto: https`).
