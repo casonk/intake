@@ -394,15 +394,14 @@
     <p class="eyebrow">Intake Dashboard</p>
     <h1>Receipt activity at a glance.</h1>
     <p>Daily totals, dominant categories, merchant concentration, and model usage from the current intake database.</p>
-    {% if data.receipt_root_uri or data.intake_uri or data.merchant_directory_html_path %}
     <div class="hero-links">
+      <a href="/mail"><strong>Mail review</strong></a>
       {% if data.receipt_root_uri %}<a href="{{ data.receipt_root_uri }}">Open receipt root</a>{% endif %}
       {% if data.intake_uri %}<a href="{{ data.intake_uri }}">Open intake inbox</a>{% endif %}
       {% if data.merchant_directory_html_path %}<a href="{{ data.merchant_directory_html_path }}">Merchant directory</a>{% endif %}
       {% if data.model_directory_html_path %}<a href="{{ data.model_directory_html_path }}">Model directory</a>{% endif %}
       {% if data.purchaser_directory_html_path %}<a href="{{ data.purchaser_directory_html_path }}">Purchaser directory</a>{% endif %}
     </div>
-    {% endif %}
     <div class="summary-grid">
       <article class="summary-card">
         <span class="label">Total Receipts</span>
@@ -449,6 +448,7 @@
       <a href="{{ data.purchaser_directory_html_path }}">Purchaser Directory</a>
       <a href="#recent-receipts">Recent Receipts</a>
       <a href="audit.html">Audit</a>
+      <a href="/mail">Mail</a>
     </div>
   </nav>
 

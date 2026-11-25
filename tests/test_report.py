@@ -636,3 +636,10 @@ def test_generate_reports_render_certifications_on_merchant_page(tmp_path):
     assert "AAA certified" in merchant_detail_html
     assert "Certified by AAA" in merchant_detail_html
     assert _browser_uri("auto", "heritage-collision", "20110830_1149.pdf") in merchant_detail_html
+
+
+def test_dashboard_links_to_mail_review():
+    from intake import report
+
+    html = report._load_report_template("intake-report.html.j2")
+    assert 'href="/mail"' in html
