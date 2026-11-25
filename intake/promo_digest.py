@@ -311,7 +311,7 @@ def render_html(digest: str) -> str:
             body.append(f"<p>{_inline_html(line)}</p>")
     if in_list:
         body.append("</ul>")
-    return (
+    head = (
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         '<meta name=viewport content="width=device-width,initial-scale=1">'
         '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
@@ -321,15 +321,16 @@ def render_html(digest: str) -> str:
         "<style>main{max-width:60rem;margin:0 auto;padding:1rem}li{margin:.5rem 0}"
         "h2{margin-top:1.5rem}</style></head><body><main>"
         '<p><a href="/intake-report.html">← Intake</a> · <a href="/mail">Mail</a></p>'
-        '<div id="md-out">' + "\n".join(body) + "</div>"
-        # The Markdown source rides along as inert text; marked + DOMPurify (same vendored
-        # pair career uses) re-render it in the browser, and the block above is the fallback.
-        + f'<script type="application/json" id="md-source">{_script_safe(digest)}</script>'
-        '<script src="/_vendor/marked.min.js"></script>'
-        '<script src="/_vendor/purify.min.js"></script>'
-        '<script src="/_vendor/render-md.js"></script>'
-        "</main></body></html>\n"
     )
+    # The Markdown source rides along as inert JSON; marked + DOMPurify (the vendored pair
+    # career uses) re-render it in the browser, and the block above is the no-script fallback.
+    source = f'<script type="application/json" id="md-source">{_script_safe(digest)}</script>'
+    scripts = "".join(
+        f'<script src="/_vendor/{name}"></script>'
+        for name in ("marked.min.js", "purify.min.js", "render-md.js")
+    )
+    out = '<div id="md-out">' + "\n".join(body) + "</div>"
+    return head + out + source + scripts + "</main></body></html>\n"
 
 
 def write_digest(
