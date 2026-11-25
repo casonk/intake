@@ -161,7 +161,7 @@ class MailApp:
             '<link rel=stylesheet href="/_portfolio/theme.css">'
             f"<style>{_STYLE}</style>"
             '<script src="/_portfolio/chrome.js" defer></script></head><body><main>'
-            f'<nav class="queues"><a href="/mail">Overview</a>{"".join(chips)}</nav>'
+            f'<nav class="queues"><a href="/intake-report.html">← Intake</a><a href="/mail">Overview</a>{"".join(chips)}</nav>'
             '<form class="search" method="get" action="/mail/search">'
             f'<input type="search" name="q" value="{esc(q)}" placeholder="Search all mail" '
             'autocomplete="off"><button class="primary">Search</button></form>'
