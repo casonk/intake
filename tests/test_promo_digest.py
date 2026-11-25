@@ -204,3 +204,17 @@ def test_write_digest_writes_html_beside_markdown_unless_disabled(tmp_path):
     assert out.with_suffix(".html").exists() and (tmp_path / "a/promos-latest.html").exists()
     write_digest("# T\n", tmp_path / "b", date(2026, 11, 24), html_page=False)
     assert not list((tmp_path / "b").glob("*.html"))
+
+
+def test_html_embeds_the_source_inertly_for_the_vendored_engine():
+    import json
+    import re
+
+    from intake.promo_digest import render_html
+
+    digest = "# T\n\n- **</script><img src=x onerror=alert(1)>**\n"
+    page = render_html(digest)
+    raw = re.search(r'id="md-source">(.*?)</script>', page, re.S).group(1)
+    assert "<" not in raw and json.loads(raw) == digest
+    assert page.count("</script>") == 4  # source + marked + purify + render-md, none injected
+    assert "script-src 'self'" in page and "<img" not in page

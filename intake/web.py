@@ -22,6 +22,12 @@ def _is_loopback_bind(host: str) -> bool:
     return site.is_loopback_name(site.host_name(host))
 
 
+# Fixed whitelist of packaged scripts (no path is ever built from the request).
+_STATIC_ASSETS = {
+    "/_vendor/marked.min.js": "vendor/marked/marked.min.js",
+    "/_vendor/purify.min.js": "vendor/dompurify/purify.min.js",
+    "/_vendor/render-md.js": "render-md.js",
+}
 CHROME_TAG = b'<script src="/_portfolio/chrome.js" defer></script>'
 
 
@@ -80,6 +86,16 @@ class _ReportHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_static(self, relative: str) -> None:
+        body = (Path(__file__).parent / "static" / relative).read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _is_mail_path(self) -> bool:
         return self._mail_app is not None and (
             self.path == "/mail" or self.path.startswith(("/mail/", "/mail?"))
@@ -128,6 +144,9 @@ class _ReportHandler(SimpleHTTPRequestHandler):
             return
         if self.path.startswith("/_portfolio/"):
             self._send_portfolio()
+            return
+        if self.path.split("?", 1)[0] in _STATIC_ASSETS:
+            self._send_static(_STATIC_ASSETS[self.path.split("?", 1)[0]])
             return
         if self.path in ("", "/") and Path(self.directory, self._index_name).exists():
             self._redirect_to_index()
