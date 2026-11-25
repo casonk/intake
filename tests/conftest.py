@@ -37,3 +37,24 @@ def _isolated_portfolio_site(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("PORTFOLIO_STORE", str(tmp_path_factory.mktemp("portfolio-store")))
     monkeypatch.delenv("PORTFOLIO_SITE_DIR", raising=False)
     monkeypatch.delenv("PORTFOLIO_ALLOWED_HOSTS", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _restore_intake_logging():
+    """Keep ``setup_file_logging`` (called by CLI tests) from leaking into later tests.
+
+    It detaches the ``intake`` logger from the root logger and tees stdout/stderr;
+    without a restore, ``caplog`` stops seeing intake records depending on test order.
+    """
+    import logging
+    import sys
+
+    logger = logging.getLogger("intake")
+    state = (logger.propagate, logger.level, list(logger.handlers), sys.stdout, sys.stderr)
+    had_marker = hasattr(logger, "_intake_file_logging")
+    yield
+    logger.propagate, logger.level = state[0], state[1]
+    logger.handlers[:] = state[2]
+    sys.stdout, sys.stderr = state[3], state[4]
+    if not had_marker and hasattr(logger, "_intake_file_logging"):
+        del logger._intake_file_logging
