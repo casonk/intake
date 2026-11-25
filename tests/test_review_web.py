@@ -108,6 +108,13 @@ def test_overview_lists_needs_you_first_with_hardening_headers(server):
     )
 
 
+def test_every_mail_page_links_back_to_the_intake_dashboard(server):
+    httpd, _ = server
+    for path in ("/mail", "/mail/q/inbox", "/mail/search?q=x"):
+        _, body, _ = req(httpd, "GET", path)
+        assert 'href="/intake-report.html"' in body
+
+
 def test_mail_text_is_always_escaped_never_rendered_as_html(server):
     httpd, _ = server
     for path in ("/mail", "/mail/q/needs", "/mail/search?q=hakuba", "/mail/m/1"):
