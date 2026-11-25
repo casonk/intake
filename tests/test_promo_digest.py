@@ -179,3 +179,28 @@ def test_extractive_summary_drops_a_subject_repeated_at_the_start_of_the_line():
 
 def test_newsletter_pipeline_senders_are_not_promotions():
     assert "pulse@mail.tokenmetrics.com" in pd._newsletter_senders()
+
+
+def test_html_render_formats_markdown_and_escapes_hostile_mail_text():
+    from intake.promo_digest import render_html
+
+    digest = (
+        "# Promotions digest — 2026-11-24\n\nIntro text.\n\n## a@x.com (1)\n"
+        "- **<script>alert(1)</script> 50% off** (2026-11-20) — fine _[offer: 50% off]_\n"
+    )
+    page = render_html(digest)
+    assert "<h1>Promotions digest" in page and "<h2>a@x.com (1)</h2>" in page
+    assert "<ul>" in page and "<li><strong>" in page and "<em>[offer: 50% off]</em>" in page
+    assert "<script>" not in page and "&lt;script&gt;" in page
+    assert 'href="/intake-report.html"' in page
+
+
+def test_write_digest_writes_html_beside_markdown_unless_disabled(tmp_path):
+    from datetime import date
+
+    from intake.promo_digest import write_digest
+
+    out = write_digest("# T\n\n- **x**\n", tmp_path / "a", date(2026, 11, 24))
+    assert out.with_suffix(".html").exists() and (tmp_path / "a/promos-latest.html").exists()
+    write_digest("# T\n", tmp_path / "b", date(2026, 11, 24), html_page=False)
+    assert not list((tmp_path / "b").glob("*.html"))

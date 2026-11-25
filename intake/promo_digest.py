@@ -24,6 +24,7 @@ from datetime import date
 from email import message_from_bytes
 from email.policy import default as default_policy
 from email.utils import parseaddr, parsedate_to_datetime
+from html import escape
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -264,7 +265,65 @@ def render_digest(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_digest(digest: str, output_dir: Path, digest_date: date) -> Path:
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_RE = re.compile(r"(?<![\w])_(.+?)_(?![\w])")
+
+
+def _inline_html(text: str) -> str:
+    """Escape first, then apply the few inline marks the digest uses (bold, italic)."""
+    out = escape(text, quote=True)
+    out = _BOLD_RE.sub(r"<strong>\1</strong>", out)
+    return _ITALIC_RE.sub(r"<em>\1</em>", out)
+
+
+def render_html(digest: str) -> str:
+    """Render the digest's Markdown subset (headings, bullets, paragraphs) as a themed page.
+
+    Everything from the mails is HTML-escaped before any mark is applied, so a hostile subject
+    cannot inject markup; the page carries no scripts and no remote resources.
+    """
+    body: list[str] = []
+    in_list = False
+    title = "Promotions digest"
+    for raw in digest.splitlines():
+        line = raw.rstrip()
+        if in_list and not line.startswith("- "):
+            body.append("</ul>")
+            in_list = False
+        if not line:
+            continue
+        if line.startswith("# "):
+            title = line[2:].strip()
+            body.append(f"<h1>{_inline_html(title)}</h1>")
+        elif line.startswith("## "):
+            body.append(f"<h2>{_inline_html(line[3:])}</h2>")
+        elif line.startswith("- "):
+            if not in_list:
+                body.append("<ul>")
+                in_list = True
+            body.append(f"<li>{_inline_html(line[2:])}</li>")
+        else:
+            body.append(f"<p>{_inline_html(line)}</p>")
+    if in_list:
+        body.append("</ul>")
+    return (
+        "<!doctype html><html lang=en><head><meta charset=utf-8>"
+        '<meta name=viewport content="width=device-width,initial-scale=1">'
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
+        "style-src 'self' 'unsafe-inline'\">"
+        f"<title>{escape(title)}</title>"
+        '<link rel=stylesheet href="/_portfolio/theme.css">'
+        "<style>main{max-width:60rem;margin:0 auto;padding:1rem}li{margin:.5rem 0}"
+        "h2{margin-top:1.5rem}</style></head><body><main>"
+        '<p><a href="/intake-report.html">← Intake</a> · <a href="/mail">Mail</a></p>'
+        + "\n".join(body)
+        + "</main></body></html>\n"
+    )
+
+
+def write_digest(
+    digest: str, output_dir: Path, digest_date: date, *, html_page: bool = True
+) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     dated = output_dir / f"promos-{digest_date:%Y%m%d}.md"
     suffix = 2
@@ -273,6 +332,10 @@ def write_digest(digest: str, output_dir: Path, digest_date: date) -> Path:
         suffix += 1
     dated.write_text(digest, encoding="utf-8")
     (output_dir / "promos-latest.md").write_text(digest, encoding="utf-8")
+    if html_page:
+        page = render_html(digest)
+        dated.with_suffix(".html").write_text(page, encoding="utf-8")
+        (output_dir / "promos-latest.html").write_text(page, encoding="utf-8")
     return dated
 
 

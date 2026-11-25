@@ -3374,7 +3374,7 @@ def _cmd_promos(args: argparse.Namespace, settings: dict) -> None:
     digest_date = date.today()
     digest = render_digest(todo, summaries, digest_date)
     output_dir = Path(args.output_dir or settings.get("reports_dir") or _DEFAULT_REPORTS_DIR)
-    output = write_digest(digest, output_dir / "promos", digest_date)
+    output = write_digest(digest, output_dir / "promos", digest_date, html_page=not args.no_html)
     with_offer = sum(1 for m in todo if extract_facts(m.subject, m.body))
     print(
         f"Promotions digest written: {output} ({len(todo)} message(s), {with_offer} with a "
@@ -5043,6 +5043,9 @@ def main() -> None:
     p_promos_digest.add_argument("--limit", type=int, default=60, help="Most recent N messages")
     p_promos_digest.add_argument("--output-dir", metavar="PATH", help="Report root")
     p_promos_digest.add_argument("--send", action="store_true", help="Email to [gmail].recipient")
+    p_promos_digest.add_argument(
+        "--no-html", action="store_true", help="Skip the rendered HTML copy (Markdown only)"
+    )
     p_promos_digest.add_argument(
         "--no-model", action="store_true", help="Skip the local model; use extracted facts only"
     )
